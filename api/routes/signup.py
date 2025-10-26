@@ -16,8 +16,6 @@ from fastapi.templating import Jinja2Templates
 # import the database files
 from db.connections import get_db, SessionLocal
 
-from pydantic import BaseModel
-
 # import the session
 from sqlalchemy.orm import Session
 
@@ -28,8 +26,6 @@ from db.models import User
 from passlib.context import CryptContext
 
 import os
-
-import traceback
 
 router = APIRouter(
     prefix = "",
@@ -50,22 +46,29 @@ def signup(
     email: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
-    db: Session = Depends(get_db)):
-
-
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new user account.
+    Accepts Form data with name, email, password, and confirm_password.
+    """
     # Check if email exists
     if db.query(User).filter(User.email == email).first():
-        return JSONResponse(status_code=400, content={"message": "User already exists"})
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    # Validate passwords match
+    if password != confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
 
     # Create user
     hashed = pwd_context.hash(password)
     passcode = pwd_context.hash(confirm_password)
-    new_user = User(name=name, email=email, password=hashed, confirm_password = passcode)
+    new_user = User(name=name, email=email, password=hashed, confirm_password=passcode)
 
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    return {"message": "User created successfully"}
+    return {"message": "User created successfully", "user_id": new_user.id}
 
 '''
 @router.get("/signup")

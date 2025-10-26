@@ -11,9 +11,8 @@ router = APIRouter(
 
 @router.get("", response_model = UserResponse)
 def current(current_user: User = Depends(get_current_user)):
-    return {
-        "message": f"Welcome {current_user.email}, you have access to the analyzer API."
-    }
+    """Get current user information after authentication"""
+    return current_user
 
 @router.get("/me", response_model=UserResponse)
 def get_my_details(current_user: User = Depends(get_current_user)):

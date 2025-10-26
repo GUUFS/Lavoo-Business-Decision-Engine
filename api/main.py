@@ -1,4 +1,3 @@
-
 # import the fastAPI library into
 from fastapi import FastAPI, Request, HTTPException
 
@@ -21,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 
 # import the router page
-from api.routes import index, signup, login, analyzer
+from api.routes import index, signup, login, analyzer, ai
 
 
 app = FastAPI(debug = True)
@@ -43,22 +42,27 @@ out_dir = os.path.join(BASE_DIR, "web")
 # call the database connection and create all the tables
 db.models.Base.metadata.create_all(bind = engine)
 
-
-app.include_router(index.router)
-app.include_router(signup.router)
-app.include_router(login.router)
-app.include_router(analyzer.router)
-
-
-# Serve static assets (JS, CSS, etc.)
+# Serve static assets FIRST (must be before routers to avoid catch-all interception)
 if os.path.exists(os.path.join(out_dir, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(out_dir, "assets")), name="assets")
 
+# Include API routers (specific routes)
+app.include_router(ai.router, prefix="/api")
+app.include_router(signup.router, prefix="/api")  # For React frontend that uses /api/signup
+app.include_router(login.router, prefix="/api")    # For React frontend that uses /api/login
+app.include_router(signup.router)  # Also register without prefix for /signup
+app.include_router(login.router)    # Also register without prefix for /login
+app.include_router(analyzer.router)
+
+# Include index.router LAST (catch-all for React app)
+app.include_router(index.router)
+
+'''
 # Catch-all route for React app (MUST be last)
 @app.get("/{full_path:path}")
 async def serve_react_app(full_path: str, request: Request):
 
-    excluded_prefixes = ("api", "login", "token", "signup", "analyzer", "docs", "redoc", "openapi.json")
+    excluded_prefixes = ("api", "assets", "login", "token", "signup", "analyzer", "docs", "redoc", "openapi.json")
     if full_path.startswith(excluded_prefixes) or full_path == "":
         raise HTTPException(status_code=404, detail="API route not served as frontend")
 
@@ -73,6 +77,8 @@ async def serve_react_app(full_path: str, request: Request):
         return FileResponse(index_path)
 
     return {"error": "Frontend not found"}
+'''
+
 # Serve React entry (index.html)
 #@app.get("/{full_path:path}")
 #async def serve_react(full_path: str):
@@ -167,15 +173,4 @@ async def not_found(request: Request, exc):
     if os.path.exists(index_path):
         return templates.TemplateResponse("index.html", {"request": request})
     return {"error": "Page not found"}
-'''# api/main.py
-from fastapi import FastAPI
-from api.routes import ai  # Import the ai router
-
-app = FastAPI(title="AI Business Analyst", description="API for AI tool recommendations and business insights")
-
-# Include the ai router
-app.include_router(ai.router, prefix="/api", tags=["ai"])
-
-@app.get("/")
-async def read_root():
-    return {"message": "Welcome to the AI Business Analyst API!"}
+'''

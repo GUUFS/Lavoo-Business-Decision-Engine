@@ -2,8 +2,10 @@ fastapi==0.115.0
 uvicorn==0.30.6
 sentence-transformers==3.1.1
 pandas==2.2.3
-<<<<<<< HEAD
 pytest==8.3.3
-=======
-pytest==8.3.3
->>>>>>> master
+sqlalchemy==2.0.23
+passlib==1.7.4
+argon2-cffi==25.1.0
+python-jose==3.3.0
+pydantic-settings==2.0.3
+python-multipart==0.0.9
