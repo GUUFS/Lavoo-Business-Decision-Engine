@@ -4,12 +4,13 @@ from typing import List, Dict, Any
 from ai.recommender import recommend_tools
 from ai.analyst import analyze_business_needs
 from ai.utils.comparison import compare_tools, get_tool, infer_feature
+
 import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-@router.get("/recommend", response_model=List[Dict[str, str | float]])
+@router.get("/recommend")
 async def get_recommendations(query: str, top_k: int = 3):
     """Get top_k AI tool recommendations based on a user query.
     
