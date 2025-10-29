@@ -75,21 +75,21 @@ async def get_tool_comparison(tools: str):
             
             # Infer features for this tool (same as before)
             features = {
-                'App Integrations': details['compatibility_integration'] if details['compatibility_integration'] else '✗',
-                'Workflow Automation': '✓' if infer_feature(details['key_features'], ['automation', 'workflow']) else '✗',
-                'Triggers and Actions': '✓' if infer_feature(details['key_features'], ['triggers', 'actions']) else '✗',
-                'AI-powered Suggestions': '✓' if infer_feature(details['key_features'], ['suggestions', 'recommendations']) else '✗',
-                'AI Writing Assistance': '✓' if infer_feature(details['key_features'], ['writing', 'content']) else '✗',
-                'Database Management': '✓' if infer_feature(details['key_features'], ['database', 'data']) else '✗',
-                'Project Tracking': '✓' if infer_feature(details['key_features'], ['project', 'track']) else '✗',
-                'Team Collaboration': '✓' if infer_feature(details['key_features'], ['team', 'collaboration']) else '✗'
+                'App Integrations': 'Yes' if details['compatibility_integration'] else 'No',
+                'Workflow Automation': 'Yes' if infer_feature(details['key_features'], ['automation', 'workflow']) else 'No',
+                'Triggers and Actions': 'Yes' if infer_feature(details['key_features'], ['triggers', 'actions']) else 'No',
+                'AI-powered Suggestions': 'Yes' if infer_feature(details['key_features'], ['suggestions', 'recommendations']) else 'No',
+                'AI Writing': 'Yes' if infer_feature(details['key_features'], ['writing', 'content']) else 'No',
+                'Database': 'Yes' if infer_feature(details['key_features'], ['database', 'data']) else 'No',
+                'Project Tracking': 'Yes' if infer_feature(details['key_features'], ['project', 'track']) else 'No',
+                'Team Collaboration': 'Yes' if infer_feature(details['key_features'], ['team', 'collaboration']) else 'No'
             }
             
             comparison[details['name']] = {
-                'pricing': details['pricing'],
-                'rating': details['ratings'],
-                'technical_level': 'Intermediate',  # Hardcoded; extend CSV later
-                'use_cases': f"{details['main_category']}, {details['sub_category']}, {details['who_should_use']}",
+                'Pricing': details['pricing'],  # Capitalized to match frontend
+                'Rating': details['ratings'],
+                'Technical Level': 'Intermediate',  # Hardcoded; extend CSV later
+                'Use Cases': f"{details['main_category']}, {details['sub_category']}, {details['who_should_use']}",
                 **features
             }
         
