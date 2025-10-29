@@ -2,10 +2,16 @@
 import pandas as pd
 import logging
 from typing import Dict, List
+import sys
 
-# Set up logging
-logging.basicConfig(filename="ai/logs/ai.log", level=logging.INFO,
-                    format="%(asctime)s - %(levelname)s - %(message)s")
+# Set up logging (cloud-friendly: logs to stdout instead of file)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # Output to console/stdout for cloud platforms
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Load the CSV
