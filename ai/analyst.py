@@ -3,6 +3,7 @@ import pandas as pd
 import logging
 from typing import Dict, List
 import sys
+import os
 
 # Set up logging (cloud-friendly: logs to stdout instead of file)
 logging.basicConfig(
@@ -14,12 +15,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Get the absolute path to the CSV file
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CSV_PATH = os.path.join(BASE_DIR, "ai", "data", "ai_tools.csv")
+
 # Load the CSV
 try:
-    df = pd.read_csv("ai/data/ai_tools.csv")
-    logger.info("Successfully loaded ai_tools.csv for analyst")
+    df = pd.read_csv(CSV_PATH)
+    logger.info(f"Successfully loaded ai_tools.csv for analyst from {CSV_PATH}")
 except FileNotFoundError:
-    logger.error("ai_tools.csv not found in ai/data/")
+    logger.error(f"ai_tools.csv not found at {CSV_PATH}")
     raise
 except Exception as e:
     logger.error(f"Error loading CSV: {str(e)}")

@@ -3,6 +3,7 @@ import pandas as pd
 import logging
 from typing import Dict, Any
 import sys
+import os
 
 # Set up logging (cloud-friendly: logs to stdout instead of file)
 logging.basicConfig(
@@ -14,10 +15,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Load CSV (fixed path from CWD root)
+# Get the absolute path to the CSV file
+# Go up two directories from utils/ to get to project root
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CSV_PATH = os.path.join(BASE_DIR, "ai", "data", "ai_tools.csv")
+
+# Load CSV
 try:
-    df = pd.read_csv("ai/data/ai_tools.csv")
-    logger.info("Loaded CSV for comparison")
+    df = pd.read_csv(CSV_PATH)
+    logger.info(f"Loaded CSV for comparison from {CSV_PATH}")
 except Exception as e:
     logger.error(f"Error loading CSV for comparison: {str(e)}")
     raise
