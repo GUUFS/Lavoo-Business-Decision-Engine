@@ -12,18 +12,53 @@ from jinja2 import Environment, FileSystemLoader
 from fastapi.templating import Jinja2Templates
 
 # import the database connection file and models from the containing folder
-from db.connections import engine, SessionLocal, Base
-import db.models
+# Support both old SQLite and new PostgreSQL
+try:
+    from db.pg_connections import engine, SessionLocal, Base, init_db, get_db_info
+    import db.pg_models as models
+    USE_POSTGRES = True
+except ImportError:
+    from db.connections import engine, SessionLocal, Base
+    import db.models as models
+    USE_POSTGRES = False
 
 from fastapi.middleware.cors import CORSMiddleware
 
 import os
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # import the router page
-from api.routes import index, signup, login, analyzer, ai
+from api.routes import index, signup, login, analyzer
+# Try to import PostgreSQL routes, fallback to CSV routes
+try:
+    from api.routes import ai_db as ai
+    logger.info("✓ Using PostgreSQL-based AI routes")
+except ImportError:
+    from api.routes import ai
+    logger.info("⚠️  Using CSV-based AI routes (fallback)")
 
 
 app = FastAPI(debug = True)
+
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database tables on application startup"""
+    try:
+        if USE_POSTGRES:
+            init_db()
+            db_info = get_db_info()
+            logger.info(f"✓ Database initialized: {db_info['type']}")
+        else:
+            models.Base.metadata.create_all(bind=engine)
+            logger.info("✓ SQLite database initialized")
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+        raise
 
 
 # Enable CORS for (React form requests)
@@ -38,9 +73,6 @@ app.add_middleware(
 # Path to the React build
 BASE_DIR = os.path.dirname(os.path.dirname((os.path.abspath(__file__))))
 out_dir = os.path.join(BASE_DIR, "web")
-
-# call the database connection and create all the tables
-db.models.Base.metadata.create_all(bind = engine)
 
 # Serve static assets FIRST (must be before routers to avoid catch-all interception)
 if os.path.exists(os.path.join(out_dir, "assets")):
