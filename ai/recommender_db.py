@@ -12,6 +12,10 @@ from sklearn.metrics.pairwise import cosine_similarity
 import sys
 from sqlalchemy.orm import Session
 from typing import List, Dict
+import pickle
+import os
+from datetime import datetime, timedelta
+import hashlib
 
 # Set up logging (cloud-friendly: logs to stdout)
 logging.basicConfig(
@@ -36,22 +40,115 @@ class AIToolRecommender:
     """
     AI Tool recommendation engine using PostgreSQL.
     Generates embeddings and finds similar tools based on semantic similarity.
+    Includes caching for embeddings to improve performance.
     """
     
-    def __init__(self, db_session: Session):
+    # Cache settings
+    CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
+    EMBEDDINGS_CACHE_FILE = os.path.join(CACHE_DIR, "tool_embeddings.pkl")
+    CACHE_VALIDITY_HOURS = 24  # Refresh cache every 24 hours
+    
+    def __init__(self, db_session: Session, use_cache: bool = True):
         """
         Initialize recommender with database session.
         
         Args:
             db_session: SQLAlchemy database session
+            use_cache: Whether to use cached embeddings (default: True)
         """
         self.db = db_session
         self.tools_df = None
         self.embeddings = None
+        self.use_cache = use_cache
+        
+        # Create cache directory if it doesn't exist
+        os.makedirs(self.CACHE_DIR, exist_ok=True)
+        
         self._load_tools()
     
+    def _get_data_hash(self, tools_data: List[Dict]) -> str:
+        """
+        Generate hash of tool data to detect changes.
+        
+        Args:
+            tools_data: List of tool dictionaries
+            
+        Returns:
+            MD5 hash of the data
+        """
+        # Create a stable string representation of the data
+        data_str = str(sorted([(t['id'], t['name'], t['description'][:50]) for t in tools_data]))
+        return hashlib.md5(data_str.encode()).hexdigest()
+    
+    def _is_cache_valid(self) -> bool:
+        """
+        Check if cached embeddings are still valid.
+        
+        Returns:
+            True if cache exists and is not expired
+        """
+        if not os.path.exists(self.EMBEDDINGS_CACHE_FILE):
+            return False
+        
+        # Check file age
+        cache_time = datetime.fromtimestamp(os.path.getmtime(self.EMBEDDINGS_CACHE_FILE))
+        age = datetime.now() - cache_time
+        
+        if age > timedelta(hours=self.CACHE_VALIDITY_HOURS):
+            logger.info(f"Cache expired (age: {age.total_seconds()/3600:.1f} hours)")
+            return False
+        
+        logger.info(f"Cache is valid (age: {age.total_seconds()/3600:.1f} hours)")
+        return True
+    
+    def _load_from_cache(self):
+        """
+        Load embeddings from cache file.
+        
+        Returns:
+            Tuple of (tools_df, embeddings, data_hash) or None if cache invalid
+        """
+        try:
+            with open(self.EMBEDDINGS_CACHE_FILE, 'rb') as f:
+                cache_data = pickle.load(f)
+            
+            logger.info(f"✅ Loaded embeddings from cache ({len(cache_data['embeddings'])} tools)")
+            return cache_data['tools_df'], cache_data['embeddings'], cache_data['data_hash']
+        
+        except Exception as e:
+            logger.warning(f"Failed to load cache: {e}")
+            return None
+    
+    def _save_to_cache(self, tools_df, embeddings, data_hash):
+        """
+        Save embeddings to cache file.
+        
+        Args:
+            tools_df: DataFrame of tools
+            embeddings: Numpy array of embeddings
+            data_hash: Hash of the data
+        """
+        try:
+            cache_data = {
+                'tools_df': tools_df,
+                'embeddings': embeddings,
+                'data_hash': data_hash,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            with open(self.EMBEDDINGS_CACHE_FILE, 'wb') as f:
+                pickle.dump(cache_data, f)
+            
+            logger.info(f"💾 Saved embeddings to cache ({len(embeddings)} tools)")
+        
+        except Exception as e:
+            logger.error(f"Failed to save cache: {e}")
+    
     def _load_tools(self):
-        """Load tools from database and generate embeddings."""
+        """
+        Load tools from database and generate/load embeddings.
+        Uses caching to avoid regenerating embeddings on every restart.
+        """
         from db.pg_models import AITool
         
         try:
@@ -82,13 +179,41 @@ class AIToolRecommender:
                     'compatibility_integration': tool.compatibility_integration,
                 })
             
-            self.tools_df = pd.DataFrame(tools_data)
-            logger.info(f"Loaded {len(self.tools_df)} tools from database")
+            tools_df = pd.DataFrame(tools_data)
+            logger.info(f"Loaded {len(tools_df)} tools from database")
             
-            # Generate embeddings
-            descriptions = self.tools_df['description'].tolist()
-            self.embeddings = model.encode(descriptions, convert_to_tensor=False)
-            logger.info(f"Generated embeddings for {len(self.embeddings)} tools")
+            # Calculate data hash to detect changes
+            current_hash = self._get_data_hash(tools_data)
+            
+            # Try to use cache if enabled
+            if self.use_cache and self._is_cache_valid():
+                cached_data = self._load_from_cache()
+                
+                if cached_data is not None:
+                    cached_df, cached_embeddings, cached_hash = cached_data
+                    
+                    # Verify data hasn't changed
+                    if cached_hash == current_hash and len(cached_df) == len(tools_df):
+                        self.tools_df = tools_df  # Use fresh data from DB
+                        self.embeddings = cached_embeddings  # Use cached embeddings
+                        logger.info("🚀 Using cached embeddings (data unchanged)")
+                        return
+                    else:
+                        logger.info("Data changed, regenerating embeddings...")
+            
+            # Generate new embeddings (cache miss or disabled)
+            logger.info("Generating embeddings... (this may take a moment)")
+            descriptions = tools_df['description'].tolist()
+            embeddings = model.encode(descriptions, convert_to_tensor=False, show_progress_bar=True)
+            
+            self.tools_df = tools_df
+            self.embeddings = embeddings
+            
+            logger.info(f"✅ Generated embeddings for {len(embeddings)} tools")
+            
+            # Save to cache for next time
+            if self.use_cache:
+                self._save_to_cache(tools_df, embeddings, current_hash)
             
         except Exception as e:
             logger.error(f"Error loading tools from database: {e}")
@@ -137,10 +262,28 @@ class AIToolRecommender:
             logger.error(f"Error in recommend: {e}")
             raise
     
-    def refresh(self):
-        """Refresh tools from database (call after adding new tools)."""
+    def refresh(self, clear_cache: bool = True):
+        """
+        Refresh tools from database (call after adding new tools).
+        
+        Args:
+            clear_cache: Whether to clear the embedding cache (default: True)
+        """
         logger.info("Refreshing tool data from database...")
+        
+        if clear_cache and os.path.exists(self.EMBEDDINGS_CACHE_FILE):
+            os.remove(self.EMBEDDINGS_CACHE_FILE)
+            logger.info("Cleared embedding cache")
+        
         self._load_tools()
+    
+    def clear_cache(self):
+        """Manually clear the embedding cache."""
+        if os.path.exists(self.EMBEDDINGS_CACHE_FILE):
+            os.remove(self.EMBEDDINGS_CACHE_FILE)
+            logger.info("✅ Embedding cache cleared")
+        else:
+            logger.info("No cache to clear")
 
 
 # Global recommender instance (initialized when first needed)

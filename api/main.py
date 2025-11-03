@@ -7,55 +7,74 @@ from fastapi.responses import FileResponse
 # import the function for rendering the static files
 from fastapi.staticfiles import StaticFiles
 
-# import the function for rendering the Jinja files
-from jinja2 import Environment, FileSystemLoader
-from fastapi.templating import Jinja2Templates
+# Load environment variables from .env file (must be done early)
+import os
+import logging
+from datetime import datetime
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Load .env file
+    print("✅ Environment variables loaded from .env file")
+except ImportError:
+    print("⚠️  python-dotenv not installed, using system environment")
 
 # import the database connection file and models from the containing folder
-# Support both old SQLite and new PostgreSQL
-try:
-    from db.pg_connections import engine, SessionLocal, Base, init_db, get_db_info
-    import db.pg_models as models
-    USE_POSTGRES = True
-except ImportError:
-    from db.connections import engine, SessionLocal, Base
-    import db.models as models
-    USE_POSTGRES = False
+# Using PostgreSQL (Neon) exclusively
+from db.pg_connections import engine, SessionLocal, Base, init_db, get_db_info
+import db.pg_models as models
 
 from fastapi.middleware.cors import CORSMiddleware
 
-import os
-import logging
+# Set up centralized logging (handles both local and cloud environments)
+from config.logging import setup_logging, get_logger
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Initialize logging system
+setup_logging(level=logging.INFO if os.getenv('DEBUG') != 'true' else logging.DEBUG)
+logger = get_logger(__name__)
 
 # import the router page
 from api.routes import index, signup, login, analyzer
-# Try to import PostgreSQL routes, fallback to CSV routes
-try:
-    from api.routes import ai_db as ai
-    logger.info("✓ Using PostgreSQL-based AI routes")
-except ImportError:
-    from api.routes import ai
-    logger.info("⚠️  Using CSV-based AI routes (fallback)")
+from api.routes import ai_db as ai  # PostgreSQL-based AI routes
+
+logger.info("✓ Using Neon PostgreSQL database")
 
 
 app = FastAPI(debug = True)
+
+# Health check endpoint for monitoring (Railway, Render, DigitalOcean, etc.)
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for cloud platform monitoring.
+    Returns 200 OK if app is running and database is connected.
+    """
+    try:
+        db_info = get_db_info()
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": {
+                "type": db_info.get("type"),
+                "connected": True
+            },
+            "version": "1.0.0"
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }
 
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
     """Initialize database tables on application startup"""
     try:
-        if USE_POSTGRES:
-            init_db()
-            db_info = get_db_info()
-            logger.info(f"✓ Database initialized: {db_info['type']}")
-        else:
-            models.Base.metadata.create_all(bind=engine)
-            logger.info("✓ SQLite database initialized")
+        init_db()
+        db_info = get_db_info()
+        logger.info(f"✓ Database initialized: {db_info['type']} at {db_info['host']}")
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         raise
@@ -88,121 +107,3 @@ app.include_router(analyzer.router)
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)
-
-'''
-# Catch-all route for React app (MUST be last)
-@app.get("/{full_path:path}")
-async def serve_react_app(full_path: str, request: Request):
-
-    excluded_prefixes = ("api", "assets", "login", "token", "signup", "analyzer", "docs", "redoc", "openapi.json")
-    if full_path.startswith(excluded_prefixes) or full_path == "":
-        raise HTTPException(status_code=404, detail="API route not served as frontend")
-
-    # Serve actual static file if exists
-    file_path = os.path.join(out_dir, full_path)
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        return FileResponse(file_path)
-
-    # Otherwise, serve index.html (React entry point)
-    index_path = os.path.join(out_dir, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-
-    return {"error": "Frontend not found"}
-'''
-
-# Serve React entry (index.html)
-#@app.get("/{full_path:path}")
-#async def serve_react(full_path: str):
-#    return FileResponse(os.path.join(out_dir, "index.html"))
-'''
-# Serve index.html for all other routes (React Router fallback)
-@app.get("/{full_path:path}")
-async def serve_react_app(full_path: str):
-    file_path = os.path.join(out_dir, full_path)
-
-    # Serve file directly if it exists (e.g., /assets/index.js)
-    if os.path.exists(file_path) and os.path.isfile(file_path):
-        return FileResponse(file_path)
-
-    # Otherwise, serve React index.html (for client-side routing)
-    return FileResponse(os.path.join(out_dir, "index.html"))
-
-# for the project's static folder done with react.js
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # get the absolut path of the file
-OUT_DIR = os.path.join(BASE_DIR, "out")     # get the absolute path of the out folder
-# print(os.path.exists(os.path.join(OUT_DIR, "index.html")))
-# Mount static folder
-app.mount("/assets", StaticFiles(directory=os.path.join(OUT_DIR, "assets")), name="assets")
-'''
-# for the project's static folder done with react/next.js
-'''
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "out")
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-OUT_DIR = os.path.join(STATIC_DIR, "out")
-
-next_static_dir = os.path.join(OUT_DIR, "_next")
-# create a directory get function for the static files
-# BASE_DIR= os.path.dirname(os.path.abspath(__file__))
-# STATIC_DIR = os.path.join(BASE_DIR, "static")
-# env = Environment(loader=FileSystemLoader("templates"), cache_size=0)
-#TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-# TEMPLATES_DIR.env = env
-
-# mount the static files imported into the project
-if os.path.exists(STATIC_DIR):
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-if os.path.exists(OUT_DIR):
-    app.mount("/", StaticFiles(directory=OUT_DIR, html=True), name="nextjs")
-
-if os.path.exists(next_static_dir):
-    app.mount("/_next", StaticFiles(directory=next_static_dir), name="next_static")
-
-
-# recognize the html template sites for interaction
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
-'''
-
-# create the path for the react folder
-# function for the home page
-
-'''
-@app.get("/", response_class=HTMLResponse)
-async def serve_index(request: Request):
-    """Serve homepage"""
-    return templates.TemplateResponse("index.html", {"request": request})
-
-
-@app.get("/")
-async def serve_index():
-    return FileResponse(os.path.join(OUT_DIR, "index.html"))
-'
-# write the function to serve the chat page
-@app.get("/chat", response_class= HTMLResponse)
-async def serve_chat(request: Request):
-    return templates.TemplateResponse("chat.html", {"request": request})
-
-
-# the function to serve the results page
-@app.get("/results", response_class=HTMLResponse)
-async def serve_results(request: Request):
-    return templates.TemplateResponse("results.html", {"request": request})
-
-'''
-'''
-
-@app.get("/api/hello")
-async def api_hello():
-    """Simple API test"""
-    return {"message": "Hello from FastAPI"}
-
-@app.exception_handler(404)
-async def not_found(request: Request, exc):
-    """Return index.html for unknown routes (useful for SPA)"""
-    index_path = os.path.join(TEMPLATES_DIR, "index.html")
-    if os.path.exists(index_path):
-        return templates.TemplateResponse("index.html", {"request": request})
-    return {"error": "Page not found"}
-'''

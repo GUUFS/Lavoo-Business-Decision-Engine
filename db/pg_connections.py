@@ -1,86 +1,77 @@
 # db/pg_connections.py
 """
-PostgreSQL database connections for production deployment.
-This file handles both PostgreSQL (production) and SQLite (local development).
+PostgreSQL database connection manager.
+
+This module handles PostgreSQL connections for any cloud deployment platform
+(Railway, DigitalOcean, Render, Heroku, AWS, etc.) or local development.
+
+Environment Variables Required:
+    DATABASE_URL: Full PostgreSQL connection URL
+    Format: postgresql://user:password@host:port/database?sslmode=require
+
+Logging:
+    - Outputs to stdout (works in all cloud environments)
+    - Compatible with Railway, DigitalOcean, Render, Heroku, etc.
 """
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
 import os
+import sys
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
-# Get database URL from environment variable (Render will provide this)
-# Falls back to SQLite for local development
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-# Render provides PostgreSQL URL starting with 'postgres://'
-# But SQLAlchemy 2.0+ requires 'postgresql://'
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# If no DATABASE_URL provided, use SQLite for local development
-if not DATABASE_URL:
-    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(CURRENT_DIR, "aitugo.db")
-    DATABASE_URL = f"sqlite:///{db_path}"
-    print(f"ℹ️  Using SQLite for local development: {db_path}")
-    # SQLite-specific configuration
-    connect_args = {"check_same_thread": False}
-    is_sqlite = True
-else:
-    print(f"✓ Using PostgreSQL database")
-    # PostgreSQL doesn't need check_same_thread
-    connect_args = {}
-    is_sqlite = False
-
-# Create engine with appropriate settings
+# Load environment variables from .env file
 try:
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args=connect_args,
-        # Connection pool settings (only for PostgreSQL)
-        pool_pre_ping=True if not is_sqlite else False,
-        pool_recycle=3600 if not is_sqlite else None,
-    )
-    # Test connection
-    with engine.connect() as conn:
-        pass
-except Exception as e:
-    print(f"⚠️  Database connection failed: {e}")
-    print(f"⚠️  Falling back to SQLite...")
-    # Fallback to SQLite if PostgreSQL connection fails
-    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(CURRENT_DIR, "aitugo.db")
-    DATABASE_URL = f"sqlite:///{db_path}"
-    connect_args = {"check_same_thread": False}
-    is_sqlite = True
-    engine = create_engine(DATABASE_URL, connect_args=connect_args)
+    from dotenv import load_dotenv
+    load_dotenv()  # Load .env file into environment
+except ImportError:
+    # python-dotenv not installed, will use system environment variables
+    pass
 
-# Create session factory
-SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-
-# Declare base for ORM models
+# Base class for all ORM models
 Base = declarative_base()
 
+# Get database URL from environment
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-def get_db():
-    """
-    Dependency function to get database session.
-    Used in FastAPI route dependencies.
+if not DATABASE_URL:
+    print("❌ ERROR: DATABASE_URL environment variable not set!")
+    print("Please set DATABASE_URL in your .env file or environment")
+    print("Format: postgresql://user:password@host:port/database")
+    sys.exit(1)
+
+print("✓ Connecting to PostgreSQL database...")
+
+try:
+    # Create PostgreSQL engine
+    # Connection pooling settings optimized for cloud deployments
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,      # Verify connections before using
+        pool_recycle=300,        # Recycle connections every 5 minutes (prevents stale connections)
+        pool_size=5,             # Number of permanent connections
+        max_overflow=10,         # Additional connections when needed
+        echo=False,              # Set to True for SQL query logging (debugging)
+    )
     
-    Yields:
-        Session: Database session
-    """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    # Test the connection
+    with engine.connect() as conn:
+        print("✓ Successfully connected to PostgreSQL!")
+    
+except Exception as e:
+    print(f"❌ Failed to connect to PostgreSQL database!")
+    print(f"Error: {e}")
+    print(f"URL format: {DATABASE_URL.split('@')[0]}@***")
+    sys.exit(1)
+
+# Create SessionLocal class for database sessions
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
     """
-    Initialize database - create all tables.
-    Call this on application startup.
+    Initialize database tables.
+    Creates all tables defined in the models.
     """
     from .pg_models import User, AITool  # Import models
     Base.metadata.create_all(bind=engine)
@@ -90,14 +81,27 @@ def init_db():
 def get_db_info():
     """
     Get information about current database connection.
-    Useful for debugging.
     
     Returns:
         dict: Database connection info
     """
-    db_type = "postgresql" if "postgresql" in str(engine.url) else "sqlite"
     return {
-        "type": db_type,
-        "url": str(engine.url).split("@")[-1] if "@" in str(engine.url) else str(engine.url),
+        "type": "postgresql",
+        "driver": "psycopg2",
+        "host": str(engine.url).split("@")[-1].split("/")[0] if "@" in str(engine.url) else "unknown",
+        "database": engine.url.database,
+        "url": str(engine.url).replace(str(engine.url.password), '***') if engine.url.password else str(engine.url),
         "pool_size": engine.pool.size() if hasattr(engine.pool, 'size') else None,
     }
+
+
+def get_db():
+    """
+    Dependency function for FastAPI routes.
+    Yields a database session and closes it after use.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

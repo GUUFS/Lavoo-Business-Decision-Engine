@@ -6,21 +6,14 @@ from fastapi import FastAPI, Request, APIRouter,  Depends, Form, HTTPException
 # import the function for rendering the HTML sites
 from fastapi.responses import FileResponse, JSONResponse
 
-# import the function for rendering the static files
-from fastapi.staticfiles import StaticFiles
-
-# import the function for rendering the Jinja files
-from jinja2 import Environment, FileSystemLoader
-from fastapi.templating import Jinja2Templates
-
-# import the database files
-from db.connections import get_db, SessionLocal
+# import the database files (PostgreSQL/Neon)
+from db.pg_connections import get_db, SessionLocal
 
 # import the session
 from sqlalchemy.orm import Session
 
-# import the user models for
-from db.models import User
+# import the user models for PostgreSQL
+from db.pg_models import User
 
 # import the function to hash the passwords
 from passlib.context import CryptContext
@@ -69,9 +62,3 @@ def signup(
     db.commit()
     db.refresh(new_user)
     return {"message": "User created successfully", "user_id": new_user.id}
-
-'''
-@router.get("/signup")
-async def serve_home():
-    return FileResponse(os.path.join(OUT_DIR, "index.html"))
-'''
