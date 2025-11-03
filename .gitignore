@@ -59,3 +59,4 @@ Thumbs.db
 
 # Testing
 coverage/
+ai/cache/

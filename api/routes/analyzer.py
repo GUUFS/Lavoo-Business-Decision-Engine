@@ -1,7 +1,8 @@
 
 from fastapi import APIRouter, Depends
 from api.routes.login import get_current_user
-from db.models import User, UserResponse
+# Import PostgreSQL user models
+from db.pg_models import User, UserResponse
 
 router = APIRouter(
     prefix="/analyzer",

@@ -2,11 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from db.connections import get_db, SessionLocal
+# Import PostgreSQL/Neon database connections
+from db.pg_connections import get_db, SessionLocal
 
 
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from db.models import User, ShowUser
+# Import PostgreSQL user models
+from db.pg_models import User, ShowUser
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
@@ -28,7 +30,6 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -62,19 +63,21 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     
 @router.post("/login")
 def login(request: ShowUser, db: Session = Depends(get_db)):
+    """User login endpoint - returns JWT access token"""
     user = db.query(User).filter(User.email == request.email).first()
-    '''Check if the email is present'''
+    
+    # Check if the email is registered
     if not user:
         raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, 
                             detail = f'Email has not been registered!')
 
-    #password = pwd_context.hash(request.password)
+    # Verify password
     if not pwd_context.verify(request.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Password is incorrect!")
     
-
+    # Generate access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email},
@@ -82,7 +85,6 @@ def login(request: ShowUser, db: Session = Depends(get_db)):
     )
 
     return {"access_token": access_token, "token_type": "bearer"}
-    return {"message": "Login successful"}
 
 # Add this new endpoint for Swagger UI OAuth2 form
 @router.post("/token")
