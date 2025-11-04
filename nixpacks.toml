@@ -1,0 +1,21 @@
+# Nixpacks configuration for Railway
+# This tells Railway to use both Node.js and Python
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "python312"]
+
+[phases.install]
+cmds = [
+  "npm install",
+  "pip install -r requirements.txt"
+]
+
+[phases.build]
+cmds = [
+  "npm run build",
+  "rm -rf web/*",
+  "cp -r out/* web/"
+]
+
+[start]
+cmd = "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"
