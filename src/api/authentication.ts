@@ -24,7 +24,8 @@ interface SignupData {
 export const useLogin = () => {
   return useMutation<AuthResponse, Error, LoginData>({
     mutationFn: async (data) => {
-      const response = await fetch("http://localhost:8000/login", {
+      const baseURL = import.meta.env.VITE_APP_API_BASE_URL || "http://localhost:8000";
+      const response = await fetch(`${baseURL}/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

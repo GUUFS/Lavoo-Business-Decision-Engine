@@ -68,7 +68,7 @@ export default defineConfig({
   base:'/',
   build: {
     sourcemap: true,
-    outDir: 'out',
+    outDir: 'web',  // Changed from 'out' to 'web' to match backend expectations
   },
   resolve: {
     alias: {
