@@ -20,8 +20,7 @@ npm run build
 # Step 3: Install Python dependencies
 echo ""
 echo "🐍 Installing Python dependencies..."
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install --break-system-packages -r requirements.txt
 
 echo ""
 echo "✅ Build complete!"
