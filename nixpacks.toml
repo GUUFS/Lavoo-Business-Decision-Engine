@@ -2,12 +2,11 @@
 # This tells Railway to use both Node.js and Python
 
 [phases.setup]
-nixPkgs = ["nodejs_20", "python312"]
+nixPkgs = ["nodejs_20", "python312", "python312Packages.pip"]
 
 [phases.install]
 cmds = [
   "npm install",
-  "python -m pip install --upgrade pip",
   "pip install -r requirements.txt"
 ]
 
