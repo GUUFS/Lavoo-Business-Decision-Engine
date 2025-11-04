@@ -59,4 +59,3 @@ dist/
 
 # Scripts not needed in production
 *.sh
-!start.sh
