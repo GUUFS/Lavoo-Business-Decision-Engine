@@ -28,12 +28,11 @@ RUN npm run build
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy start script and make it executable
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# Copy start script
+COPY start.py /app/start.py
 
-# Expose port (Railway will set PORT env var)
+# Expose port
 EXPOSE 8000
 
-# Start the application using the start script
-CMD ["/app/start.sh"]
+# Start the application
+CMD ["python", "start.py"]
