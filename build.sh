@@ -12,20 +12,15 @@ echo ""
 echo "📦 Installing Node.js dependencies..."
 npm install
 
-# Step 2: Build React frontend
+# Step 2: Build React frontend (now outputs directly to web/)
 echo ""
 echo "⚛️  Building React frontend..."
 npm run build
 
-# Step 3: Copy build to web directory
-echo ""
-echo "📁 Copying build to web directory..."
-rm -rf web/*
-cp -r out/* web/
-
-# Step 4: Install Python dependencies
+# Step 3: Install Python dependencies
 echo ""
 echo "🐍 Installing Python dependencies..."
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 echo ""
