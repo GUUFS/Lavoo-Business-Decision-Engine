@@ -1,0 +1,62 @@
+# Git files
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+env
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+tests/
+*.test.js
+*.spec.js
+
+# Documentation
+*.md
+!README.md
+
+# Logs
+*.log
+logs/
+ai/logs/
+
+# Development files
+.env
+.env.local
+.env.*.local
+
+# Build outputs (will be generated during build)
+web/
+out/
+dist/
+
+# Scripts not needed in production
+*.sh
+!start.sh
