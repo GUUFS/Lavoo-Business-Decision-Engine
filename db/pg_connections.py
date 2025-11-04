@@ -16,6 +16,7 @@ Logging:
 
 import os
 import sys
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -23,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
+
     load_dotenv()  # Load .env file into environment
 except ImportError:
     # python-dotenv not installed, will use system environment variables
@@ -47,19 +49,19 @@ try:
     # Connection pooling settings optimized for cloud deployments
     engine = create_engine(
         DATABASE_URL,
-        pool_pre_ping=True,      # Verify connections before using
-        pool_recycle=300,        # Recycle connections every 5 minutes (prevents stale connections)
-        pool_size=5,             # Number of permanent connections
-        max_overflow=10,         # Additional connections when needed
-        echo=False,              # Set to True for SQL query logging (debugging)
+        pool_pre_ping=True,  # Verify connections before using
+        pool_recycle=300,  # Recycle connections every 5 minutes (prevents stale connections)
+        pool_size=5,  # Number of permanent connections
+        max_overflow=10,  # Additional connections when needed
+        echo=False,  # Set to True for SQL query logging (debugging)
     )
-    
+
     # Test the connection
     with engine.connect() as conn:
         print("✓ Successfully connected to PostgreSQL!")
-    
+
 except Exception as e:
-    print(f"❌ Failed to connect to PostgreSQL database!")
+    print("❌ Failed to connect to PostgreSQL database!")
     print(f"Error: {e}")
     print(f"URL format: {DATABASE_URL.split('@')[0]}@***")
     sys.exit(1)
@@ -73,7 +75,6 @@ def init_db():
     Initialize database tables.
     Creates all tables defined in the models.
     """
-    from .pg_models import User, AITool  # Import models
     Base.metadata.create_all(bind=engine)
     print("✓ Database tables created successfully")
 
@@ -81,17 +82,21 @@ def init_db():
 def get_db_info():
     """
     Get information about current database connection.
-    
+
     Returns:
         dict: Database connection info
     """
     return {
         "type": "postgresql",
         "driver": "psycopg2",
-        "host": str(engine.url).split("@")[-1].split("/")[0] if "@" in str(engine.url) else "unknown",
+        "host": str(engine.url).split("@")[-1].split("/")[0]
+        if "@" in str(engine.url)
+        else "unknown",
         "database": engine.url.database,
-        "url": str(engine.url).replace(str(engine.url.password), '***') if engine.url.password else str(engine.url),
-        "pool_size": engine.pool.size() if hasattr(engine.pool, 'size') else None,
+        "url": str(engine.url).replace(str(engine.url.password), "***")
+        if engine.url.password
+        else str(engine.url),
+        "pool_size": engine.pool.size() if hasattr(engine.pool, "size") else None,
     }
 
 

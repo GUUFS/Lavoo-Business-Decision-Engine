@@ -1,37 +1,35 @@
 # load the signup page
 
 # import the fastAPI library into
-from fastapi import FastAPI, Request, APIRouter,  Depends, Form, HTTPException
+import os
 
-# import the function for rendering the HTML sites
-from fastapi.responses import FileResponse, JSONResponse
-
-# import the database files (PostgreSQL/Neon)
-from db.pg_connections import get_db, SessionLocal
-
-# import the session
-from sqlalchemy.orm import Session
-
-# import the user models for PostgreSQL
-from db.pg_models import User
+from fastapi import APIRouter, Depends, Form, HTTPException
 
 # import the function to hash the passwords
 from passlib.context import CryptContext
 
-import os
+# import the session
+from sqlalchemy.orm import Session
 
-router = APIRouter(
-    prefix = "",
-    tags = ['signup']
-)
+# import the function for rendering the HTML sites
+# import the database files (PostgreSQL/Neon)
+from db.pg_connections import get_db
+
+# import the user models for PostgreSQL
+from db.pg_models import User
+
+router = APIRouter(prefix="", tags=["signup"])
 
 # call the function for hashing the user's password
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 # for the project's static folder done with react.js
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))   # get the absolute path of the file
-BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(CURRENT_DIR)))  # get the current directory of the file
-OUT_DIR = os.path.join(BASE_DIR, "web")    # get the absolute path of the out folder
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))  # get the absolute path of the file
+BASE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(CURRENT_DIR))
+)  # get the current directory of the file
+OUT_DIR = os.path.join(BASE_DIR, "web")  # get the absolute path of the out folder
+
 
 @router.post("/signup")
 def signup(
@@ -39,7 +37,7 @@ def signup(
     email: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Create a new user account.
