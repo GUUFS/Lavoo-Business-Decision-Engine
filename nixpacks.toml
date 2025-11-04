@@ -6,13 +6,13 @@ nixPkgs = ["nodejs_20", "python312", "python312Packages.pip"]
 
 [phases.install]
 cmds = [
-  "npm install",
-  "pip install --break-system-packages -r requirements.txt"
+  "npm install"
 ]
 
 [phases.build]
 cmds = [
-  "npm run build"
+  "npm run build",
+  "pip install --break-system-packages -r requirements.txt"
 ]
 
 [start]
