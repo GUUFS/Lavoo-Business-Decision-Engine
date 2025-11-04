@@ -1,19 +1,20 @@
 # Nixpacks configuration for Railway
-# This tells Railway to use both Node.js and Python
+# Using Python virtual environment to avoid Nix conflicts
 
 [phases.setup]
-nixPkgs = ["nodejs_20", "python312", "python312Packages.pip"]
+nixPkgs = ["nodejs_20", "python312", "python312Packages.pip", "python312Packages.virtualenv"]
 
 [phases.install]
 cmds = [
-  "npm install"
+  "npm install",
+  "python -m venv /opt/venv"
 ]
 
 [phases.build]
 cmds = [
   "npm run build",
-  "pip install --break-system-packages -r requirements.txt"
+  ". /opt/venv/bin/activate && pip install -r requirements.txt"
 ]
 
 [start]
-cmd = "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+cmd = ". /opt/venv/bin/activate && uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"
