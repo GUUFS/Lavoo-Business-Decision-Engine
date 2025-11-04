@@ -1,0 +1,57 @@
+# DigitalOcean App Platform Configuration
+# Copy this file to project root as .do/app.yaml
+# Learn more: https://docs.digitalocean.com/products/app-platform/reference/app-spec/
+
+name: ai-business-analyst
+
+services:
+  # Backend API
+  - name: backend
+    environment_slug: python
+    github:
+      repo: your-username/ai-business-analyst
+      branch: main
+      deploy_on_push: true
+    
+    build_command: pip install -r requirements.txt
+    run_command: uvicorn api.main:app --host 0.0.0.0 --port 8080
+    
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs  # $5/month
+    
+    # Environment Variables
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      - key: PYTHON_VERSION
+        scope: RUN_TIME
+        value: "3.12.3"
+    
+    # Health check
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 30
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    
+    # Routes
+    routes:
+      - path: /api
+    
+    # Post-deploy migration (optional)
+    # jobs:
+    #   - name: migrate
+    #     kind: POST_DEPLOY
+    #     run_command: python scripts/migrate_csv_to_db.py
+
+# Database
+databases:
+  - name: db
+    engine: PG
+    version: "15"
+    production: false  # Set to true for production
+    cluster_name: ai-business-analyst-db

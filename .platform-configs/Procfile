@@ -1,0 +1,9 @@
+# Heroku Procfile
+# Copy this file to project root as Procfile (no extension)
+# Learn more: https://devcenter.heroku.com/articles/procfile
+
+# Web process (handles HTTP requests)
+web: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+
+# Optional: Run migration on release (runs before new code is live)
+release: python scripts/migrate_csv_to_db.py
