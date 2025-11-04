@@ -1,8 +1,9 @@
-# Railway.toml - Railway Configuration File
-# This tells Railway how to build and deploy your application
+# Railway Configuration
+# Official Railway config for Docker-based deployment
 
 [build]
 builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 healthcheckPath = "/health"

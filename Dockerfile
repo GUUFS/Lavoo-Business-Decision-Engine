@@ -28,8 +28,12 @@ RUN npm run build
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy start script and make it executable
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Expose port (Railway will set PORT env var)
 EXPOSE 8000
 
-# Start the application
-CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start the application using the start script
+CMD ["/app/start.sh"]
