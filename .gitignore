@@ -23,7 +23,7 @@ package-lock.json
 dist/
 out/
 build/
-
+web/
 
 # Logs
 ai/logs/*.log
