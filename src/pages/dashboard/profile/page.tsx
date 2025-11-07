@@ -7,7 +7,7 @@ export default function ProfilePage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-gray-50 flex min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
       <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-4xl mx-auto">
             {/* Header */}
