@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
-from api.routes import analyzer, index, login, signup
+from api.routes import analyzer, business_analyzer, index, login, signup
 
 logger.info("✓ Using Neon PostgreSQL database")
 
@@ -97,6 +97,7 @@ app.include_router(login.router, prefix="/api")  # For React frontend that uses 
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
 app.include_router(analyzer.router)
+app.include_router(business_analyzer.router)  # Business analysis API
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)
