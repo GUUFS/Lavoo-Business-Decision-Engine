@@ -1,10 +1,11 @@
 import type { RouteObject } from "react-router-dom";
 import NotFound from "../pages/NotFound";
 import Home from "../pages/home/page";
-import Analyze from "../pages/analyze/page";
 import Results from "../pages/results/page";
 import SignUp from "../pages/signup/page";
 import Login from "../pages/login/page";
+import Dashboard from "../pages/dashboard/page";
+import DashboardAnalyze from "../pages/dashboard/analyze/page";
 import { ProtectedRoute } from "../components/protectedRoute";
 
 const routes: RouteObject[] = [
@@ -17,8 +18,12 @@ const routes: RouteObject[] = [
     element: <ProtectedRoute />,
     children: [
       {
-        path: "/analyze",
-        element: <Analyze />,
+        path: "/dashboard",
+        element: <Dashboard />,
+      },
+      {
+        path: "/dashboard/analyze",
+        element: <DashboardAnalyze />,
       },
       {
         path: "/results",
