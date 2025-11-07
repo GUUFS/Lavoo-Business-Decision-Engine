@@ -1,9 +1,12 @@
 
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 export default function AlertsPage() {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedPriority, setSelectedPriority] = useState('all');
+  const [isPremium] = useState(false); // This would come from user's subscription statuss
+  const navigate = useNavigate()
 
   const alerts = [
     {
@@ -69,6 +72,10 @@ export default function AlertsPage() {
     return categoryMatch && priorityMatch;
   });
 
+  // Show only first 2 alerts + premium upgrade alert if not premium
+  const displayedAlerts = isPremium ? filteredAlerts : filteredAlerts.slice(0, 2);
+  const hasMoreAlerts = !isPremium && filteredAlerts.length > 2;
+
   const getScoreColor = (score: number) => {
     if (score >= 90) return 'text-green-600 bg-green-50 border-green-200';
     if (score >= 80) return 'text-blue-600 bg-blue-50 border-blue-200';
@@ -94,7 +101,7 @@ export default function AlertsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8 min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6 sm:mb-8">
@@ -108,7 +115,7 @@ export default function AlertsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs sm:text-sm font-medium text-gray-600">Total Alerts</p>
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">{alerts.length}</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">{filteredAlerts.length}</p>
               </div>
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-100 rounded-lg flex items-center justify-center">
                 <i className="ri-notification-line text-blue-600 text-lg sm:text-xl"></i>
@@ -120,7 +127,7 @@ export default function AlertsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs sm:text-sm font-medium text-gray-600">High Priority</p>
-                <p className="text-xl sm:text-2xl font-bold text-red-600">{alerts.filter(a => a.priority === 'High').length}</p>
+                <p className="text-xl sm:text-2xl font-bold text-red-600">{filteredAlerts.filter(a => a.priority === 'High').length}</p>
               </div>
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-red-100 rounded-lg flex items-center justify-center">
                 <i className="ri-alarm-warning-line text-red-600 text-lg sm:text-xl"></i>
@@ -144,7 +151,7 @@ export default function AlertsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs sm:text-sm font-medium text-gray-600">This Week</p>
-                <p className="text-xl sm:text-2xl font-bold text-orange-600">12</p>
+                <p className="text-xl sm:text-2xl font-bold text-orange-600">{filteredAlerts.filter(a => a.timeRemaining.includes('day') && parseInt(a.timeRemaining) <= 7).length}</p>
               </div>
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-100 rounded-lg flex items-center justify-center">
                 <i className="ri-calendar-week-line text-orange-600 text-lg sm:text-xl"></i>
@@ -189,7 +196,7 @@ export default function AlertsPage() {
 
         {/* Alerts List */}
         <div className="space-y-6 sm:space-y-8">
-          {filteredAlerts.map((alert) => (
+          {displayedAlerts.map((alert) => (
             <div key={alert.id} className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               {/* Alert Header */}
               <div className="p-4 sm:p-6 border-b border-gray-200">
@@ -275,8 +282,101 @@ export default function AlertsPage() {
               </div>
             </div>
           ))}
+
+          {/* Premium Upgrade Alert */}
+          {hasMoreAlerts && (
+            <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {/* Alert Header */}
+              <div className="p-4 sm:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3 sm:gap-4">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-orange-400 to-orange-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-vip-crown-line text-white text-lg sm:text-xl"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">
+                        {filteredAlerts.length - 2} More Premium Opportunities Available
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-orange-100 to-orange-200 text-orange-800 border border-orange-300">
+                          Premium Content
+                        </span>
+                        <span className="text-xs sm:text-sm text-gray-500">
+                          <i className="ri-lock-line mr-1"></i>
+                          Unlock with Premium
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <div className="px-3 py-2 rounded-lg border bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200 text-center">
+                      <div className="text-lg sm:text-xl font-bold text-orange-600">★</div>
+                      <div className="text-xs font-medium text-orange-600">Premium</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Premium Content */}
+              <div className="p-4 sm:p-6">
+                <div className="text-center py-8 sm:py-12">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <i className="ri-vip-crown-line text-white text-2xl sm:text-3xl"></i>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Unlock Premium Opportunities</h3>
+                  <p className="text-sm sm:text-base text-gray-600 mb-2 max-w-md mx-auto">
+                    Get access to {filteredAlerts.length - 2} additional high-value opportunities with detailed insights and action plans
+                  </p>
+                  <p className="text-xs sm:text-sm text-orange-600 font-medium mb-8">
+                    Premium members see 3x more opportunities on average
+                  </p>
+                  
+                  {/* Premium Features */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 max-w-2xl mx-auto">
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-eye-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">Full Alert Details</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-lightbulb-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">AI Insights</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-rocket-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">Action Plans</p>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => navigate('/dashboard/upgrade')}
+                    className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-8 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all font-medium text-sm sm:text-base whitespace-nowrap shadow-lg cursor-pointer transform hover:scale-105"
+                  >
+                    Upgrade to Premium
+                  </button>
+                  <p className="text-xs text-gray-5	00 mt-3">Starting at $29/month • Cancel anytime</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Show message if no alerts match filters */}
+        {displayedAlerts.length === 0 && !hasMoreAlerts && (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <i className="ri-notification-off-line text-gray-400 text-2xl"></i>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No alerts found</h3>
+            <p className="text-gray-600">Try adjusting your filters to see more opportunities.</p>
+          </div>
+        )}
         </div>
       </div>
-    </div>
   );
 }

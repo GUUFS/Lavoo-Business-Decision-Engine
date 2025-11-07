@@ -38,8 +38,7 @@ export default function Login() {
   const onSubmit = (data: LoginFormData) => {
     mutate(data, {
       onSuccess: () => {
-        toast.success("Login successful!");
-        navigate("/analyze");
+        navigate("/dashboard");
       },
       onError: (err) => {
         toast.error(err.message || "Login failed");

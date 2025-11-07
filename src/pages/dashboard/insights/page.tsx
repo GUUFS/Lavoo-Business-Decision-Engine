@@ -2,10 +2,13 @@
 import { useState } from 'react';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
 import Footer from '../../../components/feature/Footer';
+import { useNavigate } from 'react-router-dom';
 
 export default function InsightsPage() {
+  const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [isPremium] = useState(false); // This would come from user's subscription status
 
   const insights = [
     {
@@ -82,6 +85,10 @@ export default function InsightsPage() {
     return selectedCategory === 'all' || insight.category.toLowerCase() === selectedCategory;
   });
 
+  // Show only first 2 alerts + premium upgrade alert if not premium
+  const displayedAlerts = isPremium ? filteredInsights : filteredInsights.slice(0, 2);
+  const premiumAlertsCount = filteredInsights.filter(insight => insight.isPremium).length;
+
   const getCategoryColor = (category: string) => {
     switch (category) {
       case 'SEO': return 'bg-blue-100 text-blue-800 border-blue-200';
@@ -105,7 +112,7 @@ export default function InsightsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8 min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="mb-6 sm:mb-8">
@@ -164,7 +171,7 @@ export default function InsightsPage() {
 
         {/* Insights List */}
         <div className="space-y-6 sm:space-y-8">
-          {filteredInsights.map((insight, index) => (
+          {displayedAlerts.map((insight, index) => (
             <div key={insight.id} className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
               {/* Article Header */}
               <div className="p-4 sm:p-6 border-b border-gray-200">
@@ -194,132 +201,159 @@ export default function InsightsPage() {
               </div>
 
               {/* Article Content */}
-              <div className="relative">
-                {insight.isPremium && index >= 2 ? (
-                  // Premium Content Overlay
-                  <div className="relative">
-                    <div className="p-4 sm:p-6 filter blur-sm pointer-events-none">
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
-                              <i className="ri-refresh-line text-blue-600 text-sm"></i>
-                            </div>
-                            <h4 className="text-base sm:text-lg font-semibold text-gray-900">What Changed</h4>
-                          </div>
-                          <div className="h-16 bg-gray-200 rounded animate-pulse"></div>
-                        </div>
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 bg-yellow-100 rounded-full flex items-center justify-center">
-                              <i className="ri-lightbulb-line text-yellow-600 text-sm"></i>
-                            </div>
-                            <h4 className="text-base sm:text-lg font-semibold text-gray-900">Why It Matters</h4>
-                          </div>
-                          <div className="h-16 bg-gray-200 rounded animate-pulse"></div>
-                        </div>
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
-                              <i className="ri-play-circle-line text-green-600 text-sm"></i>
-                            </div>
-                            <h4 className="text-base sm:text-lg font-semibold text-gray-900">Action to Take</h4>
-                          </div>
-                          <div className="h-16 bg-gray-200 rounded animate-pulse"></div>
-                        </div>
+              <div className="p-4 sm:p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
+                  {/* What Changed */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                        <i className="ri-refresh-line text-blue-600 text-sm"></i>
                       </div>
+                      <h4 className="text-base sm:text-lg font-semibold text-gray-900">What Changed</h4>
                     </div>
-                    
-                    {/* Premium Overlay */}
-                    <div className="absolute inset-0 bg-white/90 flex items-center justify-center">
-                      <div className="text-center p-6 sm:p-8 max-w-md mx-auto">
-                        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                          <i className="ri-vip-crown-line text-white text-2xl sm:text-3xl"></i>
-                        </div>
-                        <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">Upgrade to Premium</h3>
-                        <p className="text-sm sm:text-base text-gray-600 mb-6">Get access to detailed insights and actionable recommendations</p>
-                        <button className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all font-medium text-sm sm:text-base whitespace-nowrap shadow-lg">
-                          Upgrade Now
-                        </button>
+                    <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.whatChanged}</p>
+                  </div>
+
+                  {/* Why It Matters */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-yellow-100 rounded-full flex items-center justify-center">
+                        <i className="ri-lightbulb-line text-yellow-600 text-sm"></i>
                       </div>
+                      <h4 className="text-base sm:text-lg font-semibold text-gray-900">Why It Matters</h4>
                     </div>
+                    <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.whyItMatters}</p>
                   </div>
-                ) : (
-                  // Full Content
-                  <div className="p-4 sm:p-6">
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
-                      {/* What Changed */}
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
-                            <i className="ri-refresh-line text-blue-600 text-sm"></i>
-                          </div>
-                          <h4 className="text-base sm:text-lg font-semibold text-gray-900">What Changed</h4>
-                        </div>
-                        <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.whatChanged}</p>
-                      </div>
 
-                      {/* Why It Matters */}
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-yellow-100 rounded-full flex items-center justify-center">
-                            <i className="ri-lightbulb-line text-yellow-600 text-sm"></i>
-                          </div>
-                          <h4 className="text-base sm:text-lg font-semibold text-gray-900">Why It Matters</h4>
-                        </div>
-                        <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.whyItMatters}</p>
+                  {/* Action to Take */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
+                        <i className="ri-play-circle-line text-green-600 text-sm"></i>
                       </div>
-
-                      {/* Action to Take */}
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
-                            <i className="ri-play-circle-line text-green-600 text-sm"></i>
-                          </div>
-                          <h4 className="text-base sm:text-lg font-semibold text-gray-900">Action to Take</h4>
-                        </div>
-                        <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.actionToTake}</p>
-                      </div>
+                      <h4 className="text-base sm:text-lg font-semibold text-gray-900">Action to Take</h4>
                     </div>
+                    <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.actionToTake}</p>
                   </div>
-                )}
+                </div>
+              </div>
 
-                {/* Action Buttons */}
-                <div className="p-4 sm:p-6 border-t border-gray-200">
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <button 
-                      onClick={() => window.open(insight.source, '_blank')}
-                      disabled={insight.isPremium && index >= 2}
-                      className={`flex-1 flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm sm:text-base whitespace-nowrap transition-colors ${
-                        insight.isPremium && index >= 2
-                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                          : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      <i className="ri-external-link-line mr-2"></i>
-                      View Source
-                    </button>
-                    <button 
-                      onClick={() => markAsRead(insight.id)}
-                      disabled={readArticles.includes(insight.id) || (insight.isPremium && index >= 2)}
-                      className={`flex-1 flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm sm:text-base whitespace-nowrap transition-colors ${
-                        readArticles.includes(insight.id)
-                          ? 'bg-green-100 text-green-700 cursor-not-allowed'
-                          : insight.isPremium && index >= 2
-                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                          : 'bg-orange-500 text-white hover:bg-orange-600'
-                      }`}
-                    >
-                      <i className={`${readArticles.includes(insight.id) ? 'ri-check-line' : 'ri-star-line'} mr-2`}></i>
-                      {readArticles.includes(insight.id) ? 'Read (+15 points)' : 'Mark as Read (+15 points)'}
-                    </button>
-                  </div>
+              {/* Action Buttons */}
+              <div className="p-4 sm:p-6 border-t border-gray-200">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button 
+                    onClick={() => window.open(insight.source, '_blank')}
+                    className="flex-1 flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm sm:text-base whitespace-nowrap transition-colors border border-gray-300 text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <i className="ri-external-link-line mr-2"></i>
+                    View Source
+                  </button>
+                  <button 
+                    onClick={() => markAsRead(insight.id)}
+                    disabled={readArticles.includes(insight.id)}
+                    className={`flex-1 flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm sm:text-base whitespace-nowrap transition-colors cursor-pointer ${
+                      readArticles.includes(insight.id)
+                        ? 'bg-green-100 text-green-700 cursor-not-allowed'
+                        : 'bg-orange-500 text-white hover:bg-orange-600'
+                    }`}
+                  >
+                    <i className={`${readArticles.includes(insight.id) ? 'ri-check-line' : 'ri-star-line'} mr-2`}></i>
+                    {readArticles.includes(insight.id) ? 'Read (+15 points)' : 'Mark as Read (+15 points)'}
+                  </button>
                 </div>
               </div>
             </div>
           ))}
+
+          {/* Premium Upgrade Alert */}
+          {!isPremium && premiumAlertsCount > 0 && (
+            <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {/* Alert Header */}
+              <div className="p-4 sm:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 sm:gap-4 flex-1">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-orange-400 to-orange-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-vip-crown-line text-white text-lg sm:text-xl"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-3">
+                        {premiumAlertsCount} More Premium Insights Available
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-orange-100 to-orange-200 text-orange-800 border border-orange-300">
+                          Premium Content
+                        </span>
+                        <span className="text-xs sm:text-sm text-gray-500">
+                          <i className="ri-lock-line mr-1"></i>
+                          Unlock with Premium
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Premium Content */}
+              <div className="p-4 sm:p-6">
+                <div className="text-center py-8 sm:py-12">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <i className="ri-vip-crown-line text-white text-2xl sm:text-3xl"></i>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Unlock Premium Insights</h3>
+                  <p className="text-sm sm:text-base text-gray-600 mb-2 max-w-md mx-auto">
+                    Get access to {premiumAlertsCount} additional premium insights with detailed analysis and actionable recommendations
+                  </p>
+                  <p className="text-xs sm:text-sm text-orange-600 font-medium mb-8">
+                    Premium members get 3x more insights and exclusive content
+                  </p>
+                  
+                  {/* Premium Features */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 max-w-2xl mx-auto">
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-eye-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">Detailed Analysis</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-lightbulb-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">AI Insights</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-rocket-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">Action Plans</p>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => navigate('/dashboard/upgrade')}
+                    className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-8 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all font-medium text-sm sm:text-base whitespace-nowrap shadow-lg cursor-pointer transform hover:scale-105"
+                  >
+                    Upgrade to Premium
+                  </button>
+                  <p className="text-xs text-gray-500 mt-3">Starting at $29/month • Cancel anytime</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Show message if no insights match filters */}
+        {displayedAlerts.length === 0 && (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <i className="ri-article-line text-gray-400 text-2xl"></i>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No insights found</h3>
+            <p className="text-gray-600">Try adjusting your filters to see more insights.</p>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
