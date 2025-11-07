@@ -3,64 +3,81 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../../components/feature/Header';
 import Footer from '../../components/feature/Footer';
 import Button from '../../components/base/Button';
+import { useState } from 'react';
 
 export default function Home() {
   const navigate = useNavigate();
+  const [businessPrompt, setBusinessPrompt] = useState("")
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white">
       <Header />
       
       {/* Hero Section */}
-      <section 
-        className="relative bg-gradient-to-br from-orange-50 to-white py-12 sm:py-16 md:py-20 lg:py-32 overflow-hidden"
-      >
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-4xl mx-auto">
-            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-black leading-tight mb-4 sm:mb-6 px-2">
-              Turn Your Business Brief Into a 
-              <span className="text-orange-500"> Tailored AI Strategy</span>
-            </h1>
-            <p className="text-base sm:text-lg md:text-xl text-gray-600 mb-6 sm:mb-8 leading-relaxed px-4">
-              Describe your business and get a prioritized toolkit that boosts productivity, 
-              reduce friction and scales with your vision. Transform your business in minutes, not months.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center px-4">
-              <Button 
-                variant="primary" 
-                size="lg"
-                onClick={() => navigate('/signup')}
-                className="text-base sm:text-lg px-6 sm:px-8 py-3 sm:py-4 w-full sm:w-auto"
-              >
-                <i className="ri-rocket-line mr-2"></i>
+    <section className="relative bg-gradient-to-br from-orange-50 to-white py-12 sm:py-16 md:py-20 lg:py-32 overflow-hidden">
+  <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div className="text-center max-w-3xl mx-auto">
+      <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-black leading-tight mb-4 sm:mb-6 px-2">
+        Turn Your Business Brief Into a
+        <span className="text-orange-500"> Tailored AI Strategy</span>
+      </h1>
+      <p className="text-base sm:text-lg md:text-xl text-gray-600 mb-6 sm:mb-8 leading-relaxed px-4">
+        Describe your business and get a prioritized toolkit that boosts productivity,
+        reduces friction, and scales with your vision, all in minutes, not months.
+      </p>
+
+      {/* ChatGPT-like Input Box */}
+     <div className="w-full flex flex-col items-center">
+        <div className="w-full max-w-2xl bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200">
+          <textarea
+            value={businessPrompt}
+            onChange={(e) => setBusinessPrompt(e.target.value)}
+            placeholder="Example: I run a digital marketing agency with 5 clients. My biggest challenges include; scaling client acquisition without
+                     increasing ad spend, automating repetitive reporting tasks that take 10+ hours/week and improving content creation speed for 
+                     social media. Current monthly revenue is $10k and I would love this to increase to about $50k within 3 months. How can i 
+                     make this happen?"
+            rows={2}
+            className="w-full bg-transparent p-4 text-gray-700 text-base focus:outline-none resize-none placeholder:text-gray-400"/>
+    
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
+            <div className="text-sm text-gray-400">
+              {businessPrompt.length} characters
+            </div>
+      
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={() => navigate('/signup')}
+              disabled={!businessPrompt.trim()}
+              className="text-sm px-5 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">
+              <i className="ri-rocket-line mr-2"></i>
                 Start Analysis
-              </Button>
-              <Button 
-                variant="outline" 
-                size="lg"
-                className="text-base sm:text-lg px-6 sm:px-8 py-3 sm:py-4 w-full sm:w-auto"
-              >
-                <i className="ri-play-circle-line mr-2"></i>
-                Watch Demo
-              </Button>
-            </div>
-            <div className="mt-6 sm:mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm text-gray-500 px-4">
-              <div className="flex items-center">
-                <i className="ri-check-line text-green-500 mr-2"></i>
-                Free Analysis
-              </div>
-              <div className="flex items-center">
-                <i className="ri-check-line text-green-500 mr-2"></i>
-                Instant Results
-              </div>
-              <div className="flex items-center">
-                <i className="ri-check-line text-green-500 mr-2"></i>
-                No Credit Card
-              </div>
-            </div>
+            </Button>
           </div>
         </div>
-      </section>
+      </div>
+
+      {/* Feature icons below */}
+      <div className="mt-8 sm:mt-10 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-6 text-xs sm:text-sm text-gray-500 px-4">
+        <div className="flex items-center">
+          <i className="ri-check-line text-green-500 mr-2"></i>
+          Free Analysis
+        </div>
+        <div className="flex items-center">
+          <i className="ri-check-line text-green-500 mr-2"></i>
+          Instant Results
+        </div>
+        <div className="flex items-center">
+          <i className="ri-check-line text-green-500 mr-2"></i>
+          No Credit Card
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+      
+      
 
       {/* Features Section */}
       <section id="features" className="py-12 sm:py-16 md:py-20 bg-gradient-to-br from-orange-50 to-white">
@@ -200,15 +217,16 @@ export default function Home() {
             Join thousands of businesses that have already discovered their perfect AI strategy. 
             Get started today and see results in minutes.
           </p>
-          <Button 
-            variant="primary" 
-            size="lg"
-            onClick={() => navigate('/signup')}
-            className="text-base sm:text-lg px-6 sm:px-8 py-3 sm:py-4 w-full sm:w-auto mx-4"
-          >
-            <i className="ri-arrow-right-line mr-2"></i>
-            Start your analyis now
-          </Button>
+          <div>
+            <Button 
+              variant="primary" 
+              size="lg"
+              onClick={() => navigate('/signup')}
+              className="text-base sm:text-lg px-6 sm:px-8 py-3 sm:py-4 w-full sm:w-auto mx-4">
+              <i className="ri-arrow-right-line mr-2"></i>
+              Start your analyis now
+            </Button>
+          </div>
         </div>
       </section>
 

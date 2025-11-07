@@ -4,8 +4,11 @@ import Cookies from "js-cookie";
 
 import Button from "../base/Button";
 import { useCurrentUser } from "../../api/user";
+interface HeaderProps {
+  onMobileMenuClick?: () => void;
+}
 
-export default function Header() {
+export default function Header({onMobileMenuClick}:HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -17,6 +20,8 @@ export default function Header() {
   const isAnalyzePage = location.pathname === "/analyze";
   const isLoginPage = location.pathname === "/login";
   const isSignUpPage = location.pathname === "/signup";
+  const isDashboard = location.pathname.includes("dashboard");
+  const isResult = location.pathname === "/results";
 
   const handleLogout = () => {
     Cookies.remove("access_token");
@@ -38,23 +43,37 @@ export default function Header() {
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16 sm:h-20">
+        <div className={`flex justify-between items-center h-16 sm:h-20 ${isDashboard ? "!justify-end w-full" : ""}`}>
           {/* Logo */}
-          <div
-            className="flex items-center cursor-pointer"
-            onClick={() => navigate("/")}
-          >
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-500 rounded-lg flex items-center justify-center mr-2 sm:mr-3">
-              <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
+           {/* Mobile Menu Button - Show hamburger in dashboard */}
+          {isDashboard ? (
+            <button
+              className="md:hidden p-2 text-gray-700 hover:text-orange-500 transition-colors"
+              onClick={onMobileMenuClick}
+            >
+              <i className="ri-menu-line text-2xl"></i>
+            </button>
+          ) : (
+            /* Logo for non-dashboard pages */
+            <div
+              className="flex items-center cursor-pointer"
+              onClick={() => {
+                if(isDashboard || isLoginPage || isSignUpPage) return;
+                navigate("/");
+              }}
+            >
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-500 rounded-lg flex items-center justify-center mr-2 sm:mr-3">
+                <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
+              </div>
+              <span className="text-lg sm:text-xl font-bold text-black">
+                AItugo+
+              </span>
             </div>
-            <span className="text-lg sm:text-xl font-bold text-black">
-              AItugo+
-            </span>
-          </div>
+          )}
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-6 lg:space-x-8">
-            {(isLoginPage || isSignUpPage) ? (
+            {(isLoginPage || isSignUpPage || !isDashboard) ? (
               <button
                 onClick={() => navigate("/")}
                 className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
@@ -65,42 +84,42 @@ export default function Header() {
               <button
                 onClick={() => scrollToSection("features")}
                 className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-              >
-                Features
+              ><i className="ri-play-circle-line mr-2"></i>
+                Watch a Demo
               </button>
             )}
-            <button
+       {(isLoginPage || isSignUpPage || !isDashboard  || !isResult)   &&<button
               onClick={() => scrollToSection("blog")}
               className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
             >
               Blog
-            </button>
+            </button>}
 
-            {/* Show login/signup if NOT logged in */}
-            {!isAnalyzePage && !isLoggedIn && (
-              <>
-                {!isLoginPage && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigate("/login")}
-                    className="whitespace-nowrap"
-                  >
-                    Log In
-                  </Button>
-                )}
-                {!isSignUpPage && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => navigate("/signup")}
-                    className="whitespace-nowrap"
-                  >
-                    Sign Up
-                  </Button>
-                )}
-              </>
-            )}
+         {/* Show login/signup if NOT logged in and NOT on dashboard */}
+{!isAnalyzePage && !isLoggedIn && !isDashboard && (
+  <>
+    {!isLoginPage && (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => navigate("/login")}
+        className="whitespace-nowrap"
+      >
+        Log In
+      </Button>
+    )}
+    {!isSignUpPage && (
+      <Button
+        variant="primary"
+        size="sm"
+        onClick={() => navigate("/signup")}
+        className="whitespace-nowrap"
+      >
+        Sign Up
+      </Button>
+    )}
+  </>
+)}
 
             {/* Show user dropdown if logged in */}
             {isLoggedIn && !isLoading && (
@@ -135,7 +154,7 @@ export default function Header() {
           </nav>
 
           {/* Mobile Menu Button */}
-          <button
+          {/* <button
             className="md:hidden p-2 text-gray-700 hover:text-orange-500 transition-colors"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
           >
@@ -144,7 +163,7 @@ export default function Header() {
                 isMobileMenuOpen ? "ri-close-line" : "ri-menu-line"
               } text-2xl`}
             ></i>
-          </button>
+          </button> */}
         </div>
       </div>
     </header>

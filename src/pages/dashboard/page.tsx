@@ -1,14 +1,11 @@
 
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import DashboardSidebar from '../../components/feature/DashboardSidebar';
-import Header from '../../components/feature/Header';
-/*import Footer from '../../components/feature/Footer';*/
+
 import Button from '../../components/base/Button';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
 
   const urgentOpportunities = [
     {
@@ -128,13 +125,7 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <DashboardSidebar 
-        isMobileMenuOpen={isMobileMenuOpen}
-        setIsMobileMenuOpen={setIsMobileMenuOpen}
-      />
-      
-      <div className="flex-1 md:ml-64 flex flex-col">
+    <div className="flex-1  flex flex-col min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           
           {/* Header */}
@@ -142,20 +133,20 @@ export default function Dashboard() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
               <div className="flex-1">
                 <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mb-2">
-                  Welcome to Your Dashboard
+                  Welcome to AItugo+
                 </h1>
                 <p className="text-gray-600 text-sm md:text-base">
                   Get a complete overview of your business performance and access all tools from here.
                 </p>
               </div>
-              <div className="hidden lg:flex items-center space-x-4">
-                <div className="bg-white rounded-lg px-4 py-2 shadow-sm border border-gray-200">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <span className="text-sm text-gray-600">All systems operational</span>
-                  </div>
-                </div>
+          {/* <div className="hidden lg:flex items-center space-x-4">
+            <div className="bg-white rounded-lg px-4 py-2 shadow-sm border border-gray-200">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span className="text-sm text-gray-600">All systems operational</span>
               </div>
+            </div>
+          </div> */}
             </div>
           </div>
 
@@ -448,6 +439,5 @@ export default function Dashboard() {
         
   
       </div>
-    </div>
   );
 }

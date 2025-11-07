@@ -24,8 +24,7 @@ interface SignupData {
 export const useLogin = () => {
   return useMutation<AuthResponse, Error, LoginData>({
     mutationFn: async (data) => {
-      const baseURL = import.meta.env.VITE_APP_API_BASE_URL || "http://localhost:8000";
-      const response = await fetch(`${baseURL}/login`, {
+      const response = await fetch("http://localhost:8000/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -63,21 +62,7 @@ export const useLogin = () => {
 export const useSignup = () => {
   return useMutation<AuthResponse, Error, FormData>({
     mutationFn: async (data) => {
-      const res = await instance.post<AuthResponse>("/api/signup", data, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-      return res.data;
-    },
-    
-    onSuccess: () => {
-      toast.success("Account created successfully!");
-    },
-    
-    onError: (error: any) => {
-      const message = error.response?.data?.detail || "Signup failed";
-      toast.error(message);
-    },
+      const res = await instance.post<AuthResponse>("/api/signup", data);
+      return res.data;    },
   });
 };
