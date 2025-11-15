@@ -6,7 +6,7 @@ This file contains all ORM models for the application.
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Boolean
 from sqlalchemy.sql import func
 
 from .pg_connections import Base
@@ -27,6 +27,7 @@ class User(Base):
     confirm_password = Column(String(255), nullable=False)  # For validation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    is_admin = Column(Boolean, default=False)
 
 
 class AITool(Base):
@@ -266,3 +267,12 @@ class BusinessAnalysisResponse(BaseModel):
     estimated_cost: float
     timeline_weeks: int
     created_at: str
+
+class AuthResponse(BaseModel):
+    """Pydantic model for authentication token response"""
+    access_token: str
+    token_type: str
+    id: int
+    name: str
+    email: str
+    role: str

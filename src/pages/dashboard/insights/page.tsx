@@ -1,358 +1,1068 @@
 
-import { useState } from 'react';
+import { useState, useEffect} from 'react';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
-import Footer from '../../../components/feature/Footer';
 import { useNavigate } from 'react-router-dom';
 
-export default function InsightsPage() {
-  const navigate = useNavigate();
+
+export default function DashboardInsights() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [isPremium] = useState(false); // This would come from user's subscription status
+  const [readInsights, setReadInsights] = useState<Set<Insight['id']>>(new Set());
+  const [sharedInsights, setSharedInsights] = useState(new Set());
+  const [earnedPoints, setEarnedPoints] = useState(0);
+  const [timers, setTimers] = useState<Record<Insight['id'], ReturnType<typeof setTimeout>>>({});
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [selectedInsight, setSelectedInsight] = useState<Insight | null>(null);
+
+  // Mock user data
+  const isPremiumUser = false; // Change this to test different user types
+
+  // Load saved data from localStorage
+  useEffect(() => {
+    const savedReadInsights = localStorage.getItem('readInsights');
+    const savedSharedInsights = localStorage.getItem('sharedInsights');
+    const savedEarnedPoints = localStorage.getItem('earnedPoints');
+    
+    if (savedReadInsights) {
+      setReadInsights(new Set(JSON.parse(savedReadInsights)));
+    }
+    if (savedSharedInsights) {
+      setSharedInsights(new Set(JSON.parse(savedSharedInsights)));
+    }
+    if (savedEarnedPoints) {
+      setEarnedPoints(parseInt(savedEarnedPoints));
+    }
+  }, []);
+
+  interface Insight {
+    id: string;
+    title: string;
+    viewed: boolean;
+  }
+
+  // Save data to localStorage
+  const saveToLocalStorage = (insights: Insight[], shared: Insight[], points: number) => {
+    localStorage.setItem('readInsights', JSON.stringify([...insights]));
+    localStorage.setItem('sharedInsights', JSON.stringify([...shared]));
+    localStorage.setItem('earnedPoints', points.toString());
+    
+    // Dispatch event to update earnings page
+    window.dispatchEvent(new CustomEvent('pointsUpdated', { 
+      detail: { points: points } 
+    }));
+  };
 
   const insights = [
     {
       id: 1,
-      title: "Google's New AI Search Algorithm Prioritizes E-A-T Content",
-      category: "SEO",
+      title: "AI-Powered Customer Service Revolution",
+      category: "Customer Service",
       readTime: "3 min read",
-      publishedAt: "2 hours ago",
-      source: "https://searchengineland.com/google-ai-search-algorithm-eat-content",
-      isPremium: false,
-      whatChanged: "Google's latest algorithm update now heavily weighs Expertise, Authoritativeness, and Trustworthiness (E-A-T) signals. Sites with verified author credentials and industry recognition are seeing 40% higher rankings.",
-      whyItMatters: "This shift affects 73% of search results. Businesses without established authority are losing visibility, while those with strong E-A-T signals are capturing more organic traffic and leads.",
-      actionToTake: "Audit your content for E-A-T signals. Add author bios with credentials, get industry certifications, and build authoritative backlinks. Update existing content with expert quotes and data sources."
+      date: "2024-01-15",
+      source: "https://www.salesforce.com/resources/articles/customer-service/",
+      image: "https://readdy.ai/api/search-image?query=modern%20customer%20service%20representative%20using%20AI%20chatbot%20technology%20in%20bright%20office%20environment%20with%20digital%20screens%20showing%20customer%20satisfaction%20metrics&width=400&height=250&seq=cs1&orientation=landscape",
+      whatChanged: "New chatbot technology reduces response time by 85% while maintaining 94% customer satisfaction rates. Advanced AI can now handle complex queries that previously required human intervention.",
+      whyItMatters: "Customer expectations for instant support are at an all-time high. Companies that don't adapt to AI-powered service will lose customers to competitors who provide faster, more efficient support experiences.",
+      actionToTake: "Evaluate your current customer service metrics, research AI chatbot solutions, and implement a pilot program for common customer queries within the next 30 days."
     },
     {
       id: 2,
-      title: "LinkedIn Introduces AI-Powered Lead Scoring for Sales Navigator",
-      category: "Sales",
+      title: "Predictive Analytics Transforms Inventory Management",
+      category: "Operations",
       readTime: "4 min read",
-      publishedAt: "5 hours ago",
-      source: "https://linkedin.com/business/sales/blog/ai-lead-scoring-sales-navigator",
-      isPremium: false,
-      whatChanged: "LinkedIn's new AI feature analyzes prospect behavior, engagement patterns, and buying signals to score leads from 1-100. Early users report 60% improvement in conversion rates.",
-      whyItMatters: "Sales teams can now prioritize high-intent prospects automatically. This reduces time spent on cold leads and increases focus on prospects most likely to convert, improving ROI significantly.",
-      actionToTake: "Upgrade to Sales Navigator Premium to access AI lead scoring. Train your sales team on interpreting scores and adjust outreach strategies based on lead temperature and engagement history."
+      date: "2024-01-14",
+      source: "https://www.mckinsey.com/capabilities/operations/our-insights",
+      image: "https://readdy.ai/api/search-image?query=modern%20warehouse%20with%20automated%20inventory%20management%20systems%20and%20digital%20analytics%20dashboards%20showing%20predictive%20data%20visualization%20in%20clean%20industrial%20setting&width=400&height=250&seq=inv1&orientation=landscape",
+      whatChanged: "Machine learning algorithms now help retailers reduce waste by 40% and improve stock availability to 98%. Real-time demand forecasting has become incredibly accurate.",
+      whyItMatters: "Inventory costs can make or break a business. Poor inventory management leads to lost sales, excess storage costs, and cash flow problems that can cripple growth.",
+      actionToTake: "Audit your current inventory processes, identify pain points, and research predictive analytics tools that integrate with your existing systems."
     },
     {
       id: 3,
-      title: "Meta Launches Advanced Retargeting Options for Small Businesses",
-      category: "Advertising",
+      title: "Marketing Automation Drives 300% ROI Increase",
+      category: "Marketing",
       readTime: "5 min read",
-      publishedAt: "1 day ago",
-      source: "https://business.facebook.com/advanced-retargeting-small-business",
-      isPremium: true,
-      whatChanged: "",
-      whyItMatters: "",
-      actionToTake: ""
+      date: "2024-01-13",
+      source: "https://blog.hubspot.com/marketing/marketing-automation",
+      image: "https://readdy.ai/api/search-image?query=digital%20marketing%20professional%20analyzing%20automated%20campaign%20results%20on%20multiple%20monitors%20with%20colorful%20data%20visualizations%20and%20ROI%20charts%20in%20modern%20office&width=400&height=250&seq=mark1&orientation=landscape",
+      whatChanged: "Marketing automation platforms now deliver personalized experiences at scale, resulting in 300% ROI improvements for businesses that implement comprehensive automation strategies.",
+      whyItMatters: "Manual marketing processes can't compete with automated personalization. Companies using marketing automation see 451% increase in qualified leads and 34% increase in sales-ready leads.",
+      actionToTake: "Map your customer journey, identify automation opportunities, select a marketing automation platform, and create personalized nurture campaigns for different customer segments."
     },
     {
       id: 4,
-      title: "OpenAI Releases GPT-4 Turbo with Enhanced Business Applications",
-      category: "AI",
+      title: "Financial Forecasting with Machine Learning",
+      category: "Finance",
       readTime: "6 min read",
-      publishedAt: "1 day ago",
-      source: "https://openai.com/gpt-4-turbo-business-applications",
-      isPremium: true,
-      whatChanged: "",
-      whyItMatters: "",
-      actionToTake: ""
+      date: "2024-01-12",
+      source: "https://www.jpmorgan.com/insights/technology/artificial-intelligence",
+      image: "https://readdy.ai/api/search-image?query=financial%20analyst%20working%20with%20AI-powered%20forecasting%20tools%20showing%20market%20trend%20predictions%20and%20investment%20data%20on%20sleek%20trading%20desk%20setup&width=400&height=250&seq=fin1&orientation=landscape",
+      whatChanged: "AI-powered financial forecasting models now achieve 95% accuracy in predicting market trends and cash flow patterns, significantly outperforming traditional forecasting methods.",
+      whyItMatters: "Accurate financial forecasting is critical for strategic planning and risk management. Traditional methods often miss subtle patterns that AI can detect, leading to better investment decisions.",
+      actionToTake: "Evaluate your current forecasting methods, research AI-powered financial tools, and pilot machine learning models for your most critical financial predictions."
     },
     {
       id: 5,
-      title: "TikTok Shop Integration Now Available for E-commerce Platforms",
-      category: "E-commerce",
+      title: "Supply Chain Optimization Through AI",
+      category: "Logistics",
       readTime: "4 min read",
-      publishedAt: "2 days ago",
-      source: "https://tiktok.com/business/shop-integration-ecommerce",
-      isPremium: true,
-      whatChanged: "",
-      whyItMatters: "",
-      actionToTake: ""
+      date: "2024-01-11",
+      source: "https://www.dhl.com/global-en/home/insights-and-innovation/insights/artificial-intelligence.html",
+      image: "https://readdy.ai/api/search-image?query=advanced%20supply%20chain%20control%20center%20with%20AI%20optimization%20systems%20tracking%20global%20logistics%20and%20delivery%20routes%20on%20large%20digital%20displays&width=400&height=250&seq=log1&orientation=landscape",
+      whatChanged: "AI-driven supply chain optimization reduces costs by 15% and improves delivery times by 25%. Real-time route optimization and demand prediction are revolutionizing logistics.",
+      whyItMatters: "Supply chain disruptions cost businesses billions annually. AI optimization provides resilience and efficiency that traditional methods cannot match in today's complex global market.",
+      actionToTake: "Assess your supply chain vulnerabilities, implement AI-powered tracking systems, and develop predictive models for demand forecasting and route optimization."
+    },
+    {
+      id: 6,
+      title: "HR Analytics Revolutionizes Talent Acquisition",
+      category: "Human Resources",
+      readTime: "3 min read",
+      date: "2024-01-10",
+      source: "https://www.workday.com/en-us/applications/human-capital-management/workforce-analytics.html",
+      image: "https://readdy.ai/api/search-image?query=HR%20professional%20using%20advanced%20analytics%20dashboard%20for%20talent%20acquisition%20with%20candidate%20profiles%20and%20hiring%20metrics%20in%20modern%20corporate%20office&width=400&height=250&seq=hr1&orientation=landscape",
+      whatChanged: "HR analytics platforms now predict employee success with 87% accuracy and reduce time-to-hire by 50%. Data-driven hiring decisions significantly improve retention rates.",
+      whyItMatters: "The cost of bad hires can reach 30% of the employee's first-year earnings. HR analytics helps identify the best candidates and predict long-term success and cultural fit.",
+      actionToTake: "Implement HR analytics tools, define key performance indicators for hiring success, and create data-driven hiring processes that reduce bias and improve outcomes."
     }
   ];
 
-  const [readArticles, setReadArticles] = useState<number[]>([]);
+  const startReadingTimer = (insightId: string) => {
+    if (readInsights.has(insightId) || timers[insightId]) return;
 
-  const markAsRead = (articleId: number) => {
-    if (!readArticles.includes(articleId)) {
-      setReadArticles([...readArticles, articleId]);
+    const timer = setTimeout(() => {
+      const pointsToAdd = isPremiumUser ? 5 : 1;
+      const newEarnedPoints = earnedPoints + pointsToAdd;
+      const newReadInsights = new Set(readInsights);
+      newReadInsights.add(insightId);
+      // const newReadInsights = Array.from(new Set([...readInsights, insightId]));
+      
+      setReadInsights(newReadInsights);
+      setEarnedPoints(newEarnedPoints);
+      saveToLocalStorage(Array.from(newReadInsights) as any, Array.from(sharedInsights) as any, newEarnedPoints);
+      
+      setToastMessage(`You earned ${pointsToAdd} point${pointsToAdd > 1 ? 's' : ''} for reading this insight!`);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+      
+      // Clear the timer
+      setTimers(prev => {
+        const newTimers = { ...prev };
+        delete newTimers[insightId];
+        return newTimers;
+      });
+    }, 15000); // 15 seconds
+
+    setTimers(prev => ({ ...prev, [insightId]: timer }));
+  };
+
+  const handleShare = (insight: Insight) => {
+    setSelectedInsight(insight);
+    setShowShareModal(true);
+  };
+
+  type Platform = 'twitter' | 'facebook' | 'linkedin' | 'whatsapp';
+
+  const shareToSocialMedia = (platform: Platform) => {
+    if (!selectedInsight) return;
+    const userName = 'John Doe'; // This should come from user data
+    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
+    const insightUrl = `${referralLink}&insight=${selectedInsight.id}`;
+    const text = `Check out this business insight: ${selectedInsight.title}`;
+    
+    let shareUrl = '';
+    
+    switch (platform) {
+      case 'twitter':
+        shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(insightUrl)}`;
+        break;
+      case 'facebook':
+        shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(insightUrl)}`;
+        break;
+      case 'linkedin':
+        shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(insightUrl)}`;
+        break;
+      case 'whatsapp':
+        shareUrl = `https://wa.me/?text=${encodeURIComponent(text + ' ' + insightUrl)}`;
+        break;
+    }
+    
+    if (shareUrl) {
+      window.open(shareUrl, '_blank');
+      awardSharingPoints();
+    }
+    
+    setShowShareModal(false);
+  };
+
+  const copyLink = () => {
+    if (!selectedInsight) return;
+    const userName = 'John Doe'; // This should come from user data
+    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
+    const insightUrl = `${referralLink}&insight=${selectedInsight.id}`;
+    navigator.clipboard.writeText(insightUrl);
+    awardSharingPoints();
+    setToastMessage(`Link copied! You earned ${isPremiumUser ? 10 : 5} points for sharing this insight!`);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+    setShowShareModal(false);
+  };
+
+  const awardSharingPoints = () => {
+    if (!selectedInsight) return;
+    // Award points only if not already shared
+    if (!sharedInsights.has(selectedInsight.id)) {
+      const pointsToAdd = isPremiumUser ? 10 : 5;
+      const newEarnedPoints = earnedPoints + pointsToAdd;
+      const newSharedInsights = new Set([...sharedInsights, selectedInsight.id]);
+      
+      setEarnedPoints(newEarnedPoints);
+      setSharedInsights(newSharedInsights);
+      saveToLocalStorage(Array.from(readInsights) as any , Array.from(newSharedInsights) as any, newEarnedPoints);
+      
+      if (!showToast) {
+        setToastMessage(`You earned ${pointsToAdd} points for sharing this insight!`);
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 3000);
+      }
     }
   };
 
-  const filteredInsights = insights.filter(insight => {
-    return selectedCategory === 'all' || insight.category.toLowerCase() === selectedCategory;
-  });
+  // Start timers for unread insights when component mounts
+  useEffect(() => {
+    insights.forEach(insight => {
+      const insightIdStr = insight.id.toString();
+      if (!readInsights.has(insightIdStr) && insight.id <= 2) { // Only for first 2 insights
+        startReadingTimer(insightIdStr);
+      }
+    });
 
-  // Show only first 2 alerts + premium upgrade alert if not premium
-  const displayedAlerts = isPremium ? filteredInsights : filteredInsights.slice(0, 2);
-  const premiumAlertsCount = filteredInsights.filter(insight => insight.isPremium).length;
+    // Cleanup timers on unmount
+    return () => {
+      Object.values(timers).forEach(timer => clearTimeout(timer));
+    };
+  }, [[insights, readInsights]]);
 
-  const getCategoryColor = (category: string) => {
-    switch (category) {
-      case 'SEO': return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'Sales': return 'bg-green-100 text-green-800 border-green-200';
-      case 'Advertising': return 'bg-purple-100 text-purple-800 border-purple-200';
-      case 'AI': return 'bg-orange-100 text-orange-800 border-orange-200';
-      case 'E-commerce': return 'bg-pink-100 text-pink-800 border-pink-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+  const getButtonState = (insightId: string) => {
+    if (readInsights.has(insightId)) {
+      return 'read';
+    }
+    if (timers[insightId]) {
+      return 'reading';
+    }
+    return 'inactive';
+  };
+
+  const getButtonText = (insightId: string) => {
+    const state = getButtonState(insightId);
+    
+    switch (state) {
+      case 'read':
+        return 'Insight read';
+      case 'reading':
+        return `Reading... (+${isPremiumUser ? 5 : 1} point${isPremiumUser ? 's' : ''} in 15s)`;
+      case 'inactive':
+        return 'Mark as Read';
     }
   };
 
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'SEO': return 'ri-search-line';
-      case 'Sales': return 'ri-line-chart-line';
-      case 'Advertising': return 'ri-megaphone-line';
-      case 'AI': return 'ri-robot-line';
-      case 'E-commerce': return 'ri-shopping-cart-line';
-      default: return 'ri-article-line';
+  const getButtonStyle = (insightId: string) => {
+    const state = getButtonState(insightId);
+    const baseStyle = {
+      padding: '12px 20px',
+      borderRadius: '8px',
+      border: 'none',
+      fontSize: '14px',
+      fontWeight: '600',
+      cursor: state === 'inactive' ? 'not-allowed' : 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'all 0.3s ease',
+      minWidth: '200px',
+      whiteSpace: 'nowrap'
+    };
+    
+    switch (state) {
+      case 'read':
+        return {
+          ...baseStyle,
+          backgroundColor: '#10b981',
+          color: '#ffffff'
+        };
+      case 'reading':
+        return {
+          ...baseStyle,
+          backgroundColor: '#f97316',
+          color: '#ffffff'
+        };
+      case 'inactive':
+        return {
+          ...baseStyle,
+          backgroundColor: '#e5e7eb',
+          color: '#9ca3af'
+        };
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8 min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
-      <div className="max-w-4xl mx-auto">
+    <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb', display: 'flex' }}>
+      <DashboardSidebar 
+        isMobileMenuOpen={isMobileMenuOpen} 
+        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      />
+
+      {/* Main Content */}
+      <div style={{ 
+        flex: 1, 
+        marginLeft: '0',
+        display: 'flex',
+        flexDirection: 'column'
+      }}>
         {/* Header */}
-        <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">AI Insights Feed</h1>
-          <p className="text-sm sm:text-base text-gray-600">Stay ahead with AI-curated business intelligence</p>
-        </div>
+        <header style={{ 
+          backgroundColor: '#ffffff', 
+          borderBottom: '1px solid #e5e7eb', 
+          padding: '16px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <button
+              style={{ 
+                display: window.innerWidth >= 768 ? 'none' : 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '40px',
+                height: '40px',
+                backgroundColor: 'transparent',
+                border: 'none',
+                borderRadius: '6px',
+                color: '#6b7280',
+                cursor: 'pointer',
+                marginRight: '16px'
+              }}
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            >
+              <i className="ri-menu-line" style={{ fontSize: '20px' }}></i>
+            </button>
+            <h1 style={{ 
+              fontSize: '24px', 
+              fontWeight: 'bold', 
+              color: '#111827',
+              margin: 0
+            }}>AI Insights Feed</h1>
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ 
+              backgroundColor: '#f3f4f6', 
+              padding: '8px 16px', 
+              borderRadius: '20px',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: '#374151'
+            }}>
+              Points: {earnedPoints}
+            </div>
+            <div style={{ 
+              backgroundColor: '#f3f4f6', 
+              padding: '8px 16px', 
+              borderRadius: '20px',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: '#374151'
+            }}>
+              {isPremiumUser ? 'Premium' : 'Free'} User
+            </div>
+            <div style={{ 
+              width: '40px', 
+              height: '40px', 
+              backgroundColor: '#f97316', 
+              borderRadius: '50%', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center' 
+            }}>
+              <i className="ri-user-line" style={{ color: '#ffffff', fontSize: '18px' }}></i>
+            </div>
+          </div>
+        </header>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm">
-            <div className="text-center">
-              <div className="text-xl sm:text-2xl font-bold text-gray-900">{insights.length}</div>
-              <div className="text-xs sm:text-sm text-gray-600">Total Articles</div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm">
-            <div className="text-center">
-              <div className="text-xl sm:text-2xl font-bold text-green-600">{readArticles.length}</div>
-              <div className="text-xs sm:text-sm text-gray-600">Read</div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm">
-            <div className="text-center">
-              <div className="text-xl sm:text-2xl font-bold text-orange-600">{readArticles.length * 15}</div>
-              <div className="text-xs sm:text-sm text-gray-600">Points Earned</div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm">
-            <div className="text-center">
-              <div className="text-xl sm:text-2xl font-bold text-blue-600">5</div>
-              <div className="text-xs sm:text-sm text-gray-600">Categories</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filter */}
-        <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm mb-6 sm:mb-8">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm"
-              >
-                <option value="all">All Categories</option>
-                <option value="seo">SEO</option>
-                <option value="sales">Sales</option>
-                <option value="advertising">Advertising</option>
-                <option value="ai">AI</option>
-                <option value="e-commerce">E-commerce</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Insights List */}
-        <div className="space-y-6 sm:space-y-8">
-          {displayedAlerts.map((insight, index) => (
-            <div key={insight.id} className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              {/* Article Header */}
-              <div className="p-4 sm:p-6 border-b border-gray-200">
-                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                  <div className="flex items-start gap-3 sm:gap-4 flex-1">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <i className={`${getCategoryIcon(insight.category)} text-orange-600 text-lg sm:text-xl`}></i>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-3">{insight.title}</h3>
-                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getCategoryColor(insight.category)}`}>
-                          {insight.category}
-                        </span>
-                        <span className="text-xs sm:text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          {insight.readTime}
-                        </span>
-                        <span className="text-xs sm:text-sm text-gray-500">
-                          <i className="ri-calendar-line mr-1"></i>
-                          {insight.publishedAt}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+        {/* Content */}
+        <div style={{ flex: 1, padding: '24px' }}>
+          {/* Stats Cards */}
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr',
+            gap: '24px',
+            marginBottom: '32px'
+          }}>
+            <div style={{ 
+              backgroundColor: '#ffffff', 
+              padding: '24px', 
+              borderRadius: '12px', 
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>Total Insights</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>24</p>
                 </div>
-              </div>
-
-              {/* Article Content */}
-              <div className="p-4 sm:p-6">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
-                  {/* What Changed */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
-                        <i className="ri-refresh-line text-blue-600 text-sm"></i>
-                      </div>
-                      <h4 className="text-base sm:text-lg font-semibold text-gray-900">What Changed</h4>
-                    </div>
-                    <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.whatChanged}</p>
-                  </div>
-
-                  {/* Why It Matters */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-yellow-100 rounded-full flex items-center justify-center">
-                        <i className="ri-lightbulb-line text-yellow-600 text-sm"></i>
-                      </div>
-                      <h4 className="text-base sm:text-lg font-semibold text-gray-900">Why It Matters</h4>
-                    </div>
-                    <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.whyItMatters}</p>
-                  </div>
-
-                  {/* Action to Take */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center">
-                        <i className="ri-play-circle-line text-green-600 text-sm"></i>
-                      </div>
-                      <h4 className="text-base sm:text-lg font-semibold text-gray-900">Action to Take</h4>
-                    </div>
-                    <p className="text-sm sm:text-base text-gray-700 leading-relaxed">{insight.actionToTake}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="p-4 sm:p-6 border-t border-gray-200">
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <button 
-                    onClick={() => window.open(insight.source, '_blank')}
-                    className="flex-1 flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm sm:text-base whitespace-nowrap transition-colors border border-gray-300 text-gray-700 hover:bg-gray-50 cursor-pointer"
-                  >
-                    <i className="ri-external-link-line mr-2"></i>
-                    View Source
-                  </button>
-                  <button 
-                    onClick={() => markAsRead(insight.id)}
-                    disabled={readArticles.includes(insight.id)}
-                    className={`flex-1 flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm sm:text-base whitespace-nowrap transition-colors cursor-pointer ${
-                      readArticles.includes(insight.id)
-                        ? 'bg-green-100 text-green-700 cursor-not-allowed'
-                        : 'bg-orange-500 text-white hover:bg-orange-600'
-                    }`}
-                  >
-                    <i className={`${readArticles.includes(insight.id) ? 'ri-check-line' : 'ri-star-line'} mr-2`}></i>
-                    {readArticles.includes(insight.id) ? 'Read (+15 points)' : 'Mark as Read (+15 points)'}
-                  </button>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: '#dbeafe', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className="ri-lightbulb-line" style={{ color: '#3b82f6', fontSize: '20px' }}></i>
                 </div>
               </div>
             </div>
-          ))}
 
-          {/* Premium Upgrade Alert */}
-          {!isPremium && premiumAlertsCount > 0 && (
-            <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              {/* Alert Header */}
-              <div className="p-4 sm:p-6 border-b border-gray-200">
-                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                  <div className="flex items-start gap-3 sm:gap-4 flex-1">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-orange-400 to-orange-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <i className="ri-vip-crown-line text-white text-lg sm:text-xl"></i>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-3">
-                        {premiumAlertsCount} More Premium Insights Available
-                      </h3>
-                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-orange-100 to-orange-200 text-orange-800 border border-orange-300">
-                          Premium Content
-                        </span>
-                        <span className="text-xs sm:text-sm text-gray-500">
-                          <i className="ri-lock-line mr-1"></i>
-                          Unlock with Premium
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+            <div style={{ 
+              backgroundColor: '#ffffff', 
+              padding: '24px', 
+              borderRadius: '12px', 
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>Read Today</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>{readInsights.size}</p>
+                </div>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: '#dcfce7', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className="ri-check-line" style={{ color: '#16a34a', fontSize: '20px' }}></i>
                 </div>
               </div>
+            </div>
 
-              {/* Premium Content */}
-              <div className="p-4 sm:p-6">
-                <div className="text-center py-8 sm:py-12">
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <i className="ri-vip-crown-line text-white text-2xl sm:text-3xl"></i>
-                  </div>
-                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Unlock Premium Insights</h3>
-                  <p className="text-sm sm:text-base text-gray-600 mb-2 max-w-md mx-auto">
-                    Get access to {premiumAlertsCount} additional premium insights with detailed analysis and actionable recommendations
-                  </p>
-                  <p className="text-xs sm:text-sm text-orange-600 font-medium mb-8">
-                    Premium members get 3x more insights and exclusive content
-                  </p>
+            <div style={{ 
+              backgroundColor: '#ffffff', 
+              padding: '24px', 
+              borderRadius: '12px', 
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>Points Earned</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>{earnedPoints}</p>
+                </div>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: '#fef3c7', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className="ri-star-line" style={{ color: '#f59e0b', fontSize: '20px' }}></i>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ 
+              backgroundColor: '#ffffff', 
+              padding: '24px', 
+              borderRadius: '12px', 
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>Shared</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>{sharedInsights.size}</p>
+                </div>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: '#f3e8ff', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className="ri-share-line" style={{ color: '#8b5cf6', fontSize: '20px' }}></i>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Insights List */}
+          <div style={{ 
+            display: 'flex', 
+            flexDirection: 'column',
+            gap: '32px'
+          }}>
+            {insights.map((insight, index) => {
+              const isLocked = !isPremiumUser && index >= 2;
+              
+              return (
+                <div key={insight.id} style={{ 
+                  backgroundColor: '#ffffff', 
+                  borderRadius: '16px', 
+                  overflow: 'hidden', 
+                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                  transition: 'box-shadow 0.3s ease',
+                  position: 'relative'
+                }}>
+                  <img 
+                    src={insight.image} 
+                    alt={insight.title}
+                    style={{ 
+                      width: '100%', 
+                      height: '250px', 
+                      objectFit: 'cover',
+                      objectPosition: 'top',
+                      filter: isLocked ? 'blur(8px)' : 'none'
+                    }}
+                  />
                   
-                  {/* Premium Features */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 max-w-2xl mx-auto">
-                    <div className="text-center">
-                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
-                        <i className="ri-eye-line text-orange-600"></i>
-                      </div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-700">Detailed Analysis</p>
+                  <div style={{ padding: '32px', position: 'relative' }}>
+                    {/* Header */}
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '12px', 
+                      marginBottom: '16px' 
+                    }}>
+                      <span style={{ 
+                        backgroundColor: '#f3f4f6', 
+                        color: '#374151', 
+                        padding: '6px 16px', 
+                        borderRadius: '20px', 
+                        fontSize: '14px', 
+                        fontWeight: '500' 
+                      }}>
+                        {insight.category}
+                      </span>
+                      <span style={{ 
+                        fontSize: '14px', 
+                        color: '#6b7280' 
+                      }}>
+                        {insight.readTime}
+                      </span>
+                      <span style={{ 
+                        fontSize: '14px', 
+                        color: '#6b7280' 
+                      }}>
+                        {insight.date}
+                      </span>
                     </div>
-                    <div className="text-center">
-                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
-                        <i className="ri-lightbulb-line text-orange-600"></i>
+                    
+                    <h2 style={{ 
+                      fontSize: window.innerWidth >= 768 ? '24px' : '20px', 
+                      fontWeight: 'bold', 
+                      color: '#111827', 
+                      marginBottom: '24px',
+                      lineHeight: '1.3'
+                    }}>
+                      {insight.title}
+                    </h2>
+
+                    {/* Content Sections - Only for first 2 insights */}
+                    {!isLocked && insight.whatChanged && (
+                      <div style={{ 
+                        display: 'flex', 
+                        flexDirection: window.innerWidth >= 1024 ? 'row' : 'column',
+                        gap: '24px', 
+                        marginBottom: '32px' 
+                      }}>
+                        {/* What Changed */}
+                        <div style={{ 
+                          flex: 1,
+                          backgroundColor: '#eff6ff', 
+                          padding: '20px', 
+                          borderRadius: '12px',
+                          border: '1px solid #3b82f6'
+                        }}>
+                          <h3 style={{ 
+                            fontSize: '16px', 
+                            fontWeight: 'bold', 
+                            color: '#1d4ed8', 
+                            marginBottom: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                          }}>
+                            <i className="ri-refresh-line" style={{ fontSize: '18px' }}></i>
+                            What Changed
+                          </h3>
+                          <p style={{ 
+                            fontSize: '14px', 
+                            color: '#4b5563', 
+                            lineHeight: '1.6',
+                            margin: 0
+                          }}>
+                            {insight.whatChanged}
+                          </p>
+                        </div>
+
+                        {/* Why it matters */}
+                        <div style={{ 
+                          flex: 1,
+                          backgroundColor: '#fef7ff', 
+                          padding: '20px', 
+                          borderRadius: '12px',
+                          border: '1px solid #a855f7'
+                        }}>
+                          <h3 style={{ 
+                            fontSize: '16px', 
+                            fontWeight: 'bold', 
+                            color: '#7c3aed', 
+                            marginBottom: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                          }}>
+                            <i className="ri-question-line" style={{ fontSize: '18px' }}></i>
+                            Why it matters
+                          </h3>
+                          <p style={{ 
+                            fontSize: '14px', 
+                            color: '#4b5563', 
+                            lineHeight: '1.6',
+                            margin: 0
+                          }}>
+                            {insight.whyItMatters}
+                          </p>
+                        </div>
+
+                        {/* Action to take */}
+                        <div style={{ 
+                          flex: 1,
+                          backgroundColor: '#f0fdf4', 
+                          padding: '20px', 
+                          borderRadius: '12px',
+                          border: '1px solid #22c55e'
+                        }}>
+                          <h3 style={{ 
+                            fontSize: '16px', 
+                            fontWeight: 'bold', 
+                            color: '#16a34a', 
+                            marginBottom: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px'
+                          }}>
+                            <i className="ri-flashlight-line" style={{ fontSize: '18px' }}></i>
+                            Action to take
+                          </h3>
+                          <p style={{ 
+                            fontSize: '14px', 
+                            color: '#4b5563', 
+                            lineHeight: '1.6',
+                            margin: 0
+                          }}>
+                            {insight.actionToTake}
+                          </p>
+                        </div>
                       </div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-700">AI Insights</p>
-                    </div>
-                    <div className="text-center">
-                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
-                        <i className="ri-rocket-line text-orange-600"></i>
+                    )}
+
+                    {/* Premium Overlay for locked content */}
+                    {isLocked && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                        color: '#ffffff',
+                        padding: '32px',
+                        borderRadius: '16px',
+                        textAlign: 'center',
+                        zIndex: 10,
+                        minWidth: '300px'
+                      }}>
+                        <i className="ri-vip-crown-line" style={{ fontSize: '48px', color: '#f59e0b', marginBottom: '16px' }}></i>
+                        <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px', margin: '0 0 12px 0' }}>
+                          Upgrade to Premium
+                        </h3>
+                        <p style={{ fontSize: '14px', color: '#d1d5db', marginBottom: '20px', margin: '0 0 20px 0' }}>
+                          Unlock full insights and earn more points
+                        </p>
+                        <button style={{
+                          backgroundColor: '#f97316',
+                          color: '#ffffff',
+                          padding: '12px 24px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          fontSize: '14px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          Upgrade Now
+                        </button>
                       </div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-700">Action Plans</p>
+                    )}
+
+                    {/* Blur overlay for locked content */}
+                    {isLocked && (
+                      <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                        backdropFilter: 'blur(4px)',
+                        zIndex: 5
+                      }} />
+                    )}
+                    
+                    {/* Action Buttons */}
+                    <div style={{ 
+                      display: 'flex', 
+                      flexDirection: window.innerWidth >= 640 ? 'row' : 'column',
+                      gap: '16px',
+                      position: 'relative',
+                      zIndex: isLocked ? 1 : 'auto'
+                    }}>
+                      {!isLocked ? (
+                        <>
+                          <button
+                            style={getButtonStyle(insight.id.toString())}
+                            disabled={getButtonState(insight.id.toString()) === 'inactive'}
+                          >
+                            {getButtonState(insight.id.toString()) === 'read' && (
+                              <i className="ri-check-line" style={{ marginRight: '8px' }}></i>
+                            )}
+                            {getButtonText(insight.id.toString())}
+                          </button>
+                          
+                          <button
+                            onClick={() => handleShare({...insight,
+                                                      id: insight.id.toString(),
+                                                      viewed: false})}
+                            style={{ 
+                              flex: 1,
+                              backgroundColor: sharedInsights.has(insight.id) ? '#10b981' : '#3b82f6', 
+                              color: '#ffffff', 
+                              padding: '12px 20px', 
+                              borderRadius: '8px', 
+                              border: 'none', 
+                              fontSize: '14px', 
+                              fontWeight: '600', 
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'background-color 0.3s ease',
+                              whiteSpace: 'nowrap'
+                            }}
+                            onMouseOver={(e) => e.currentTarget.style.backgroundColor = sharedInsights.has(insight.id) ? '#059669' : '#2563eb'}
+                            onMouseOut={(e) => e.currentTarget.style.backgroundColor = sharedInsights.has(insight.id) ? '#10b981' : '#3b82f6'}
+                          >
+                            <i className={sharedInsights.has(insight.id) ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px' }}></i>
+                            {sharedInsights.has(insight.id) ? 'Shared' : `Share (+${isPremiumUser ? 10 : 5} points)`}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          style={{ 
+                            flex: 1,
+                            backgroundColor: '#e5e7eb', 
+                            color: '#9ca3af', 
+                            padding: '12px 20px', 
+                            borderRadius: '8px', 
+                            border: 'none', 
+                            fontSize: '14px', 
+                            fontWeight: '600', 
+                            cursor: 'not-allowed',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            whiteSpace: 'nowrap'
+                          }}
+                          disabled
+                        >
+                          <i className="ri-lock-line" style={{ marginRight: '8px' }}></i>
+                          Premium Required
+                        </button>
+                      )}
+                      
+                      <button
+                        onClick={() => window.open(insight.source, '_blank')}
+                        style={{ 
+                          flex: 1,
+                          backgroundColor: '#f3f4f6', 
+                          color: '#374151', 
+                          padding: '12px 20px', 
+                          borderRadius: '8px', 
+                          border: 'none', 
+                          fontSize: '14px', 
+                          fontWeight: '600', 
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'background-color 0.3s ease',
+                          whiteSpace: 'nowrap'
+                        }}
+                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#e5e7eb'}
+                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                      >
+                        <i className="ri-external-link-line" style={{ marginRight: '8px' }}></i>
+                        View Details
+                      </button>
                     </div>
                   </div>
-
-                  <button 
-                    onClick={() => navigate('/dashboard/upgrade')}
-                    className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-8 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all font-medium text-sm sm:text-base whitespace-nowrap shadow-lg cursor-pointer transform hover:scale-105"
-                  >
-                    Upgrade to Premium
-                  </button>
-                  <p className="text-xs text-gray-500 mt-3">Starting at $29/month • Cancel anytime</p>
                 </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Show message if no insights match filters */}
-        {displayedAlerts.length === 0 && (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <i className="ri-article-line text-gray-400 text-2xl"></i>
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No insights found</h3>
-            <p className="text-gray-600">Try adjusting your filters to see more insights.</p>
+              );
+            })}
           </div>
-        )}
+        </div>
       </div>
+
+      {/* Toast Notification */}
+      {showToast && (
+        <div style={{ 
+          position: 'fixed', 
+          top: '24px', 
+          right: '24px', 
+          backgroundColor: '#f97316', 
+          color: '#ffffff', 
+          padding: '16px 20px', 
+          borderRadius: '8px', 
+          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', 
+          zIndex: 50,
+          display: 'flex',
+          alignItems: 'center',
+          maxWidth: '400px',
+          animation: 'slideIn 0.3s ease-out'
+        }}>
+          <i className="ri-star-fill" style={{ marginRight: '8px', fontSize: '16px' }}></i>
+          {toastMessage}
+        </div>
+      )}
+
+      {/* Share Modal */}
+      {showShareModal && (
+        <>
+          <div 
+            style={{ 
+              position: 'fixed', 
+              inset: 0, 
+              backgroundColor: 'rgba(0, 0, 0, 0.5)', 
+              zIndex: 40 
+            }}
+            onClick={() => setShowShareModal(false)}
+          />
+          <div style={{ 
+            position: 'fixed', 
+            top: '50%', 
+            left: '50%', 
+            transform: 'translate(-50%, -50%)', 
+            backgroundColor: '#ffffff', 
+            borderRadius: '12px', 
+            padding: '24px', 
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', 
+            zIndex: 50,
+            width: '90%',
+            maxWidth: '400px'
+          }}>
+            <h3 style={{ 
+              fontSize: '18px', 
+              fontWeight: 'bold', 
+              color: '#111827', 
+              marginBottom: '16px',
+              textAlign: 'center'
+            }}>
+              Share Insight
+            </h3>
+            
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(2, 1fr)', 
+              gap: '12px', 
+              marginBottom: '16px' 
+            }}>
+              <button
+                onClick={() => shareToSocialMedia('twitter')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#1da1f2', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-twitter-fill" style={{ marginRight: '8px' }}></i>
+                Twitter
+              </button>
+              
+              <button
+                onClick={() => shareToSocialMedia('facebook')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#4267b2', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-facebook-fill" style={{ marginRight: '8px' }}></i>
+                Facebook
+              </button>
+              
+              <button
+                onClick={() => shareToSocialMedia('linkedin')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#0077b5', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-linkedin-fill" style={{ marginRight: '8px' }}></i>
+                LinkedIn
+              </button>
+              
+              <button
+                onClick={() => shareToSocialMedia('whatsapp')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#25d366', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-whatsapp-fill" style={{ marginRight: '8px' }}></i>
+                WhatsApp
+              </button>
+            </div>
+            
+            <button
+              onClick={copyLink}
+              style={{ 
+                width: '100%', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                padding: '12px', 
+                backgroundColor: '#f3f4f6', 
+                color: '#374151', 
+                borderRadius: '8px', 
+                border: 'none', 
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500',
+                marginBottom: '16px'
+              }}
+            >
+              <i className="ri-file-copy-line" style={{ marginRight: '8px' }}></i>
+              Copy Link
+            </button>
+            
+            <button
+              onClick={() => setShowShareModal(false)}
+              style={{ 
+                width: '100%', 
+                padding: '12px', 
+                backgroundColor: 'transparent', 
+                color: '#6b7280', 
+                border: '1px solid #d1d5db', 
+                borderRadius: '8px', 
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      <style jsx>{`
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
     </div>
   );
 }

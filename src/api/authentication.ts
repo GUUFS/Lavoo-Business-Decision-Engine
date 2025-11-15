@@ -5,8 +5,10 @@ import Cookies from "js-cookie";
 
 interface AuthResponse {
   access_token: string;
+  token_type?: string;
   refresh_token?: string;
-  data: string
+  role: "admin" | "user";
+  // data: string
 }
 
 interface LoginData {
@@ -20,6 +22,42 @@ interface SignupData {
   confirm_password:string;
   name?: string;
 }
+
+export const useAdmin = () => {
+  return useMutation<AuthResponse, Error, LoginData>({
+    mutationFn: async (data) => {
+      const response = await fetch("http://localhost:8000/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      });  
+      
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        const message =
+          errorBody.detail || `Login failed with status ${response.status}`;
+        throw new Error(message);
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      // Save token to cookies (15-minute expiry)
+      Cookies.set("access_token", data.access_token, {
+        expires: 1 / 96, // 15 minutes = 1/96 of a day
+        secure: true,
+        sameSite: "strict",
+      });
+      toast.success("Admin Login successful!");
+    },
+    onError: (error) => {
+      toast.error(error.message || "Login failed");
+    },
+  });
+};
+
+
 
 export const useLogin = () => {
   return useMutation<AuthResponse, Error, LoginData>({
@@ -38,8 +76,8 @@ export const useLogin = () => {
           errorBody.detail || `Login failed with status ${response.status}`;
         throw new Error(message);
       }
-
-      return response.json();
+       return (await response.json()) as AuthResponse
+      // return response.json();
     },
 
     onSuccess: (data) => {

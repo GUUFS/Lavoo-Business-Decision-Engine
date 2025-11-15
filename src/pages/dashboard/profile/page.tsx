@@ -1,7 +1,6 @@
 
 import { useState } from 'react';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
-import Footer from '../../../components/feature/Footer';
 
 export default function ProfilePage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -130,7 +129,7 @@ export default function ProfilePage() {
                     Cancel
                   </button>
                   <button className="text-red-600 px-6 py-3 rounded-lg font-medium hover:bg-red-50 transition-colors whitespace-nowrap sm:ml-auto">
-                    Delete Account
+                    Deactivate Account
                   </button>
                 </div>
               </div>
