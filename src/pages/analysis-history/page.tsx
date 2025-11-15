@@ -346,14 +346,14 @@ export default function AnalysisHistoryPage() {
       />
       
       {/* Main Content */}
-      <div className="flex-1 md:ml-64 flex flex-col">
+      <div className="flex-1 flex flex-col">
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
             {/* Header */}
             <div className="mb-6 lg:mb-8">
               <div className="flex items-center mb-4">
                 <button
-                  onClick={() => navigate('/analyze')}
+                  onClick={() => navigate('/dashboard/analyze')}
                   className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors whitespace-nowrap mr-4"
                 >
                   <i className="ri-arrow-left-line mr-2"></i>

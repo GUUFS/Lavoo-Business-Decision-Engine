@@ -15,6 +15,7 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   const { data: user, isLoading } = useCurrentUser();
+  console.log("USER:", user);
 
   const isLoggedIn = !!user;
   const isAnalyzePage = location.pathname === "/analyze";
@@ -22,6 +23,7 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
   const isSignUpPage = location.pathname === "/signup";
   const isDashboard = location.pathname.includes("dashboard");
   const isResult = location.pathname === "/results";
+  const isAdmin = location.pathname.includes("/admin");  
 
   const handleLogout = () => {
     Cookies.remove("access_token");
@@ -40,20 +42,22 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
     setIsMobileMenuOpen(false);
   };
 
-  return (
-    <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className={`flex justify-between items-center h-16 sm:h-20 ${isDashboard ? "!justify-end w-full" : ""}`}>
-          {/* Logo */}
-           {/* Mobile Menu Button - Show hamburger in dashboard */}
-          {isDashboard ? (
-            <button
-              className="md:hidden p-2 text-gray-700 hover:text-orange-500 transition-colors"
-              onClick={onMobileMenuClick}
-            >
-              <i className="ri-menu-line text-2xl"></i>
-            </button>
-          ) : (
+  if(!isAdmin) 
+
+    return (
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className={`flex justify-between items-center h-16 sm:h-20 ${isDashboard ? "!justify-end w-full" : ""}`}>
+            {/* Logo */}
+            {/* Mobile Menu Button - Show hamburger in dashboard */}
+            {isDashboard ? (
+              <button
+                className="md:hidden p-2 text-gray-700 hover:text-orange-500 transition-colors"
+                onClick={onMobileMenuClick}
+              >
+                <i className="ri-menu-line text-2xl"></i>
+              </button>
+            ) : (
             /* Logo for non-dashboard pages */
             <div
               className="flex items-center cursor-pointer"
@@ -69,36 +73,44 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
                 AItugo+
               </span>
             </div>
-          )}
+            )}
 
           {/* Desktop Navigation */}
           <nav className="hidden md:flex items-center space-x-6 lg:space-x-8">
-            {(isLoginPage || isSignUpPage || !isDashboard) ? (
-              <button
-                onClick={() => navigate("/")}
-                className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-              >
-                Home
-              </button>
-            ) : (
-              <button
-                onClick={() => scrollToSection("features")}
-                className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-              ><i className="ri-play-circle-line mr-2"></i>
-                Watch a Demo
-              </button>
-            )}
-       {(isLoginPage || isSignUpPage || !isDashboard  || !isResult)   &&<button
-              onClick={() => scrollToSection("blog")}
-              className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-            >
-              Blog
-            </button>}
+   {!isLoggedIn && !isDashboard && (
+    <>
+      <button
+        onClick={() => navigate("/")}
+        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
+      >
+        Home
+      </button>
+      <button
+        onClick={() => scrollToSection("blog")}
+        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
+      >
+        Blog
+      </button>
+    </>
+  )}
+
+  {/* Dashboard navigation for logged-in users */}
+  {isLoggedIn && isDashboard && !isAdmin && (
+    <>
+      <button
+        onClick={() => scrollToSection("features")}
+        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
+      >
+        <i className="ri-play-circle-line mr-2"></i>
+        Watch a Demo
+      </button>
+    </>
+  )}
 
          {/* Show login/signup if NOT logged in and NOT on dashboard */}
 {!isAnalyzePage && !isLoggedIn && !isDashboard && (
   <>
-    {!isLoginPage && (
+    {(!isLoginPage || isAdmin) && (
       <Button
         variant="outline"
         size="sm"
@@ -108,7 +120,7 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
         Log In
       </Button>
     )}
-    {!isSignUpPage && (
+    {(!isSignUpPage || isAdmin) && (
       <Button
         variant="primary"
         size="sm"
@@ -147,6 +159,12 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
                     >
                       Logout
                     </button>
+                    <div>
+                      <button className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+                        onClick={() => navigate('/dashboard/profile')}>
+                        Profile
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -169,3 +187,4 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
     </header>
   );
 }
+

@@ -1,236 +1,675 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import DashboardSidebar from '../../../components/feature/DashboardSidebar';
 
 export default function ReviewsPage() {
-  const [rating, setRating] = useState(0);
-  const [hoveredRating, setHoveredRating] = useState(0);
-  const [reviewTitle, setReviewTitle] = useState('');
-  const [reviewContent, setReviewContent] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSubmitted, setIsSubmitted] = useState(false);
+  const navigate = useNavigate();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('form');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024);
+  const [readStatus, setReadStatus] = useState<{[key: number]: boolean}>({});
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
+  // Review form state
+  const [reviewForm, setReviewForm] = useState({
+    reviewTitle: '',
+    rating: 0,
+    reviewText: ''
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Listen for messages being read from conversation page and page visibility changes
+  useEffect(() => {
+    const handleConversationRead = (event: CustomEvent) => {
+      const { reviewId } = event.detail;
+      setReadStatus(prev => {
+        const newStatus = {
+          ...prev,
+          [reviewId]: true
+        };
+        localStorage.setItem('reviewReadStatus', JSON.stringify(newStatus));
+        return newStatus;
+      });
+    };
+
+    // Also listen for page visibility changes to reload read status
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // Page became visible, reload read status from localStorage
+        const savedReadStatus = localStorage.getItem('reviewReadStatus');
+        if (savedReadStatus) {
+          setReadStatus(JSON.parse(savedReadStatus));
+        }
+      }
+    };
+
+    // Listen for focus events to reload read status when returning to page
+    const handleFocus = () => {
+      const savedReadStatus = localStorage.getItem('reviewReadStatus');
+      if (savedReadStatus) {
+        setReadStatus(JSON.parse(savedReadStatus));
+      }
+    };
+
+    window.addEventListener('conversationRead', handleConversationRead as EventListener);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      window.removeEventListener('conversationRead', handleConversationRead as EventListener);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
+  // Reload read status when component mounts or when returning from other pages
+  useEffect(() => {
+    const savedReadStatus = localStorage.getItem('reviewReadStatus');
+    if (savedReadStatus) {
+      setReadStatus(JSON.parse(savedReadStatus));
+    }
+  }, [activeTab]); // Reload when switching tabs
+
+  const isMobile = windowWidth < 640;
+  const isTablet = windowWidth >= 640 && windowWidth < 1024;
+
+  const userReviews = [
+    {
+      id: 1,
+      businessName: 'TechFlow Solutions',
+      reviewTitle: 'Excellent SaaS Platform',
+      rating: 5,
+      reviewText: 'This platform has revolutionized our workflow. The AI features are incredibly intuitive and have saved us countless hours.',
+      dateSubmitted: '2024-01-15',
+      status: 'published',
+      adminResponse: true,
+      conversationCount: 3,
+      category: 'Software',
+      helpful: 24,
+      verified: true,
+      hasConversation: true,
+      unreadMessages: readStatus[1] ? 0 : 2
+    },
+    {
+      id: 2,
+      businessName: 'GreenLeaf Organics',
+      reviewTitle: 'Great Products, Slow Delivery',
+      rating: 4,
+      reviewText: 'Love the quality of organic products, but delivery took longer than expected. Customer service was helpful though.',
+      dateSubmitted: '2024-01-10',
+      status: 'published',
+      adminResponse: true,
+      conversationCount: 2,
+      category: 'E-commerce',
+      helpful: 18,
+      verified: true,
+      hasConversation: true,
+      unreadMessages: 0
+    },
+    {
+      id: 3,
+      businessName: 'HealthFirst Clinic',
+      reviewTitle: 'Outstanding Medical Care',
+      rating: 5,
+      reviewText: 'Dr. Smith and the entire team provided exceptional care. The new telemedicine features are very convenient.',
+      dateSubmitted: '2024-01-08',
+      status: 'published',
+      adminResponse: false,
+      conversationCount: 0,
+      category: 'Healthcare',
+      helpful: 31,
+      verified: true,
+      hasConversation: false,
+      unreadMessages: 0
+    },
+    {
+      id: 4,
+      businessName: 'EduBright Academy',
+      reviewTitle: 'Mixed Experience',
+      rating: 3,
+      reviewText: 'The course content is good but the platform can be buggy sometimes. Hope they fix the technical issues soon.',
+      dateSubmitted: '2024-01-05',
+      status: 'under-review',
+      adminResponse: true,
+      conversationCount: 5,
+      category: 'Education',
+      helpful: 12,
+      verified: false,
+      hasConversation: true,
+      unreadMessages: readStatus[4] ? 0 : 1
+    },
+    {
+      id: 5,
+      businessName: 'AutoCare Express',
+      reviewTitle: 'Quick and Professional Service',
+      rating: 4,
+      reviewText: 'Got my car serviced quickly and professionally. Pricing was fair and staff was knowledgeable.',
+      dateSubmitted: '2024-01-03',
+      status: 'published',
+      adminResponse: false,
+      conversationCount: 0,
+      category: 'Automotive',
+      helpful: 15,
+      verified: true,
+      hasConversation: false,
+      unreadMessages: 0
+    },
+    {
+      id: 6,
+      businessName: 'FitLife Gym Network',
+      reviewTitle: 'Amazing Facilities',
+      rating: 5,
+      reviewText: 'State-of-the-art equipment and excellent trainers. The AI workout recommendations are spot on!',
+      dateSubmitted: '2024-01-01',
+      status: 'published',
+      adminResponse: true,
+      conversationCount: 1,
+      category: 'Fitness',
+      helpful: 28,
+      verified: true,
+      hasConversation: true,
+      unreadMessages: 0
+    }
+  ];
+
+  // Filter reviews for conversations tab (only those with conversations)
+  const reviewsWithConversations = userReviews.filter(review => review.hasConversation);
+
+  // Calculate total unread messages for sidebar
+  const totalUnreadMessages = userReviews.reduce((sum, review) => sum + review.unreadMessages, 0);
+
+  // Store unread count in localStorage for sidebar access
+  useEffect(() => {
+    localStorage.setItem('reviewsUnreadCount', totalUnreadMessages.toString());
+    // Dispatch custom event to notify sidebar of count change
+    window.dispatchEvent(new CustomEvent('reviewsUnreadCountChanged', { 
+      detail: { count: totalUnreadMessages } 
+    }));
+  }, [totalUnreadMessages]);
+
+  const filteredReviews = userReviews.filter(review => {
+    const matchesSearch = review.businessName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         review.reviewTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         review.reviewText.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFilter = filterStatus === 'all' || review.status === filterStatus;
+    return matchesSearch && matchesFilter;
+  });
+
+  const filteredConversations = reviewsWithConversations.filter(review => {
+    const matchesSearch = review.businessName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         review.reviewTitle.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesSearch;
+  });
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!rating || !reviewTitle.trim() || !reviewContent.trim()) return;
+    if (!reviewForm.reviewTitle || !reviewForm.rating || !reviewForm.reviewText) {
+      alert('Please fill in all required fields');
+      return;
+    }
 
     setIsSubmitting(true);
     
     // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    setIsSubmitting(false);
-    setIsSubmitted(true);
-    
-    // Reset form
-    setRating(0);
-    setReviewTitle('');
-    setReviewContent('');
-
-    // Reset success message after 3 seconds
     setTimeout(() => {
-      setIsSubmitted(false);
-    }, 3000);
+    console.log('Submitting review:', reviewForm);
+
+      setToastMessage('🎉 Review submitted successfully!');
+      setShowToast(true);
+
+      setTimeout(() => setShowToast(false), 3000);
+
+      setReviewForm({
+        reviewTitle: '',
+        rating: 0,
+        reviewText: ''
+      });
+      setIsSubmitting(false);
+    }, 1000);
   };
 
-  const reviewStats = [
-    { label: 'Total Reviews', value: '1,247', icon: 'ri-star-line', color: 'bg-yellow-100 text-yellow-600' },
-    { label: 'Average Rating', value: '4.8', icon: 'ri-heart-line', color: 'bg-red-100 text-red-600' },
-    { label: 'This Month', value: '89', icon: 'ri-calendar-line', color: 'bg-blue-100 text-blue-600' },
-    { label: 'Response Rate', value: '98%', icon: 'ri-chat-3-line', color: 'bg-green-100 text-green-600' }
-  ];
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'published':
+        return 'bg-green-100 text-green-600';
+      case 'under-review':
+        return 'bg-yellow-100 text-yellow-600';
+      case 'rejected':
+        return 'bg-red-100 text-red-600';
+      default:
+        return 'bg-gray-100 text-gray-600';
+    }
+  };
+
+  const renderStars = (rating: number, interactive = false) => {
+    return Array.from({ length: 5 }, (_, index) => (
+      <i
+        key={index}
+        className={`${interactive ? 'cursor-pointer hover:text-yellow-500' : ''} ri-star-${index < rating ? 'fill' : 'line'} text-yellow-400`}
+        onClick={interactive ? () => setReviewForm({...reviewForm, rating: index + 1}) : undefined}
+      ></i>
+    ));
+  };
+
+  const handleViewConversation = (reviewId: number) => {
+    // Mark messages as read when viewing conversation
+    setReadStatus(prev => {
+      const newStatus = {
+        ...prev,
+        [reviewId]: true
+      };
+      localStorage.setItem('reviewReadStatus', JSON.stringify(newStatus));
+      return newStatus;
+    });
+    
+    navigate(`/dashboard/conversations/${reviewId}`);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8 min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Write a Review</h1>
-          <p className="text-sm sm:text-base text-gray-600">Share your experience and help us improve our service</p>
-        </div>
-
-        {/* Review Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          {reviewStats.map((stat, index) => (
-            <div key={index} className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs sm:text-sm font-medium text-gray-600">{stat.label}</p>
-                  <p className="text-xl sm:text-2xl font-bold text-gray-900">{stat.value}</p>
-                </div>
-                <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center ${stat.color}`}>
-                  <i className={`${stat.icon} text-lg sm:text-xl`}></i>
-                </div>
+    <div className="min-h-screen bg-gray-50 flex">
+      <DashboardSidebar 
+        isMobileMenuOpen={isMobileMenuOpen} 
+        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      />
+      
+      {/* Main Content */}
+      <div className={`flex-1 ${isMobile ? 'ml-0' : '0'} flex flex-col`}>
+        <div className={`flex-1 ${isMobile ? 'p-4' : isTablet ? 'p-6' : 'p-8'}`}>
+          <div className="max-w-7xl mx-auto">
+            {/* Tabs at the top */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+              <div className="border-b border-gray-200">
+                <nav className="flex">
+                  <button
+                    onClick={() => setActiveTab('form')}
+                    className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === 'form'
+                        ? 'border-orange-500 text-orange-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <i className="ri-edit-line mr-2"></i>
+                    Submit Review
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('my-reviews')}
+                    className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === 'my-reviews'
+                        ? 'border-orange-500 text-orange-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <i className="ri-star-line mr-2"></i>
+                    My Reviews ({userReviews.length})
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('conversations')}
+                    className={`px-6 py-4 text-sm font-medium border-b-2 transition-colors ${
+                      activeTab === 'conversations'
+                        ? 'border-orange-500 text-orange-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`}
+                  >
+                    <i className="ri-message-3-line mr-2"></i>
+                    Conversations ({reviewsWithConversations.length})
+                    {totalUnreadMessages > 0 && (
+                      <span className="ml-2 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                        {totalUnreadMessages}
+                      </span>
+                    )}
+                  </button>
+                </nav>
               </div>
             </div>
-          ))}
-        </div>
 
-        {/* Review Form */}
-        <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 lg:p-8 border border-gray-200 shadow-sm">
-          <div className="max-w-2xl mx-auto">
-            <div className="text-center mb-6 sm:mb-8">
-              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <i className="ri-star-line text-orange-600 text-2xl sm:text-3xl"></i>
-              </div>
-              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2">Rate Your Experience</h2>
-              <p className="text-sm sm:text-base text-gray-600">
-                Your feedback helps us provide better service to all our users
+            {/* Header */}
+            <div className={`${isMobile ? 'mb-6' : 'mb-8'}`}>
+              <h1 className={`${isMobile ? 'text-2xl' : isTablet ? 'text-3xl' : 'text-4xl'} font-bold text-gray-900 mb-2`}>
+                Reviews
+              </h1>
+              <p className={`text-gray-600 ${isMobile ? 'text-sm' : 'text-base'}`}>
+                Submit new reviews and manage your existing reviews and conversations
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Star Rating */}
-              <div className="text-center">
-                <label className="block text-sm font-medium text-gray-700 mb-4">
-                  How would you rate our service?
-                </label>
-                <div className="flex justify-center gap-2 mb-2">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => setRating(star)}
-                      onMouseEnter={() => setHoveredRating(star)}
-                      onMouseLeave={() => setHoveredRating(0)}
-                      className="text-3xl sm:text-4xl transition-colors focus:outline-none"
-                    >
-                      <i className={`ri-star-${
-                        star <= (hoveredRating || rating) ? 'fill' : 'line'
-                      } ${
-                        star <= (hoveredRating || rating) ? 'text-yellow-400' : 'text-gray-300'
-                      }`}></i>
-                    </button>
-                  ))}
+            {/* Review Submission Form - Default view */}
+            {activeTab === 'form' && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+                <div className="p-6 border-b border-gray-200">
+                  <h3 className="text-lg font-semibold text-gray-900">Submit a New Review</h3>
+                  <p className="text-sm text-gray-600 mt-1">Share your experience with a business or service</p>
                 </div>
-                <p className="text-sm text-gray-500">
-                  {rating === 0 && 'Click to rate'}
-                  {rating === 1 && 'Poor'}
-                  {rating === 2 && 'Fair'}
-                  {rating === 3 && 'Good'}
-                  {rating === 4 && 'Very Good'}
-                  {rating === 5 && 'Excellent'}
-                </p>
-              </div>
-
-              {/* Review Title */}
-              <div>
-                <label htmlFor="reviewTitle" className="block text-sm font-medium text-gray-700 mb-2">
-                  Review Title
-                </label>
-                <input
-                  type="text"
-                  id="reviewTitle"
-                  value={reviewTitle}
-                  onChange={(e) => setReviewTitle(e.target.value)}
-                  placeholder="Summarize your experience in a few words..."
-                  maxLength={100}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm sm:text-base"
-                  required
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  {reviewTitle.length}/100 characters
-                </p>
-              </div>
-
-              {/* Review Content */}
-              <div>
-                <label htmlFor="reviewContent" className="block text-sm font-medium text-gray-700 mb-2">
-                  Your Review
-                </label>
-                <textarea
-                  id="reviewContent"
-                  value={reviewContent}
-                  onChange={(e) => setReviewContent(e.target.value)}
-                  placeholder="Tell us about your experience. What did you like? What could be improved? Your detailed feedback helps us serve you better..."
-                  rows={6}
-                  maxLength={500}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 resize-none text-sm sm:text-base"
-                  required
-                />
-                <div className="flex justify-between items-center mt-2">
-                  <p className="text-xs text-gray-500">
-                    Share specific details about your experience
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {reviewContent.length}/500 characters
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex justify-center">
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !rating || !reviewTitle.trim() || !reviewContent.trim()}
-                  className="bg-orange-500 text-white px-8 py-3 rounded-lg hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium text-sm sm:text-base whitespace-nowrap min-w-[200px]"
-                >
-                  {isSubmitting ? (
-                    <span className="flex items-center justify-center">
-                      <i className="ri-loader-4-line animate-spin mr-2"></i>
-                      Submitting...
-                    </span>
-                  ) : (
-                    <span className="flex items-center justify-center">
-                      <i className="ri-send-plane-line mr-2"></i>
-                      Submit Review
-                    </span>
-                  )}
-                </button>
-              </div>
-            </form>
-
-            {/* Success Message */}
-            {isSubmitted && (
-              <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-                <div className="flex items-center">
-                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
-                    <i className="ri-check-line text-green-600"></i>
+                
+                <form onSubmit={handleReviewSubmit} className="p-6">
+                  {/* Review Title */}
+                  <div className="mb-6">
+                    <label htmlFor="reviewTitle" className="block text-sm font-medium text-gray-700 mb-2">
+                      Review Title *
+                    </label>
+                    <input
+                      type="text"
+                      id="reviewTitle"
+                      value={reviewForm.reviewTitle}
+                      onChange={(e) => setReviewForm({...reviewForm, reviewTitle: e.target.value})}
+                      placeholder="Give your review a title"
+                      className="w-full px-3 py-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-200 focus:border-orange-500 outline-none"
+                      required
+                    />
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-green-800">Review Submitted Successfully!</h3>
-                    <p className="text-sm text-green-700">
-                      Thank you for your feedback. Your review will be published after moderation.
-                    </p>
+
+                  {/* Rating */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Rating *
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <div className="flex">
+                        {renderStars(reviewForm.rating, true)}
+                      </div>
+                      <span className="text-sm text-gray-600">
+                        {reviewForm.rating > 0 ? `${reviewForm.rating}/5` : 'Click to rate'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Review Text */}
+                  <div className="mb-6">
+                    <label htmlFor="reviewText" className="block text-sm font-medium text-gray-700 mb-2">
+                      Your Review *
+                    </label>
+                    <textarea
+                      id="reviewText"
+                      rows={4}
+                      value={reviewForm.reviewText}
+                      onChange={(e) => setReviewForm({...reviewForm, reviewText: e.target.value})}
+                      placeholder="Share your experience..."
+                      className="w-full px-3 py-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-200 focus:border-orange-500 outline-none resize-none"
+                      maxLength={500}
+                      required
+                    />
+                    <div className="mt-2 text-xs text-gray-500">
+                      {reviewForm.reviewText.length}/500 characters
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className={`flex ${isMobile ? 'flex-col' : 'flex-row'} gap-3 justify-end`}>
+                    <button
+                      type="button"
+                      onClick={() => setReviewForm({
+                        reviewTitle: '',
+                        rating: 0,
+                        reviewText: ''
+                      })}
+                      className="border border-gray-300 text-gray-700 px-6 py-3 rounded-lg text-sm font-medium bg-white hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      Clear Form
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="bg-orange-500 text-white px-6 py-3 rounded-lg text-sm font-medium hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <i className="ri-loader-4-line animate-spin mr-2"></i>
+                          Submitting...
+                        </>
+                      ) : (
+                        <>
+                          <i className="ri-send-plane-line mr-2"></i>
+                          Submit Review
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* My Reviews Tab */}
+            {activeTab === 'my-reviews' && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+                {/* Search and Filters */}
+                <div className="p-6 border-b border-gray-200">
+                  <div className={`flex ${isMobile ? 'flex-col' : 'flex-row'} gap-4`}>
+                    {/* Search */}
+                    <div className="flex-1">
+                      <div className="relative">
+                        <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                        <input
+                          type="text"
+                          placeholder="Search reviews..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-200 focus:border-orange-500 outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Status Filter */}
+                    <select
+                      value={filterStatus}
+                      onChange={(e) => setFilterStatus(e.target.value)}
+                      className="border border-gray-300 text-gray-700 py-3 px-4 pr-8 rounded-lg text-sm font-medium bg-white hover:bg-gray-50 focus:ring-2 focus:ring-orange-200 focus:border-orange-500 outline-none"
+                    >
+                      <option value="all">All Status</option>
+                      <option value="published">Published</option>
+                      <option value="under-review">Under Review</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Reviews List */}
+                <div className="p-6">
+                  <div className="space-y-6">
+                    {filteredReviews.map((review) => (
+                      <div key={review.id} className="bg-gray-50 rounded-lg p-6 border border-gray-200">
+                        {/* Review Header */}
+                        <div className={`flex ${isMobile ? 'flex-col' : 'flex-row'} ${isMobile ? 'items-start' : 'items-center'} justify-between ${isMobile ? 'gap-3' : 'gap-0'} mb-4`}>
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900 mb-1">
+                              {review.reviewTitle}
+                            </h3>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm text-gray-600">{review.businessName}</span>
+                              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                                {review.category}
+                              </span>
+                              {review.verified && (
+                                <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full flex items-center">
+                                  <i className="ri-verified-badge-line mr-1"></i>
+                                  Verified
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className={`text-xs px-2 py-1 rounded-full font-medium ${getStatusColor(review.status)}`}>
+                              {review.status.replace('-', ' ').toUpperCase()}
+                            </span>
+                            <span className="text-sm text-gray-500">
+                              {new Date(review.dateSubmitted).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Rating */}
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="flex">
+                            {renderStars(review.rating)}
+                          </div>
+                          <span className="text-sm text-gray-600">({review.rating}/5)</span>
+                        </div>
+
+                        {/* Review Text */}
+                        <p className="text-gray-700 mb-4 leading-relaxed">
+                          {review.reviewText}
+                        </p>
+
+                        {/* Review Stats */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <span className="text-sm text-gray-600 flex items-center">
+                              <i className="ri-thumb-up-line mr-1"></i>
+                              {review.helpful} helpful
+                            </span>
+                            {review.adminResponse && (
+                              <span className="text-sm text-blue-600 flex items-center">
+                                <i className="ri-reply-line mr-1"></i>
+                                Admin responded
+                              </span>
+                            )}
+                            {review.conversationCount > 0 && (
+                              <span className="text-sm text-orange-600 flex items-center">
+                                <i className="ri-message-3-line mr-1"></i>
+                                {review.conversationCount} messages
+                              </span>
+                            )}
+                            {review.unreadMessages > 0 && (
+                              <span className="text-sm text-red-600 flex items-center font-medium">
+                                <i className="ri-notification-line mr-1"></i>
+                                {review.unreadMessages} unread messages
+                              </span>
+                            )}
+                          </div>
+                          {review.hasConversation && (
+                            <button
+                              onClick={() => handleViewConversation(review.id)}
+                              className="bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors cursor-pointer whitespace-nowrap"
+                            >
+                              View Conversation
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                    {filteredReviews.length === 0 && (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <i className="ri-star-line text-2xl text-gray-400"></i>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                          No reviews found
+                        </h3>
+                        <p className="text-gray-600">
+                          Try adjusting your search terms or filters
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Guidelines */}
-            <div className="mt-8 pt-6 border-t border-gray-200">
-              <h3 className="font-semibold text-gray-900 mb-4">Review Guidelines</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm text-gray-600">
-                <div className="space-y-2">
-                  <div className="flex items-start gap-2">
-                    <i className="ri-check-line text-green-600 mt-0.5 flex-shrink-0"></i>
-                    <span>Be honest and specific about your experience</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <i className="ri-check-line text-green-600 mt-0.5 flex-shrink-0"></i>
-                    <span>Focus on the service and features you used</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <i className="ri-check-line text-green-600 mt-0.5 flex-shrink-0"></i>
-                    <span>Include both positives and areas for improvement</span>
+            {/* Conversations Tab */}
+            {activeTab === 'conversations' && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+                {/* Search */}
+                <div className="p-6 border-b border-gray-200">
+                  <div className="relative">
+                    <i className="ri-search-line absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                    <input
+                      type="text"
+                      placeholder="Search conversations..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-200 focus:border-orange-500 outline-none"
+                    />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-start gap-2">
-                    <i className="ri-close-line text-red-600 mt-0.5 flex-shrink-0"></i>
-                    <span>Avoid personal attacks or inappropriate language</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <i className="ri-close-line text-red-600 mt-0.5 flex-shrink-0"></i>
-                    <span>Don't include personal information</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <i className="ri-close-line text-red-600 mt-0.5 flex-shrink-0"></i>
-                    <span>Keep it relevant to our service</span>
+
+                {/* Conversations List */}
+                <div className="p-6">
+                  <div className="space-y-4">
+                    {filteredConversations.map((review) => (
+                      <div key={review.id} className="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-orange-300 transition-colors cursor-pointer"
+                           onClick={() => handleViewConversation(review.id)}>
+                        <div className={`flex ${isMobile ? 'flex-col' : 'flex-row'} ${isMobile ? 'items-start' : 'items-center'} justify-between ${isMobile ? 'gap-3' : 'gap-0'}`}>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <h3 className="text-lg font-semibold text-gray-900">
+                                {review.reviewTitle}
+                              </h3>
+                              <span className="text-sm text-gray-600">
+                                {review.businessName}
+                              </span>
+                              {review.unreadMessages > 0 && (
+                                <span className="bg-red-500 text-white text-xs rounded-full px-2 py-1 font-medium">
+                                  {review.unreadMessages} unread
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="flex">
+                                {renderStars(review.rating)}
+                              </div>
+                              <span className="text-sm text-gray-600">({review.rating}/5)</span>
+                            </div>
+                            <p className="text-gray-600 text-sm mb-2">
+                              {review.reviewText.substring(0, 100)}...
+                            </p>
+                            <span className="text-xs text-gray-500">
+                              {review.conversationCount} messages • {new Date(review.dateSubmitted).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <div className="flex items-center">
+                            <i className="ri-arrow-right-s-line text-gray-400"></i>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {filteredConversations.length === 0 && (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <i className="ri-message-3-line text-2xl text-gray-400"></i>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                          No conversations found
+                        </h3>
+                        <p className="text-gray-600">
+                          Start conversations by submitting reviews and receiving admin responses
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
+        {showToast && (
+  <div
+    style={{
+      position: 'fixed',
+      bottom: '20px',
+      right: '20px',
+      backgroundColor: '#10b981',
+      color: 'white',
+      padding: '12px 20px',
+      borderRadius: '8px',
+      fontSize: '14px',
+      transition: '0.3s ease',
+      animation: 'slideIn 0.3s forwards'
+    }}
+  >
+    {toastMessage}
+  </div>)}
+        
       </div>
     </div>
   );

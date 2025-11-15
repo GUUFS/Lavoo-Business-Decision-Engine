@@ -19,7 +19,7 @@ const sidebarItems: SidebarItem[] = [
   },
   {
     id: 'analyze',
-    label: 'AI Analysis',
+    label: 'AI Analyst',
     icon: <Search className="w-5 h-5" />,
     path: '/dashboard/analyze'
   },
@@ -49,7 +49,7 @@ const sidebarItems: SidebarItem[] = [
   },
   {
     id: 'hub',
-    label: 'Hub',
+    label: 'Trends',
     icon: <Globe className="w-5 h-5" />,
     path: '/dashboard/hub'
   },

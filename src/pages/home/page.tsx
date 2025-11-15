@@ -7,7 +7,18 @@ import { useState } from 'react';
 
 export default function Home() {
   const navigate = useNavigate();
+  const [currentSlide, setCurrentSlide] = useState(0);
   const [businessPrompt, setBusinessPrompt] = useState("")
+
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const nextSlide = () => {
+    setCurrentSlide((prev) => (prev + 1) % 2);
+  };
+
+  const prevSlide = () => {
+    setCurrentSlide((prev) => (prev - 1 + 2) % 2);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white">
@@ -74,9 +85,7 @@ export default function Home() {
       </div>
     </div>
   </div>
-</section>
-
-      
+</section>      
       
 
       {/* Features Section */}
@@ -134,6 +143,222 @@ export default function Home() {
         </div>
       </section>
     
+    
+      {/* Reviews Section */}
+      <section className="py-12 sm:py-16 md:py-20 bg-gradient-to-br from-orange-50 to-white" >
+        <div style={{ maxWidth: '1280px', margin: '0 auto' }}>  
+          <div style={{ textAlign: 'center', marginBottom: '48px' }}>
+            <h2 style={{ fontSize: window.innerWidth >= 768 ? '40px' : '32px', fontWeight: 'bold', color: '#111827',  marginBottom: '16px'}}>
+              What Our Customers Say
+            </h2> 
+            <p style={{ fontSize: '20px', color: '#4b5563',maxWidth: '768px', margin: '0 auto 16px' }}>             
+              Join thousands of businesses that trust our AI analyst for data-driven insights
+            </p>
+            <div style={{ display: 'flex',alignItems: 'center', justifyContent: 'center',gap: '8px', marginTop: '16px' }}> 
+              <div style={{ display: 'flex' }}>
+                {[...Array(5)].map((_, i) => (
+                  <i key={i} className="ri-star-fill" style={{ color: '#fbbf24', fontSize: '20px' }}></i>
+                ))}
+              </div>
+              <span style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>4.9/5</span>
+              <span style={{ color: '#4b5563' }}>(2,847+ reviews)</span>
+            </div>
+          </div>
+
+          <div style={{ position: 'relative' }}>
+            {/* Reviews Container */}
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ display: 'flex',transition: 'transform 0.5s ease-in-out',transform: `translateX(-${currentSlide * 100}%)`}}> 
+                {/* Slide 1 */}
+                <div style={{ width: '100%', flexShrink: 0 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth >= 768 ? 'repeat(3, 1fr)' : '1fr', gap: '32px' }}>
+                     <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
+                         boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                          <div style={{  width: '48px', height: '48px',backgroundColor: '#fef2f2',borderRadius: '50%',display: 'flex',
+                                alignItems: 'center', justifyContent: 'center', marginRight: '16px'}}>
+                              <span style={{ color: '#dc2626', fontWeight: '600' }}>SJ</span>
+                          </div>
+                        <div>
+                        <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Sarah Johnson</h4>
+                        <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>CEO, TechStart Inc.</p>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', marginBottom: '16px' }}>
+                        {[...Array(5)].map((_, i) => (
+                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
+                        ))}
+                    </div>
+                    <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
+                        "This AI analyst transformed our decision-making process. We increased revenue by 34% in just 3 months using the insights provided. Absolutely game-changing!"
+                    </p>
+                  </div>  
+                  <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
+                       boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'}}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{ width: '48px', height: '48px', backgroundColor: '#fef2f2',borderRadius: '50%',
+                           display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px' }}>
+                          <span style={{ color: '#dc2626', fontWeight: '600' }}>MC</span>
+                      </div>
+                      <div>
+                        <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Michael Chen</h4>
+                        <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Marketing Director, GrowthCorp</p>
+                      </div> 
+                    </div>
+                    <div style={{ display: 'flex', marginBottom: '16px' }}>
+                        {[...Array(5)].map((_, i) => (
+                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
+                        ))}
+                    </div>
+                    <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
+                        "The predictive analytics helped us identify market trends before our competitors. Our marketing ROI improved by 150%. Best investment we've made!"
+                    </p>
+                  </div>     
+                  <div style={{  backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
+                          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                      <div style={{  width: '48px',height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px' }}>
+                        <span style={{ color: '#dc2626', fontWeight: '600' }}>ER</span>  
+                      </div>    
+                      <div>
+                        <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Emily Rodriguez</h4>
+                        <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Operations Manager, LogiFlow</p>
+                      </div>     
+                    </div>
+                    <div style={{ display: 'flex', marginBottom: '16px' }}>
+                      {[...Array(4)].map((_, i) => (
+                        <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
+                      ))}
+                      <i className="ri-star-line" style={{ color: '#fbbf24' }}></i>
+                    </div>
+                    <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
+                        "Streamlined our operations and reduced costs by 28%. The AI recommendations are incredibly accurate and easy to implement. Highly recommended!"
+                    </p>
+                  </div>
+                </div>
+              </div>       
+               {/* Slide 2 */}
+                <div style={{ width: '100%', flexShrink: 0 }}>
+                  <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: window.innerWidth >= 768 ? 'repeat(3, 1fr)' : '1fr', 
+                    gap: '32px' 
+                  }}>
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', 
+                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                        <div style={{ width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%', display: 'flex', 
+                          alignItems: 'center', justifyContent: 'center', marginRight: '16px' }}>
+                          <span style={{ color: '#dc2626', fontWeight: '600' }}>DK</span>
+                        </div>
+                        <div>
+                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>David Kim</h4>
+                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>CFO, FinanceFirst</p>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', marginBottom: '16px' }}>
+                        {[...Array(5)].map((_, i) => (
+                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
+                        ))}
+                      </div>
+                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
+                        "The financial risk analysis saved us from a potentially disastrous investment. The AI's accuracy in predicting market volatility is remarkable."
+                      </p>
+                    </div>
+
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
+                                  boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                        <div style={{ width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%', 
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px' }}>
+                          <span style={{ color: '#dc2626', fontWeight: '600' }}>LT</span>
+                        </div>
+                        <div>
+                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Lisa Thompson</h4>
+                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Product Manager, InnovateTech</p>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', marginBottom: '16px' }}>
+                        {[...Array(5)].map((_, i) => (
+                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
+                        ))}
+                      </div>
+                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
+                        "Customer behavior insights helped us redesign our product strategy. User engagement increased by 89% and customer satisfaction scores are at an all-time high."
+                      </p>
+                    </div>
+
+                    <div style={{ 
+                      backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px', 
+                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                        <div style={{ 
+                          width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px'}}>
+                          <span style={{ color: '#dc2626', fontWeight: '600' }}>JW</span>
+                        </div>
+                        <div>
+                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>James Wilson</h4>
+                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Founder, StartupSuccess</p>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', marginBottom: '16px' }}>
+                        {[...Array(5)].map((_, i) => (
+                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
+                        ))}
+                      </div>
+                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
+                        "As a startup, we needed enterprise-level insights without the enterprise budget. This AI analyst delivered exactly that and helped us secure Series A funding."
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Navigation Arrows */}
+            <button
+              onClick={prevSlide}
+              style={{ 
+                position: 'absolute', left: '-16px', top: '50%', transform: 'translateY(-50%)', width: '48px', height: '48px', backgroundColor: '#ffffff', borderRadius: '50%', 
+                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563', 
+                border: 'none', cursor: 'pointer', zIndex: 10, transition: 'color 0.3s ease'}}
+              onMouseOver={(e) => e.currentTarget.style.color = '#dc2626'}
+              onMouseOut={(e) => e.currentTarget.style.color = '#4b5563'}
+            >
+              <i className="ri-arrow-left-line" style={{ fontSize: '20px' }}></i>
+            </button>
+            <button
+              onClick={nextSlide}
+              style={{ 
+                position: 'absolute', right: '-16px', top: '50%', transform: 'translateY(-50%)', width: '48px', height: '48px', backgroundColor: '#ffffff', borderRadius: '50%', 
+                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                color: '#4b5563', border: 'none', cursor: 'pointer', zIndex: 10, transition: 'color 0.3s ease' 
+              }}
+              onMouseOver={(e) => e.currentTarget.style.color = '#dc2626'}
+              onMouseOut={(e) => e.currentTarget.style.color = '#4b5563'}
+            >
+              <i className="ri-arrow-right-line" style={{ fontSize: '20px' }}></i>
+            </button>
+
+            {/* Slide Indicators */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '32px',  gap: '8px' }}>
+              {[0, 1].map((slide) => (
+              <button
+                  key={slide}
+                  onClick={() => setCurrentSlide(slide)}
+                  style={{ 
+                    width: '12px', height: '12px', borderRadius: '50%', border: 'none',cursor: 'pointer',
+                    backgroundColor: currentSlide === slide ? '#dc2626' : '#d1d5db', transition: 'background-color 0.3s ease'
+                    }}
+              />
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>             
+
       {/* Blog Section */}
       <section id="blog" className="py-12 sm:py-16 md:py-20 bg-gradient-to-br from-orange-50 to-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -205,7 +430,74 @@ export default function Home() {
             </div>
           </div>
         </div>
-      </section>
+      </section>   
+                  
+                  
+               
+              
+              
+            
+              
+               
+             
+               
+              
+            
+              
+            
+              
+              
+
+          
+                
+                          
+                           
+                          
+                        
+                       
+                       
+                    
+                      
+                        
+                          
+                        
+                        
+                           
+                           
+                           
+                           
+                       
+                          
+                         
+                                  
+                       
+                       
+                       
+                    
+                      
+                          
+                           
+                        
+                   
+                  
+                    
+
+                      
+                       
+                      
+                      
+                    
+                      
+                          
+                        
+                          
+                       
+
+                    
+
+                    
+
+                
 
       {/* CTA Section */}
       <section className="py-12 sm:py-16 md:py-20 bg-gradient-to-br from-orange-50 to-white">

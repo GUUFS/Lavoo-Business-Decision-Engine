@@ -5,11 +5,15 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 
 # import the function for rendering the HTML sites
 # import the function for rendering the static files
 from fastapi.staticfiles import StaticFiles
+
+from sqlalchemy.orm import Session
+
+from passlib.context import CryptContext
 
 try:
     from dotenv import load_dotenv
@@ -25,7 +29,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Set up centralized logging (handles both local and cloud environments)
 from config.logging import get_logger, setup_logging
-from db.pg_connections import get_db_info, init_db
+from db.pg_connections import get_db_info, init_db, get_db
+from db.pg_models import User
+from db.pg_connections import SessionLocal
 
 # Initialize logging system
 setup_logging(level=logging.INFO if os.getenv("DEBUG") != "true" else logging.DEBUG)
@@ -33,7 +39,7 @@ logger = get_logger(__name__)
 
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
-from api.routes import analyzer, business_analyzer, index, login, signup
+from api.routes import analyzer, index, login, signup, admin, dependencies
 
 logger.info("✓ Using Neon PostgreSQL database")
 
@@ -60,6 +66,35 @@ async def health_check():
         return {"status": "unhealthy", "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+# try creating an admin user if not exists
+async def create_admin_user(db: Session=Depends(get_db)):
+    admin_email = os.getenv("admin_email","admin@gmail.com")
+    admin_password = os.getenv("admin_password","admin123")
+    password = pwd_context.hash(admin_password)
+    admin_name = os.getenv("admin_name","Admin")
+
+    try:
+        existing_admin = db.query(User).filter(User.email == admin_email).first()
+        if existing_admin:
+            logger.info("✓ Admin user already exists")
+            return
+    
+        new_admin = User(
+                name="Admin",
+                email=admin_email,
+                password= password,
+                confirm_password = password,
+                is_admin=True
+        )
+        db.add(new_admin)
+        db.commit()
+        logger.info("✓ Admin user created",admin_email)
+    except Exception as e:
+        logger.error(f"❌ Failed to create admin user: {e}")
+
+
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
@@ -68,15 +103,19 @@ async def startup_event():
         init_db()
         db_info = get_db_info()
         logger.info(f"✓ Database initialized: {db_info['type']} at {db_info['host']}")
+
+        # Create admin user
+        await create_admin_user(SessionLocal())
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         raise
 
+origins = ["http://localhost:3000"]
 
 # Enable CORS for (React form requests)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -97,7 +136,7 @@ app.include_router(login.router, prefix="/api")  # For React frontend that uses 
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
 app.include_router(analyzer.router)
-app.include_router(business_analyzer.router)  # Business analysis API
+app.include_router(admin.router)
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)

@@ -27,24 +27,6 @@ export default function EarningsPage() {
 
   const revenueStreams = [
     {
-      name: 'AI Analysis Reports',
-      amount: 18500,
-      growth: 15.2,
-      icon: 'ri-file-chart-line'
-    },
-    {
-      name: 'Consultation Services',
-      amount: 12800,
-      growth: 8.7,
-      icon: 'ri-user-voice-line'
-    },
-    {
-      name: 'Premium Subscriptions',
-      amount: 8900,
-      growth: 22.1,
-      icon: 'ri-vip-crown-line'
-    },
-    {
       name: 'Referral Earnings',
       amount: 1200,
       growth: 45.3,
@@ -127,12 +109,12 @@ export default function EarningsPage() {
               <div className="text-2xl sm:text-3xl">{userLevel.badge}</div>
               <div>
                 <h3 className="text-lg sm:text-xl font-bold text-gray-900">{userLevel.name} Level</h3>
-                <p className="text-sm text-gray-600">{userLevel.currentPoints} points earned</p>
+                <p className="text-sm text-gray-600">{userLevel.currentPoints} chops earned</p>
               </div>
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-600">Next level in</p>
-              <p className="text-lg font-bold text-orange-600">{pointsToNext} points</p>
+              <p className="text-lg font-bold text-orange-600">{pointsToNext} chops</p>
             </div>
           </div>
           
@@ -148,8 +130,8 @@ export default function EarningsPage() {
               ></div>
             </div>
             <div className="flex justify-between text-xs text-gray-500">
-              <span>{userLevel.currentPoints} points</span>
-              <span>{userLevel.nextLevelPoints} points</span>
+              <span>{userLevel.currentPoints} chops</span>
+              <span>{userLevel.nextLevelPoints} chops</span>
             </div>
           </div>
         </div>

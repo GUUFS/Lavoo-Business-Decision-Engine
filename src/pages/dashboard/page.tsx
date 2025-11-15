@@ -223,6 +223,48 @@ export default function Dashboard() {
 
           {/* Dashboard Sections */}
           <div className="space-y-6 md:space-y-8">
+
+            {/* AI Insights */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="p-4 md:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-brain-line text-purple-600"></i>
+                    </div>
+                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Insights</h3>
+                  </div>
+                  <Button
+                    onClick={() => navigate('/dashboard/insights')}
+                    variant="outline"
+                    size="sm"
+                    className="whitespace-nowrap self-start sm:self-auto"
+                  >
+                    View All <i className="ri-arrow-right-line ml-1"></i>
+                  </Button>
+                </div>
+              </div>
+              <div className="p-4 md:p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+                  {aiInsights.map((insight, index) => (
+                    <div key={index} className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0 mb-3">
+                        <span className={`text-xs px-2 py-1 rounded-full font-medium self-start ${
+                          insight.impact === 'High' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'
+                        }`}>
+                          {insight.impact} Impact
+                        </span>
+                        <span className="text-xs text-gray-500">{insight.category}</span>
+                      </div>
+                      <h4 className="font-medium text-gray-900 mb-2 text-sm md:text-base">{insight.title}</h4>
+                      <p className="text-sm text-gray-600 leading-relaxed">{insight.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            
             {/* Urgent Opportunities */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
               <div className="p-4 md:p-6 border-b border-gray-200">
@@ -267,45 +309,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* AI Insights */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
-              <div className="p-4 md:p-6 border-b border-gray-200">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <i className="ri-brain-line text-purple-600"></i>
-                    </div>
-                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Insights</h3>
-                  </div>
-                  <Button
-                    onClick={() => navigate('/dashboard/insights')}
-                    variant="outline"
-                    size="sm"
-                    className="whitespace-nowrap self-start sm:self-auto"
-                  >
-                    View All <i className="ri-arrow-right-line ml-1"></i>
-                  </Button>
-                </div>
-              </div>
-              <div className="p-4 md:p-6">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-                  {aiInsights.map((insight, index) => (
-                    <div key={index} className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0 mb-3">
-                        <span className={`text-xs px-2 py-1 rounded-full font-medium self-start ${
-                          insight.impact === 'High' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'
-                        }`}>
-                          {insight.impact} Impact
-                        </span>
-                        <span className="text-xs text-gray-500">{insight.category}</span>
-                      </div>
-                      <h4 className="font-medium text-gray-900 mb-2 text-sm md:text-base">{insight.title}</h4>
-                      <p className="text-sm text-gray-600 leading-relaxed">{insight.description}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
 
             {/* Earnings */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
@@ -337,49 +340,6 @@ export default function Dashboard() {
                       </div>
                       <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{earning.amount}</div>
                       <div className="text-sm text-gray-500">{earning.period}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Reviews */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
-              <div className="p-4 md:p-6 border-b border-gray-200">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <i className="ri-star-line text-yellow-600"></i>
-                    </div>
-                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Recent Reviews</h3>
-                  </div>
-                  <Button
-                    onClick={() => navigate('/dashboard/reviews')}
-                    variant="outline"
-                    size="sm"
-                    className="whitespace-nowrap self-start sm:self-auto"
-                  >
-                    View All <i className="ri-arrow-right-line ml-1"></i>
-                  </Button>
-                </div>
-              </div>
-              <div className="p-4 md:p-6">
-                <div className="space-y-4">
-                  {recentReviews.map((review, index) => (
-                    <div key={index} className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-yellow-200 hover:bg-yellow-50/30 transition-all duration-200">
-                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-2 sm:space-y-0 mb-3">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm font-medium text-gray-900">{review.author}</span>
-                          <span className="text-xs text-gray-500">on {review.platform}</span>
-                        </div>
-                        <div className="flex items-center space-x-1">
-                          {[...Array(5)].map((_, i) => (
-                            <i key={i} className={`ri-star-${i < review.rating ? 'fill' : 'line'} text-yellow-400 text-sm`}></i>
-                          ))}
-                        </div>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-2 leading-relaxed">{review.text}</p>
-                      <div className="text-xs text-gray-500">{review.time}</div>
                     </div>
                   ))}
                 </div>
