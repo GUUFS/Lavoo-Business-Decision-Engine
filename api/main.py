@@ -30,7 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Set up centralized logging (handles both local and cloud environments)
 from config.logging import get_logger, setup_logging
 from db.pg_connections import get_db_info, init_db, get_db
-from db.pg_models import User
+from db.pg_models import User, CreateOrderRequest, CaptureRequest
 from db.pg_connections import SessionLocal
 
 # Initialize logging system
@@ -40,6 +40,9 @@ logger = get_logger(__name__)
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
 from api.routes import analyzer, index, login, signup, admin, dependencies
+
+#  Payment routes
+from subscriptions import paypal, flutterwave
 
 logger.info("✓ Using Neon PostgreSQL database")
 
@@ -110,7 +113,9 @@ async def startup_event():
         logger.error(f"❌ Database initialization failed: {e}")
         raise
 
-origins = ["http://localhost:3000"]
+origins = ["http://localhost:3000",
+           "http://localhost:5173",
+    "http://localhost:8080"]
 
 # Enable CORS for (React form requests)
 app.add_middleware(
@@ -137,6 +142,8 @@ app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
 app.include_router(analyzer.router)
 app.include_router(admin.router)
+app.include_router(paypal.router)
+app.include_router(flutterwave.router)
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)

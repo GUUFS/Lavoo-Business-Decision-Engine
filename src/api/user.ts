@@ -13,10 +13,32 @@ export const useCurrentUser = () => {
   return useQuery({
     queryKey: ["currentUser"],  // ✅ required as part of options object
     queryFn: async () => {
-      const res = await axios.get("http://localhost:8000/me", {
-        withCredentials: true,  // send HTTP-only cookie
-      });
-      return res.data; // should return {id, name, email, role, ...}
+      try {
+        const res = await axios.get("http://localhost:8000/me", {
+          withCredentials: true,  // send HTTP-only cookie
+        });
+        return res.data; // should return {id, name, email, role, ...}
+      } catch (err: any) {
+        if (err.response?.status === 401) {
+          try {
+            await axios.post(
+              "http://localhost:8000/refresh",
+              {},
+              { withCredentials: true } // send refresh_token cookie
+            );
+
+            const retryRes = await axios.get("http://localhost:8000/me", {
+              withCredentials: true,
+            });
+            return retryRes.data
+          } catch (refreshErr) {
+            // Refresh failed, user must login
+            throw new Error("Session expired. Please login again.");
+          }
+        } else {
+          throw err
+        }
+      }
     },
   });
 };

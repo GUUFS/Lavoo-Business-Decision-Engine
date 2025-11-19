@@ -109,12 +109,12 @@ export default function EarningsPage() {
               <div className="text-2xl sm:text-3xl">{userLevel.badge}</div>
               <div>
                 <h3 className="text-lg sm:text-xl font-bold text-gray-900">{userLevel.name} Level</h3>
-                <p className="text-sm text-gray-600">{userLevel.currentPoints} chops earned</p>
+                <p className="text-sm text-gray-600">{userLevel.currentPoints} Chops earned</p>
               </div>
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-600">Next level in</p>
-              <p className="text-lg font-bold text-orange-600">{pointsToNext} chops</p>
+              <p className="text-lg font-bold text-orange-600">{pointsToNext} Chops</p>
             </div>
           </div>
           
@@ -130,8 +130,8 @@ export default function EarningsPage() {
               ></div>
             </div>
             <div className="flex justify-between text-xs text-gray-500">
-              <span>{userLevel.currentPoints} chops</span>
-              <span>{userLevel.nextLevelPoints} chops</span>
+              <span>{userLevel.currentPoints} Chops</span>
+              <span>{userLevel.nextLevelPoints} Chops</span>
             </div>
           </div>
         </div>

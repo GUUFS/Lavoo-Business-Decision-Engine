@@ -183,7 +183,7 @@ export default function TrendsPage() {
             {/* Header */}
             <div className={`${isMobile ? 'mb-6' : 'mb-8'}`}>
               <h1 className={`${isMobile ? 'text-2xl' : isTablet ? 'text-3xl' : 'text-4xl'} font-bold text-gray-900 mb-2`}>
-                Viral Trends
+                Viral AI Trends
               </h1>
               <p className={`text-gray-600 ${isMobile ? 'text-sm' : 'text-base'}`}>
                 Discover the hottest viral trends across technologies with real-time engagement metrics
@@ -347,7 +347,7 @@ export default function TrendsPage() {
               <div className="flex items-center">
                 <i className="ri-live-line text-orange-600 mr-2"></i>
                 <span className="text-sm text-orange-700 font-medium">
-                  Live Updates: Trends are updated every 15 minutes with real-time engagement data
+                  Live Updates: Trends are updated weekly with real-time engagement data
                 </span>
               </div>
             </div>

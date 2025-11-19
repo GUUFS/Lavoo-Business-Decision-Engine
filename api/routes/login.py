@@ -100,6 +100,11 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(days=7))  # 7 days
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -148,8 +153,10 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
         data = {"sub": user.email, "role": role, "id": user.id}, 
         expires_delta=access_token_expires)
     
+    refresh_token = create_refresh_token({"sub": user.email, "role": role, "id": user.id})
+
     response.set_cookie(
-        key="access_token",
+        key="refresh_token",
         value=access_token,
         httponly=True,
         secure=False,   # change to True in production
@@ -164,7 +171,39 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
             }
 
     
+@router.post("/refresh", response_model=AuthResponse)
+def refresh_token_endpoint(refresh_token: str = Cookie(None), db: Session = Depends(get_db)):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
+    try:
+        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        role = payload.get("role")
+        user_id = payload.get("id")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Issue a new access token
+    access_token = create_access_token(
+        {"sub": email, "role": role, "id": user.id},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": role
+    }
 
 # Add this new endpoint for Swagger UI OAuth2 form
 @router.post("/token")

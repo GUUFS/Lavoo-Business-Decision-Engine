@@ -146,7 +146,7 @@ export default function CustomerServiceConversationPage() {
       />
 
       {/* Main Content */}
-      <div className={`flex-1 transition-all duration-300 ${isMobile ? 'ml-0' : 'ml-64'}`}>
+      <div className={`flex-1 transition-all duration-300 ${isMobile ? 'ml-0' : '0'}`}>
         <div className="p-4 sm:p-6 lg:p-8">
           <div className="max-w-4xl mx-auto">
             {/* Header */}
