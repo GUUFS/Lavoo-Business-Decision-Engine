@@ -11,13 +11,12 @@ import { ProtectedRoute } from "../components/protectedRoute";
 
 import DashboardLayout from "../components/dashboard-layouts";
 // User Dashboard pages
-import Dashboard from '../pages/dashboard/page';
 import OpportunityAlerts from '../pages/dashboard/alerts/page';
 import Earnings from '../pages/dashboard/earnings/page';
 import Profile from "../pages/dashboard/profile/page";
 import AIInsights from "../pages/dashboard/insights/page";
 import Reviews from "../pages/dashboard/reviews/page";
-import Trends from "../pages/dashboard/hub/page";
+import AITrends from "../pages/dashboard/ai_trends/page";
 import CustomerService from '../pages/dashboard/customer-service/page';
 import Upgrade from '../pages/dashboard/upgrade/page';
 import AdminReviews from "../pages/dashboard/admin_reviews/page";
@@ -94,8 +93,8 @@ const routes: RouteObject[] = [
           { path: "earnings", element: <Earnings /> },
           { path: "customer-service", element: <CustomerService /> },
           { path: "reviews", element: <Reviews /> },
-          { path: "hub", element: <Trends /> },
-          { path: "analyze", element: <Analyze /> },
+          { path: "ai_trends", element: <AITrends /> },
+          { path: "analyze", element: <DashboardAnalyze /> },
           { path: "upgrade", element: <Upgrade />},
           { path: '/dashboard/admin-reviews', element: <AdminReviews /> },
           { path: "conversations/:reviewId", element: <ReviewChats/>},

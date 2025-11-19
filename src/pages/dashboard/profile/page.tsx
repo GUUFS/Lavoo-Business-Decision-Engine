@@ -1,9 +1,11 @@
 
 import { useState } from 'react';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
+import { useCurrentUser } from "../../../api/user";
 
 export default function ProfilePage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { data: user, isLoading } = useCurrentUser();
 
   return (
     <div className="min-h-screen bg-gray-50 flex min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
@@ -24,7 +26,7 @@ export default function ProfilePage() {
                     <i className="ri-user-line text-3xl md:text-4xl text-orange-500"></i>
                   </div>
                   <div className="text-center md:text-left">
-                    <h2 className="text-xl md:text-2xl font-bold text-white mb-2">John Doe</h2>
+                    <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{user?.name}</h2>
                     <p className="text-orange-100 mb-3">Premium Member since March 2024</p>
                     <button className="bg-white text-orange-600 px-4 py-2 rounded-lg font-medium hover:bg-orange-50 transition-colors whitespace-nowrap">
                       Change Photo
@@ -40,12 +42,11 @@ export default function ProfilePage() {
                   <div className="md:col-span-2">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h3>
                   </div>
-                  
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">First Name</label>
                     <input
                       type="text"
-                      defaultValue="John"
+                      defaultValue={user?.name.split(" ")[0]}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors"
                     />
                   </div>
@@ -54,7 +55,7 @@ export default function ProfilePage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Last Name</label>
                     <input
                       type="text"
-                      defaultValue="Doe"
+                      defaultValue={user?.name.split(" ")[1]}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors"
                     />
                   </div>
@@ -63,7 +64,7 @@ export default function ProfilePage() {
                     <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
                     <input
                       type="email"
-                      defaultValue="john.doe@example.com"
+                      defaultValue={user?.email}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors"
                     />
                   </div>

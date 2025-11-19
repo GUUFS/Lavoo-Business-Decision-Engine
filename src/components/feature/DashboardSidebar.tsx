@@ -43,15 +43,15 @@ const sidebarItems: SidebarItem[] = [
   },
   {
     id: 'reviews',
-    label: 'Reviews',
+    label: 'My Reviews',
     icon: <Star className="w-5 h-5" />,
     path: '/dashboard/reviews'
   },
   {
-    id: 'hub',
-    label: 'Trends',
+    id: 'ai_trends',
+    label: 'AI Trends',
     icon: <Globe className="w-5 h-5" />,
-    path: '/dashboard/hub'
+    path: '/dashboard/ai_trends'
   },
   {
     id: 'customer-service',

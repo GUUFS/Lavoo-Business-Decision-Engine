@@ -2,7 +2,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardSidebar from '../../components/feature/DashboardSidebar';
-import Footer from '../../components/feature/Footer';
 
 export default function AnalysisHistoryPage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -534,7 +533,6 @@ export default function AnalysisHistoryPage() {
           </div>
         </div>
         
-        <Footer />
       </div>
     </div>
   );

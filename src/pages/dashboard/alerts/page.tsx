@@ -816,12 +816,7 @@ export default function AlertsPage() {
         {showShareModal && (
         <>
           <div 
-            style={{ 
-              position: 'fixed', 
-              inset: 0, 
-              backgroundColor: 'rgba(0, 0, 0, 0.5)', 
-              zIndex: 40 
-            }}
+            style={{ position: 'fixed', inset: 0,backgroundColor: 'rgba(0, 0, 0, 0.5)',  zIndex: 40 }}
             onClick={() => setShowShareModal(false)}
           />
           <div style={{ 
@@ -988,15 +983,15 @@ export default function AlertsPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">
-                        {filteredAlerts.length - 2} More Premium Opportunities Available
+                        {filteredAlerts.length - 2} More Pro Opportunities Available
                       </h3>
                       <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         <span className="px-2 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-orange-100 to-orange-200 text-orange-800 border border-orange-300">
-                          Premium Content
+                          Pro Content
                         </span>
                         <span className="text-xs sm:text-sm text-gray-500">
                           <i className="ri-lock-line mr-1"></i>
-                          Unlock with Premium
+                          Unlock with Pro
                         </span>
                       </div>
                     </div>
@@ -1004,7 +999,7 @@ export default function AlertsPage() {
                   <div className="flex-shrink-0">
                     <div className="px-3 py-2 rounded-lg border bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200 text-center">
                       <div className="text-lg sm:text-xl font-bold text-orange-600">★</div>
-                      <div className="text-xs font-medium text-orange-600">Premium</div>
+                      <div className="text-xs font-medium text-orange-600">Pro</div>
                     </div>
                   </div>
                 </div>
@@ -1016,12 +1011,12 @@ export default function AlertsPage() {
                   <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-6">
                     <i className="ri-vip-crown-line text-white text-2xl sm:text-3xl"></i>
                   </div>
-                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Unlock Premium Opportunities</h3>
+                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Unlock Pro Opportunities</h3>
                   <p className="text-sm sm:text-base text-gray-600 mb-2 max-w-md mx-auto">
                     Get access to high-value opportunities with detailed insights and action plans
                   </p>
                   <p className="text-xs sm:text-sm text-orange-600 font-medium mb-8">
-                    Premium members see 10x more opportunities on average
+                    Pro members see 10x more opportunities on average
                   </p>
                   
                   {/* Premium Features */}
@@ -1050,7 +1045,7 @@ export default function AlertsPage() {
                     onClick={() => navigate('/dashboard/upgrade')}
                     className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-8 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all font-medium text-sm sm:text-base whitespace-nowrap shadow-lg cursor-pointer transform hover:scale-105"
                   >
-                    Upgrade to Premium
+                    Upgrade to Pro
                   </button>
                   <p className="text-xs text-gray-5	00 mt-3">Starting at $29.95/month • Cancel anytime</p>
                 </div>

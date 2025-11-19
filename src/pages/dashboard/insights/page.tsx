@@ -726,7 +726,7 @@ export default function DashboardInsights() {
                       }}>
                         <i className="ri-vip-crown-line" style={{ fontSize: '48px', color: '#f59e0b', marginBottom: '16px' }}></i>
                         <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px', margin: '0 0 12px 0' }}>
-                          Upgrade to Premium
+                          Upgrade to Pro
                         </h3>
                         <p style={{ fontSize: '14px', color: '#d1d5db', marginBottom: '20px', margin: '0 0 20px 0' }}>
                           Unlock full insights and earn more points

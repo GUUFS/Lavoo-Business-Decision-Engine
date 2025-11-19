@@ -54,22 +54,16 @@ export default function Dashboard() {
 
   const recentEarnings = [
     {
-      source: 'Course Sales',
-      amount: '$12,450',
-      change: '+23%',
-      period: 'This month'
+      source: 'Chops',
+      amount: '450',
     },
     {
       source: 'Affiliate Commissions',
       amount: '$8,920',
-      change: '+15%',
-      period: 'This month'
     },
     {
-      source: 'Consulting Services',
-      amount: '$3,210',
-      change: '+8%',
-      period: 'This month'
+      source: 'Total Referrals',
+      amount: '30',
     }
   ];
 
@@ -99,28 +93,20 @@ export default function Dashboard() {
 
   const hubIntegrations = [
     {
-      name: 'Google Analytics',
-      status: 'Connected',
+      name: 'AI Avatar',
       lastSync: '2 minutes ago',
-      icon: 'ri-google-line'
     },
     {
-      name: 'Shopify Store',
-      status: 'Connected',
+      name: 'Smart Fitness Technology',
       lastSync: '5 minutes ago',
-      icon: 'ri-shopping-bag-line'
     },
     {
-      name: 'Mailchimp',
-      status: 'Connected',
+      name:'Electric Vehicles',
       lastSync: '1 hour ago',
-      icon: 'ri-mail-line'
     },
     {
-      name: 'Slack Workspace',
-      status: 'Pending',
+      name: 'Immersive Learning',
       lastSync: 'Not synced',
-      icon: 'ri-slack-line'
     }
   ];
 
@@ -346,7 +332,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Hub */}
+            {/* AI Trends */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
               <div className="p-4 md:p-6 border-b border-gray-200">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
@@ -354,15 +340,15 @@ export default function Dashboard() {
                     <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
                       <i className="ri-global-line text-indigo-600"></i>
                     </div>
-                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Hub Integrations</h3>
+                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Trends</h3>
                   </div>
                   <Button
-                    onClick={() => navigate('/dashboard/hub')}
+                    onClick={() => navigate('/dashboard/ai_trends')}
                     variant="outline"
                     size="sm"
                     className="whitespace-nowrap self-start sm:self-auto"
                   >
-                    Manage <i className="ri-arrow-right-line ml-1"></i>
+                    View All <i className="ri-arrow-right-line ml-1"></i>
                   </Button>
                 </div>
               </div>

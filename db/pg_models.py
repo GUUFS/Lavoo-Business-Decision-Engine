@@ -5,9 +5,10 @@ This file contains all ORM models for the application.
 """
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean
-from sqlalchemy.orm import relationship, Boolean
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.sql.sqltypes import VARCHAR
 
 from .pg_connections import Base
 
@@ -28,6 +29,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     is_admin = Column(Boolean, default=False)
+    subscription_status = Column(String, default="Free")
+    subscription_plan = Column(String, nullable=True)
+
+    subscriptions = relationship("Subscriptions", back_populates="user")
 
 
 class AITool(Base):
@@ -276,3 +281,34 @@ class AuthResponse(BaseModel):
     name: str
     email: str
     role: str
+
+# Paypal payment gateway
+class CreateOrderRequest(BaseModel):
+    amount: str    # e.g. "29.00"
+    currency: str = "USD"
+
+class CaptureRequest(BaseModel):
+    order_id: str
+
+# Subcriptions table
+class Subscriptions(Base):
+    """
+    Contains information about subscription payments made by customers
+    """
+
+    __tablename__ = "subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    subscription_plan = Column(VARCHAR(50) )
+    transaction_id = Column(String(255), nullable=False, unique=True, index=True)  
+    tx_ref = Column(String, unique=True, index=True, nullable=False)
+    amount = Column(DECIMAL(10, 2), nullable=False)  
+    currency = Column(VARCHAR(10), nullable=False)
+    status = Column(VARCHAR(20), nullable=False)
+    payment_provider = Column(VARCHAR(20), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    end_date = Column(DateTime(timezone=True), nullable=False)
+
+    user = relationship("User", back_populates="subscriptions")
