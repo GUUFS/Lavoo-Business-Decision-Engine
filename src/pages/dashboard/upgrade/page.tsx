@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useCurrentUser } from './hooks/user'; // Adjust path to your user.ts file
 
 interface PayPalResponse {
   paymentId: string;
@@ -81,6 +82,9 @@ export default function UpgradePage() {
   const [showPaymentOptions, setShowPaymentOptions] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'paypal' | 'flutterwave' | null>(null);
 
+  // Get authenticated user using your existing React Query hook
+  const { data: user, isLoading, isError } = useCurrentUser();
+
   useEffect(() => {
     const timer = setTimeout(() => {
       window.scrollTo(0, 0);
@@ -94,10 +98,50 @@ export default function UpgradePage() {
     }
   }, [showPaymentOptions]);
 
+  // Show loading state while fetching user
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-4">
+        <div className="text-center">
+          <div className="animate-spin w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login prompt if user is not authenticated
+  if (isError || !user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-4">
+        <div className="text-center max-w-md mx-auto bg-white p-8 rounded-2xl shadow-xl">
+          <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <span className="text-red-600 text-4xl">🔒</span>
+          </div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-4">
+            Please Log In
+          </h1>
+          <p className="text-lg text-gray-600 mb-6">
+            You need to be logged in to upgrade your account.
+          </p>
+          <button
+            onClick={() => window.location.href = '/login'}
+            className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all"
+          >
+            Go to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const userData = {
-    email: 'user@example.com',
-    name: 'John Doe'
+    email: user.email,
+    name: user.name || 'User',
+    id: user.id
   };
+
+  console.log('Logged-in user data:', userData);
 
   const currentAmount = isYearly ? 290 : 29.95;
   const planType = isYearly ? 'yearly' : 'monthly';

@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 # import the database
 from db.pg_connections import get_db
 from db.pg_models import User, Subscriptions
+
 # Change prefix to match your frontend URL
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
@@ -25,10 +26,10 @@ Subscription_plans = {
     "monthly": {
         "amount": Decimal("29.95"),
         "currency": "USD",
-        "duration_of_days":30
+        "duration_of_days": 30
     },
     "yearly": {
-        "amount": Decimal("99.95"),
+        "amount": Decimal("290.00"),  # Updated to match your frontend
         "currency": "USD",
         "duration_of_days": 365
     }
@@ -36,16 +37,23 @@ Subscription_plans = {
 
 class PaymentVerifyRequest(BaseModel):
     transaction_id: str
+    user_email: str  # Added: Pass the logged-in user's email
 
 @router.post("/flutterwave/verify")
-async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db:Annotated[Session, Depends(get_db)]):
+async def verify_flutterwave_payment(
+    verify_data: PaymentVerifyRequest, 
+    db: Annotated[Session, Depends(get_db)]
+):
     """
     Verify Flutterwave payment transaction
     """
     try:
         transaction_id = verify_data.transaction_id
+        user_email = verify_data.user_email  # Get the actual logged-in user email
+        
         print(f"=== FLUTTERWAVE VERIFICATION ===")
         print(f"Transaction ID: {transaction_id}")
+        print(f"User Email (from frontend): {user_email}")
         print(f"Secret Key Present: {bool(FLUTTERWAVE_SECRET_KEY)}")
         
         if not FLUTTERWAVE_SECRET_KEY:
@@ -53,6 +61,17 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db:Annot
                 status_code=500,
                 detail="Flutterwave secret key not configured"
             )
+        
+        # First, verify the user exists in database before calling Flutterwave
+        user = db.query(User).filter(User.email == user_email).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with email {user_email} not found in database."
+            )
+        
+        print(f"✅ User found in database: {user.email} (ID: {user.id})")
         
         # Make request to Flutterwave API
         url = f"{FLUTTERWAVE_BASE_URL}/transactions/{transaction_id}/verify"
@@ -84,10 +103,23 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db:Annot
                 amount = transaction_data.get("amount")
                 currency = transaction_data.get("currency")
                 tx_ref = transaction_data.get("tx_ref")
-                customer_email = transaction_data.get("customer", {}).get("email")
+                flutterwave_email = transaction_data.get("customer", {}).get("email")
+                
+                print(f"Flutterwave payment email: {flutterwave_email}")
+                print(f"Logged-in user email: {user_email}")
+                
+                # Handle email mismatch (can occur in both test and live environments)
+                # Customer might use a different billing email than their account email
+                if flutterwave_email != user_email:
+                    print(f"ℹ️  Email mismatch detected:")
+                    print(f"   Payment Email: {flutterwave_email}")
+                    print(f"   Account Email: {user_email}")
+                    print(f"   ✅ Updating subscription for account email: {user_email}")
+                else:
+                    print(f"✅ Email match - Payment and account use same email")
 
                 try:
-                    verified_amount = Decimal(str(amount)) # Convert to string first to avoid float conversion errors
+                    verified_amount = Decimal(str(amount))
                 except InvalidOperation:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -96,12 +128,13 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db:Annot
                 
                 current_plan = None
                 plan_duration_days = None
+                
+                # Match the verified amount to a subscription plan
                 for name, plan_details in Subscription_plans.items():
-                # --- MODIFIED: Direct Decimal comparison (no need for epsilon/tolerance) ---
                     if plan_details["currency"] == currency and plan_details["amount"] == verified_amount:
                         current_plan = name
                         plan_duration_days = plan_details["duration_of_days"]
-                    break
+                        break
         
                 if not current_plan:
                     db.rollback()
@@ -109,36 +142,23 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db:Annot
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Verified amount {verified_amount} {currency} does not match any known subscription plan."
                     )
+                
                 print(f"✅ Payment verified successfully:")
                 print(f"  Amount: {amount} {currency}")
+                print(f"  Plan: {current_plan}")
                 print(f"  TX Ref: {tx_ref}")
-                print(f"  Customer: {customer_email}")
+                print(f"  Payment Email: {flutterwave_email}")
+                print(f"  Account Email: {user_email}")
+                print(f"  User ID: {user.id}")
                 
-                # Update user subscription in database
-                user = db.query(User).filter(User.email == customer_email).first()
-
-                if not user: # --- ADDED: Handle User Not Found ---
-                    db.rollback()
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"User with email {customer_email} not found in database."
-                    )
-                
-                user.subscription_status = "active"
-                user.subscription_plan = current_plan
-
-                # Create New Subscription Record
-                start_date = datetime.utcnow()
-                end_date = start_date + timedelta(days=plan_duration_days)
-
-                # Check for Duplicate Transaction (Idempotency) --- RECOMMENDED ADDITION ---
+                # Check for Duplicate Transaction (Idempotency)
                 existing_sub = db.query(Subscriptions).filter(
-                    (Subscriptions.tx_ref == tx_ref) | (Subscriptions.transaction_id == transaction_id)
+                    (Subscriptions.tx_ref == tx_ref) | 
+                    (Subscriptions.transaction_id == transaction_id)
                 ).first()
 
                 if existing_sub:
-                    # If subscription already exists, return success without re-creating
-                    print(f"⚠️ Transaction {tx_ref} already processed.")
+                    print(f"⚠️  Transaction {tx_ref} already processed.")
                     return {
                         "status": "success",
                         "message": "Payment verified successfully (already processed).",
@@ -147,40 +167,52 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db:Annot
                             "currency": currency,
                             "tx_ref": tx_ref,
                             "transaction_id": transaction_id,
+                            "subscription_plan": current_plan,
+                            "user_email": user_email
                         }
                     }
+                
+                # Update user subscription status
+                user.subscription_status = "active"
+                user.subscription_plan = current_plan
+
+                # Create New Subscription Record
+                start_date = datetime.utcnow()
+                end_date = start_date + timedelta(days=plan_duration_days)
 
                 new_subscription = Subscriptions(
                     user_id=user.id,
                     tx_ref=tx_ref,
                     transaction_id=transaction_id,
-                    # --- MODIFIED: Use the Decimal amount ---
                     amount_paid=verified_amount,
                     payment_provider="Flutterwave",
-                    # ---------------------------------------
                     currency=currency,
                     subscription_plan=current_plan,
                     status="active",
                     start_date=start_date,
-                    end_date=end_date )
+                    end_date=end_date
+                )
+                
                 db.add(new_subscription)
                 db.commit()
                 db.refresh(user)
+                db.refresh(new_subscription)
 
-                print(f"✅ User {customer_email} updated to {current_plan} subscription.")
+                print(f"✅ User {user_email} updated to {current_plan} subscription.")
+                print(f"✅ Subscription expires on: {end_date.isoformat()}")
                 
                 return {
                     "status": "success",
                     "message": "Payment verified successfully",
                     "data": {
-                        # --- MODIFIED: Convert Decimal back to string for JSON serialization ---
                         "amount": str(verified_amount), 
-                        # ----------------------------------------------------------------------
                         "currency": currency,
                         "tx_ref": tx_ref,
-                        "customer_email": customer_email,
+                        "user_email": user_email,
+                        "flutterwave_email": flutterwave_email,
                         "transaction_id": transaction_id,
                         "subscription_plan": current_plan,
+                        "start_date": start_date.isoformat(),
                         "expires_on": end_date.isoformat()
                     }
                 }
@@ -210,6 +242,8 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db:Annot
     except Exception as e:
         db.rollback()
         print(f"❌ Verification error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"Payment verification failed: {str(e)}"

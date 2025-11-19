@@ -17,23 +17,31 @@ export default function FlutterwaveCheckout({
   email, 
   name, 
   planType, 
-   userLocation = 'US',
+  userLocation = 'US',
   onSuccess, 
   onError 
 }: FlutterwaveCheckoutProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  console.log('FlutterwaveCheckout initialized with:', {
+    amount,
+    email,
+    name,
+    planType,
+    userLocation
+  });
+
   // Flutterwave configuration
   const config = {
     public_key: import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY || '',
     tx_ref: `TX-${Date.now()}-${Math.random().toString(36).substring(7)}`,
     amount: amount,
-    currency: userLocation === 'NG' ? 'NGN' : 'USD', // Change to 'NGN' for Nigerian Naira
+    currency: userLocation === 'NG' ? 'NGN' : 'USD',
     payment_options: 'card,mobilemoney,ussd,banktransfer',
     customer: {
-      email: email,
-      phone_number: '0000000000', // Provide a default phone number
+      email: email, // This will use the logged-in user's email
+      phone_number: '0000000000',
       name: name,
     },
     customizations: {
@@ -48,6 +56,7 @@ export default function FlutterwaveCheckout({
   const verifyPayment = async (transactionId: string): Promise<any> => {
     try {
       console.log('Verifying payment with transaction ID:', transactionId);
+      console.log('User email being sent for verification:', email);
       
       const response = await fetch('http://localhost:8000/api/payments/flutterwave/verify', {
         method: 'POST',
@@ -58,10 +67,12 @@ export default function FlutterwaveCheckout({
         },
         body: JSON.stringify({
           transaction_id: String(transactionId),
+          user_email: email, // Pass the logged-in user's email
         }),
       });
 
       const responseText = await response.text();
+      console.log('Verification response status:', response.status);
       console.log('Verification response:', responseText);
 
       if (!response.ok) {
@@ -75,28 +86,31 @@ export default function FlutterwaveCheckout({
       const data = JSON.parse(responseText);
       
       if (data.status === 'success') {
-        console.log('Payment verified successfully:', data);
+        console.log('✅ Payment verified successfully:', data);
         return data;
       } else {
         throw new Error(data.message || 'Payment verification failed');
       }
     } catch (err) {
-      console.error('Verification error:', err);
+      console.error('❌ Verification error:', err);
       throw err;
     }
   };
 
   const handlePayment = () => {
     if (!config.public_key) {
-      setError('Flutterwave public key is not configured');
+      const errorMsg = 'Flutterwave public key is not configured';
+      setError(errorMsg);
       onError('Payment system not configured');
       return;
     }
 
-    console.log('Initiating Flutterwave payment with config:', {
+    console.log('🚀 Initiating Flutterwave payment with config:', {
       amount: config.amount,
       email: config.customer.email,
-      planType: planType
+      name: config.customer.name,
+      planType: planType,
+      tx_ref: config.tx_ref
     });
 
     setIsLoading(true);
@@ -104,30 +118,31 @@ export default function FlutterwaveCheckout({
 
     handleFlutterPayment({
       callback: async (response: any) => {
-        console.log('Flutterwave payment response:', response);
+        console.log('📥 Flutterwave payment response:', response);
         
         try {
           if (response.status === 'successful') {
-            console.log('Payment successful, verifying on backend...');
+            console.log('✅ Payment successful, verifying on backend...');
+            
             // Verify payment on backend
             const verificationResult = await verifyPayment(response.transaction_id);
             
             if (verificationResult.status === 'success') {
-              console.log('Payment verified successfully');
+              console.log('✅ Payment verified successfully on backend');
               onSuccess({ transaction_id: response.transaction_id });
             } else {
-              console.error('Verification failed:', verificationResult);
+              console.error('❌ Verification failed:', verificationResult);
               onError('Payment verification failed');
             }
           } else if (response.status === 'cancelled') {
-            console.log('Payment was cancelled by user');
+            console.log('⚠️  Payment was cancelled by user');
             onError('Payment was cancelled');
           } else {
-            console.log('Payment failed with status:', response.status);
+            console.log('❌ Payment failed with status:', response.status);
             onError('Payment was not successful');
           }
         } catch (err: any) {
-          console.error('Payment error:', err);
+          console.error('❌ Payment error:', err);
           onError(err.message || 'Payment processing failed');
         } finally {
           setIsLoading(false);
@@ -184,9 +199,14 @@ export default function FlutterwaveCheckout({
       </button>
       
       {/* Information text */}
-      <p className="text-xs text-gray-500 text-center mt-2">
-        Secure payment powered by Flutterwave
-      </p>
+      <div className="mt-3 space-y-1">
+        <p className="text-xs text-gray-500 text-center">
+          Secure payment powered by Flutterwave
+        </p>
+        <p className="text-xs text-gray-400 text-center">
+          Paying as: {email}
+        </p>
+      </div>
     </div>
   );
 }
