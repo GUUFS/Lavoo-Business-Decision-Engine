@@ -42,6 +42,12 @@ const sidebarItems: SidebarItem[] = [
     path: '/dashboard/earnings'
   },
   {
+    id: 'upgrade',
+    label: 'Upgrade',
+    icon: '',
+    path:'/dashboard/upgrade/page'
+  },
+  {
     id: 'reviews',
     label: 'My Reviews',
     icon: <Star className="w-5 h-5" />,

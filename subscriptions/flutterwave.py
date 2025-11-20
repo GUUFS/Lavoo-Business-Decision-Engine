@@ -184,7 +184,7 @@ async def verify_flutterwave_payment(
                     user_id=user.id,
                     tx_ref=tx_ref,
                     transaction_id=transaction_id,
-                    amount_paid=verified_amount,
+                    amount=verified_amount,
                     payment_provider="Flutterwave",
                     currency=currency,
                     subscription_plan=current_plan,

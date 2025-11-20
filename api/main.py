@@ -42,7 +42,7 @@ from api.routes import ai_db as ai  # PostgreSQL-based AI routes
 from api.routes import analyzer, index, login, signup, admin, dependencies
 
 #  Payment routes
-from subscriptions import paypal, flutterwave
+from subscriptions import paypal, flutterwave, stripe
 
 logger.info("✓ Using Neon PostgreSQL database")
 
@@ -122,7 +122,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -144,6 +144,7 @@ app.include_router(analyzer.router)
 app.include_router(admin.router)
 app.include_router(paypal.router)
 app.include_router(flutterwave.router)
+app.include_router(stripe.router)
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)
