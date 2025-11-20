@@ -80,5 +80,22 @@ export default defineConfig({
   server: {
     port: 3000,
     host: '0.0.0.0',
-  }
+    proxy: {
+      // Proxy all /api requests to FastAPI backend
+      '^/api/.*': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        secure: false,
+        // This is the CRITICAL part: forward cookies properly
+        configure: (proxy, _options) => {
+          proxy.on('proxyReq', (proxyReq, req, _res) => {
+            // Forward cookies from browser → FastAPI
+            if (req.headers.cookie) {
+              proxyReq.setHeader('Cookie', req.headers.cookie);
+            }
+          });
+        },
+      },
+    },
+  },
 })

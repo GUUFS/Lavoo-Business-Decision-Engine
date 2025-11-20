@@ -4,11 +4,13 @@ PostgreSQL database models - works with both PostgreSQL and SQLite.
 This file contains all ORM models for the application.
 """
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.sql.sqltypes import VARCHAR
+from datetime import datetime
+from decimal import Decimal
 
 from .pg_connections import Base
 
@@ -309,6 +311,43 @@ class Subscriptions(Base):
     payment_provider = Column(VARCHAR(20), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    start_date = Column(DateTime(timezone=True), nullable=False) 
     end_date = Column(DateTime(timezone=True), nullable=False)
 
     user = relationship("User", back_populates="subscriptions")
+
+
+# Models for the stripe payment gateway
+class PaymentIntentCreate(BaseModel):
+    amount: float
+    plan_type: str  # monthly or yearly
+    email: EmailStr
+    name: str
+    user_id: int
+
+class PaymentIntentResponse(BaseModel):
+    clientSecret: str
+    paymentIntentId: str
+    amount: float
+    currency: str
+
+class PaymentVerify(BaseModel):
+    payment_intent_id: str
+    user_id: int
+
+class SubscriptionResponse(BaseModel):
+    id: int
+    user_id: int
+    subscription_plan: str
+    transaction_id: str
+    tx_ref: str
+    amount: Decimal
+    currency: str
+    status: str
+    payment_provider: str
+    created_at: datetime
+    start_date: datetime
+    end_date: datetime
+
+    class Config:
+        from_attributes = True
