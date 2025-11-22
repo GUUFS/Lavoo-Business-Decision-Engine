@@ -2,7 +2,7 @@ import os
 import secrets
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie, Header
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 # Import PostgreSQL/Neon database connections
 from db.pg_connections import get_db
+
+from typing import Optional
 
 # Import PostgreSQL user models
 from db.pg_models import ShowUser, User, AuthResponse
@@ -59,6 +61,8 @@ def me(access_token: str = Cookie(None), db: Session = Depends(get_db)):
         "id": user.id,
         "name": user.name,
         "email": user.email,
+        "subscription_status": user.subscription_status,
+        "subscription_plan": user.subscription_plan,
         "role": role,
         "access_token": access_token,
         "token_type": "bearer"
@@ -106,26 +110,74 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user( authorization: Optional[str] = Header(None), access_token_cookie: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
+    """
+    Get current user from either Authorization header or cookie.
+    Priority: Authorization header > Cookie
+    """
+    token = None
+    
+    # First, try to get token from Authorization header
+    if authorization:
+        try:
+            scheme, token = authorization.split()
+            if scheme.lower() != 'bearer':
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication scheme",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authorization header format",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    
+    # If no Authorization header, try cookie
+    elif access_token_cookie:
+        token = access_token_cookie
+    
+    # If no token found anywhere
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Validate token
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         role: str = payload.get("role")
         email: str = payload.get("sub")
+        user_id: int = payload.get("id")
+        
         if email is None:
             raise credentials_exception
-    except JWTError:
+            
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except JWTError as e:
+        print(f"JWT decode error: {str(e)}")  # Debug logging
         raise credentials_exception
 
+    # Get user from database
     user = db.query(User).filter(User.email == email).first()
     if user is None:
         raise credentials_exception
 
-    return {"user": user, "role": role }
+    return {"user": user, "role": role}
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -156,19 +208,33 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
     refresh_token = create_refresh_token({"sub": user.email, "role": role, "id": user.id})
 
     response.set_cookie(
-        key="refresh_token",
+        key="access_token",
         value=access_token,
         httponly=True,
+        secure=False,  # Set to True in production (HTTPS required)
+        samesite="None", 
+        max_age=60 * 30  # 30 minutes
+    )
+
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
         secure=False,   # change to True in production
-        samesite="lax",
+        samesite="None",
         max_age=60 * 60 * 24 * 7  # 7 days
     )
 
-    return {"access_token": access_token, "token_type": "bearer", "role": "admin" if user.is_admin else "user",
-                "id": user.id,
-                "name": user.name,
-                "email": user.email
-            }
+    return {
+    "access_token": access_token,
+    "token_type": "bearer",
+    "id": user.id,
+    "name": user.name,
+    "email": user.email,
+    "role": role
+}
+
+   
 
     
 @router.post("/refresh", response_model=AuthResponse)

@@ -5,7 +5,7 @@ This file contains all ORM models for the application.
 """
 
 from pydantic import BaseModel, ConfigDict, EmailStr
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.sql.sqltypes import VARCHAR
@@ -14,6 +14,9 @@ from decimal import Decimal
 
 from .pg_connections import Base
 
+import enum
+from uuid import uuid4
+from typing import Optional, List
 
 class User(Base):
     """
@@ -35,6 +38,7 @@ class User(Base):
     subscription_plan = Column(String, nullable=True)
 
     subscriptions = relationship("Subscriptions", back_populates="user")
+    tickets = relationship("Ticket", back_populates="user")
 
 
 class AITool(Base):
@@ -283,6 +287,8 @@ class AuthResponse(BaseModel):
     name: str
     email: str
     role: str
+    subscription_status: str | None = None
+    subscription_plan: str | None = None
 
 # Paypal payment gateway
 class CreateOrderRequest(BaseModel):
@@ -351,3 +357,152 @@ class SubscriptionResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+'''Customer Service tables and models
+    Tickets for users reports are also included
+'''
+class TicketCreate(BaseModel):
+    issue: str
+    category: Optional[str] = "general"
+
+class MessageCreate(BaseModel):
+    ticket_id: int
+    message: str
+
+class TicketResponse(BaseModel):
+    id: int
+    user_id: int
+    issue: str
+    category: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    unread_count: int = 0
+    last_message: Optional[str] = None
+    last_message_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+class MessageResponse(BaseModel):
+    id: int
+    ticket_id: int
+    sender_id: int
+    sender_name: str
+    sender_role: str
+    message: str
+    is_read: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    issue = Column(Text, nullable=False)
+    category = Column(String(50), default="general")  # general, technical, billing, etc.
+    status = Column(String(50), default="open")  # open, in_progress, resolved, closed
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = relationship("User", back_populates="tickets")
+    messages = relationship("TicketMessage", back_populates="ticket", cascade="all, delete-orphan")
+
+class TicketMessage(Base):
+    __tablename__ = "ticket_messages"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    sender_role = Column(String(20), nullable=False)  # "user" or "admin"
+    message = Column(Text, nullable=False)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    ticket = relationship("Ticket", back_populates="messages")
+    sender = relationship("User")
+
+
+'''Customer reviews tables and the information
+'''
+class Review(Base):
+    __tablename__ = "reviews"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True)  # Add user authentication later
+    business_name = Column(String, index=True)
+    review_title = Column(String)
+    rating = Column(Integer)
+    review_text = Column(Text)
+    date_submitted = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="under-review")  # published, under-review, rejected
+    category = Column(String, default="General")
+    helpful = Column(Integer, default=0)
+    verified = Column(Boolean, default=False)
+
+    conversations = relationship("Conversation", back_populates="review", cascade="all, delete-orphan")
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    review_id = Column(Integer, ForeignKey("reviews.id"))
+    sender_type = Column(String)  # 'admin' or 'user'
+    message = Column(Text)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    is_read = Column(Boolean, default=False)
+    
+    # Relationships
+    review = relationship("Review", back_populates="conversations")
+
+class ReviewCreate(BaseModel):
+    business_name: str
+    review_title: str
+    rating: int
+    review_text: str
+    category: Optional[str] = "General"
+
+class ReviewResponse(BaseModel):
+    id: int
+    business_name: str
+    review_title: str
+    rating: int
+    review_text: str
+    date_submitted: datetime
+    status: str
+    category: str
+    helpful: int
+    verified: bool
+    admin_response: bool
+    conversation_count: int
+    unread_messages: int
+    has_conversation: bool
+
+    class Config:
+        from_attributes = True
+
+class ConversationCreate(BaseModel):
+    review_id: int
+    sender_type: str
+    message: str
+
+class ConversationResponse(BaseModel):
+    id: int
+    review_id: int
+    sender_type: str
+    message: str
+    timestamp: datetime
+    is_read: bool
+
+    class Config:
+        from_attributes = True
+
+class UnreadCountResponse(BaseModel):
+    total_unread: int
+    reviews_with_unread: int
