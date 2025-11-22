@@ -18,8 +18,13 @@ from passlib.context import CryptContext
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()  # Load .env file
-    print("✅ Environment variables loaded from .env file")
+    # Try .env.local first (local development), fallback to .env
+    if os.path.exists('.env.local'):
+        load_dotenv('.env.local')
+        print("✅ Environment variables loaded from .env.local file")
+    else:
+        load_dotenv()  # Load .env file
+        print("✅ Environment variables loaded from .env file")
 except ImportError:
     print("⚠️  python-dotenv not installed, using system environment")
 
@@ -39,7 +44,7 @@ logger = get_logger(__name__)
 
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
-from api.routes import analyzer, index, login, signup, admin, dependencies
+from api.routes import analyzer, index, login, signup, admin, dependencies, business_analyzer
 
 #  Payment routes
 from subscriptions import paypal, flutterwave, stripe
@@ -83,7 +88,7 @@ async def create_admin_user(db: Session=Depends(get_db)):
         if existing_admin:
             logger.info("✓ Admin user already exists")
             return
-    
+
         new_admin = User(
                 name="Admin",
                 email=admin_email,
@@ -140,6 +145,7 @@ app.include_router(signup.router, prefix="/api")  # For React frontend that uses
 app.include_router(login.router, prefix="/api")  # For React frontend that uses /api/login
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
+app.include_router(business_analyzer.router)  # Business analysis endpoints
 app.include_router(analyzer.router)
 app.include_router(admin.router)
 app.include_router(paypal.router)
