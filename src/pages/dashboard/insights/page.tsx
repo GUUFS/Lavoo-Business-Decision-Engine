@@ -314,12 +314,8 @@ export default function DashboardInsights() {
       />
 
       {/* Main Content */}
-      <div style={{ 
-        flex: 1, 
-        marginLeft: '0',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white"style={{ 
+        flex: 1, marginLeft: '0', display: 'flex', flexDirection: 'column'}}>
         {/* Header */}
         <header style={{ 
           backgroundColor: '#ffffff', 
@@ -331,19 +327,8 @@ export default function DashboardInsights() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <button
-              style={{ 
-                display: window.innerWidth >= 768 ? 'none' : 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '40px',
-                height: '40px',
-                backgroundColor: 'transparent',
-                border: 'none',
-                borderRadius: '6px',
-                color: '#6b7280',
-                cursor: 'pointer',
-                marginRight: '16px'
-              }}
+              style={{ display: window.innerWidth >= 768 ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px',
+                backgroundColor: 'transparent', border: 'none', borderRadius: '6px', color: '#6b7280', cursor: 'pointer', marginRight: '16px'}}
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             >
               <i className="ri-menu-line" style={{ fontSize: '20px' }}></i>
@@ -357,36 +342,8 @@ export default function DashboardInsights() {
           </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{ 
-              backgroundColor: '#f3f4f6', 
-              padding: '8px 16px', 
-              borderRadius: '20px',
-              fontSize: '14px',
-              fontWeight: '500',
-              color: '#374151'
-            }}>
-              Points: {earnedPoints}
-            </div>
-            <div style={{ 
-              backgroundColor: '#f3f4f6', 
-              padding: '8px 16px', 
-              borderRadius: '20px',
-              fontSize: '14px',
-              fontWeight: '500',
-              color: '#374151'
-            }}>
-              {isPremiumUser ? 'Premium' : 'Free'} User
-            </div>
-            <div style={{ 
-              width: '40px', 
-              height: '40px', 
-              backgroundColor: '#f97316', 
-              borderRadius: '50%', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center' 
-            }}>
-              <i className="ri-user-line" style={{ color: '#ffffff', fontSize: '18px' }}></i>
+            <div style={{ backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '500', color: '#374151'}}>
+              Chops: {earnedPoints}
             </div>
           </div>
         </header>

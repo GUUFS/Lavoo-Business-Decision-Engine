@@ -177,7 +177,7 @@ export default function TrendsPage() {
       />
       
       {/* Main Content */}
-      <div className={`flex-1 ${isMobile ? 'ml-0' : '0'} flex flex-col`}>
+      <div className={`min-h-screen bg-gradient-to-br from-orange-50 to-white flex-1 ${isMobile ? 'ml-0' : '0'} flex flex-col`}>
         <div className={`flex-1 ${isMobile ? 'p-4' : isTablet ? 'p-6' : 'p-8'}`}>
           <div className="max-w-7xl mx-auto">
             {/* Header */}

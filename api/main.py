@@ -40,6 +40,7 @@ logger = get_logger(__name__)
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
 from api.routes import analyzer, index, login, signup, admin, dependencies
+from api.routes import customer_service, reviews
 
 #  Payment routes
 from subscriptions import paypal, flutterwave, stripe
@@ -145,6 +146,8 @@ app.include_router(admin.router)
 app.include_router(paypal.router)
 app.include_router(flutterwave.router)
 app.include_router(stripe.router)
+app.include_router(customer_service.router)
+app.include_router(reviews.router)
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)

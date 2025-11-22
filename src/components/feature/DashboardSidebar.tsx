@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { User, BarChart3, Brain, Database, Users, Star, Globe, Search,  Home, TrendingUp, AlertTriangle, DollarSign, Headphones } from 'lucide-react';
+import { User, BarChart3, Brain, BadgePlus, Database, Users, Star, Globe, Search,  Home, TrendingUp, AlertTriangle, DollarSign, Headphones } from 'lucide-react';
 
 interface SidebarItem {
   id: string;
@@ -44,8 +44,8 @@ const sidebarItems: SidebarItem[] = [
   {
     id: 'upgrade',
     label: 'Upgrade',
-    icon: '',
-    path:'/dashboard/upgrade/page'
+    icon: <BadgePlus className="w-5 h-5"/>,
+    path:'/dashboard/upgrade'
   },
   {
     id: 'reviews',
