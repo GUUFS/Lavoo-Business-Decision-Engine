@@ -1,11 +1,26 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
 import { useCurrentUser } from "../../../api/user";
 
 export default function ProfilePage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { data: user, isLoading } = useCurrentUser();
+
+  const [subscription, setSubscription] = useState("");
+  const [subscription_plan, setSubscription_plan] = useState("");
+
+  useEffect(() => {
+    if (user?.subscription_status) {
+      setSubscription(user.subscription_status);
+    }
+  }, [user]);
+
+  useEffect(() => {
+  if (user?.subscription_plan) {
+    setSubscription_plan(user.subscription_plan);
+  }
+  }, [user]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
@@ -28,9 +43,9 @@ export default function ProfilePage() {
                   <div className="text-center md:text-left">
                     <h2 className="text-xl md:text-2xl font-bold text-white mb-2">{user?.name}</h2>
                     <p className="text-orange-100 mb-3">Premium Member since March 2024</p>
-                    <button className="bg-white text-orange-600 px-4 py-2 rounded-lg font-medium hover:bg-orange-50 transition-colors whitespace-nowrap">
-                      Change Photo
-                    </button>
+                    {/* <button className="bg-white text-orange-600 px-4 py-2 rounded-lg font-medium hover:bg-orange-50 transition-colors whitespace-nowrap"> */}
+                      {/* Change Photo */}
+                    {/* </button> */}
                   </div>
                 </div>
               </div>
@@ -70,19 +85,19 @@ export default function ProfilePage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Subscription Status</label>
                     <input
-                      type="tel"
-                      defaultValue="+1 (555) 123-4567"
+                      type="text"
+                      value={subscription} onChange={(e) => setSubscription(e.target.value)}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Company</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Subscription Plan</label>
                     <input
                       type="text"
-                      defaultValue="TechCorp Inc."
+                      value={subscription_plan} onChange={(e) => setSubscription_plan(e.target.value)}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-colors"
                     />
                   </div>

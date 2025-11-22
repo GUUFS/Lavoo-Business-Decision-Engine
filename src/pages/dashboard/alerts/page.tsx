@@ -169,7 +169,7 @@ export default function AlertsPage() {
       setViewedAlerts(newViewedAlerts);
       saveToLocalStorage(newViewedAlerts, sharedAlerts, newUserPoints);
       
-      setToastMessage(`You earned ${pointsToAdd} points for viewing this alert!`);
+      setToastMessage(`You earned ${pointsToAdd} Chops for viewing this alert!`);
       setShowToast(true);
       setTimeout(() => setShowToast(false), 3000);
     }
@@ -320,19 +320,10 @@ export default function AlertsPage() {
 
         {/* Stats Overview */}
         {/* Main Content */}
-        <div style={{ 
-        flex: 1, 
-        marginLeft: '0',
-        display: 'flex', flexDirection: 'column'}}>
+        <div style={{  flex: 1, marginLeft: '0', display: 'flex', flexDirection: 'column'}}>
         
         {/* Header */}
-        <header style={{ 
-          backgroundColor: '#ffffff', 
-          borderBottom: '1px solid #e5e7eb', 
-          padding: '16px 24px',
-          display: 'flex',
-          alignItems: 'center', justifyContent: 'space-between' }}>
-          
+        <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <button
               style={{ 
@@ -362,26 +353,12 @@ export default function AlertsPage() {
               fontSize: '14px',
               fontWeight: '500', color: '#374151', display: window.innerWidth >= 640 ? 'block' : 'none'
             }}>
-              Points: {userPoints}
+              Chops: {userPoints}
             </div>
-            <div style={{ 
-              backgroundColor: '#f3f4f6', 
-              padding: '8px 16px', 
-              borderRadius: '20px',
-              fontSize: '14px',
+            <div style={{ backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', fontSize: '14px',
               fontWeight: '500', color: '#374151', display: window.innerWidth >= 640 ? 'block' : 'none'  
             }}>
               {unattendedCount} unattended
-            </div>
-            <div style={{ 
-              width: '40px', 
-              height: '40px', 
-              backgroundColor: '#f97316', 
-              borderRadius: '50%', 
-              display: 'flex', 
-              alignItems: 'center', justifyContent: 'center' 
-            }}>
-              <i className="ri-user-line" style={{ color: '#ffffff', fontSize: '18px' }}></i>
             </div>
           </div>
         </header>
@@ -389,17 +366,9 @@ export default function AlertsPage() {
         {/* Content */}
         <div style={{ flex: 1, padding: window.innerWidth >= 768 ? '24px' : '16px' }}>
           {/* Summary Cards */}
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr',
-            gap: '16px',
+          <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr', gap: '16px',
             marginBottom: '32px'}}>
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '20px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
+            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
                   <p style={{ 

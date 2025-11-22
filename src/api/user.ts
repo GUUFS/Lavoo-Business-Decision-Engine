@@ -1,4 +1,3 @@
-// src/hooks/useCurrentUser.ts
 import { useQuery } from "@tanstack/react-query";
 import { fetchHelper } from "../lib/fetch-helper";
 import axios from "axios";
@@ -7,6 +6,8 @@ export interface User {
   id: number;
   email: string;
   name?: string;
+  subscription_status?: string;
+  subscription_plan?: string;
 }
 
 export const useCurrentUser = () => {

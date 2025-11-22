@@ -1,7 +1,6 @@
-
 import { useState, useEffect } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
-import type { Stripe, StripeElements } from '@stripe/stripe-js';
+import type { Stripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 
 interface StripeCheckoutProps {
@@ -50,12 +49,18 @@ function CheckoutForm({ userId, onSuccess, onError
       }
 
       if (paymentIntent && paymentIntent.status === 'succeeded') {
+        const token = document.cookie
+          .split("; ")
+          .find((r) => r.startsWith("access_token="))
+          ?.split("=")[1];
+        
         // Verify payment with backend
         const response = await fetch('/api/stripe/verify-payment', {
           method: 'POST',
           credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             payment_intent_id: paymentIntent.id,
@@ -112,7 +117,14 @@ function CheckoutForm({ userId, onSuccess, onError
 }
 
 // Main Stripe Checkout component
-export default function StripeCheckout({ amount, email, name, planType, userId, onSuccess, onError
+export default function StripeCheckout({ 
+  amount, 
+  email, 
+  name, 
+  planType, 
+  userId, 
+  onSuccess, 
+  onError
 }: StripeCheckoutProps) {
   const [stripePromise, setStripePromise] = useState<Promise<Stripe | null> | null>(null);
   const [clientSecret, setClientSecret] = useState<string>('');
@@ -129,35 +141,60 @@ export default function StripeCheckout({ amount, email, name, planType, userId, 
         console.error('Error loading Stripe config:', err);
         onError('Failed to load payment configuration');
       });
-  }, []);
+  }, [onError]);
 
   useEffect(() => {
-    // Create payment intent
+    const token = document.cookie
+      .split("; ")
+      .find((row) => row.startsWith("access_token="))
+      ?.split("=")[1];
+    
+    if (!token) {
+      console.error('No access token found');
+      onError('Authentication required. Please log in again.');
+      setIsLoading(false);
+      return;
+    }
+
+    const payload = {
+      amount: amount, // Send in dollars (e.g., 29.95)
+      plan_type: planType,
+      email,
+      name,
+      user_id: userId
+    };
+    
+    console.log('Payment intent payload:', payload);
+
     fetch('/api/stripe/create-payment-intent', {
       method: 'POST',
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        amount,
-        plan_type: planType,
-        email,
-        name,
-        user_id: userId
-      }),
+      body: JSON.stringify(payload),
     })
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) {
+          // Get detailed error from backend
+          const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
+          console.error('Backend error response:', errorData);
+          throw new Error(errorData.detail || `HTTP ${res.status}`);
+        }
+        return res.json();
+      })
       .then(data => {
+        console.log('Payment intent created successfully:', data);
         setClientSecret(data.clientSecret);
         setIsLoading(false);
       })
       .catch(err => {
         console.error('Error creating payment intent:', err);
-        onError('Failed to initialize payment');
+        onError(err.message || 'Failed to initialize payment');
         setIsLoading(false);
       });
-  }, [amount, email, name, planType, userId]);
+  }, [amount, email, name, planType, userId, onError]);
 
   if (isLoading) {
     return (
