@@ -33,12 +33,26 @@ class User(Base):
     confirm_password = Column(String(255), nullable=False)  # For validation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    total_chops = total_chops = Column(Integer, default=0)
+    reading_chops = Column(Integer, default=0)
+    sharing_chops = Column(Integer, default=0)
+    referral_chops = Column(Integer, default=0)
+    referral_count = Column(Integer, default=0)
     is_admin = Column(Boolean, default=False)
     subscription_status = Column(String, default="Free")
     subscription_plan = Column(String, nullable=True)
 
+    '''Interaction with the subscriptions table'''
     subscriptions = relationship("Subscriptions", back_populates="user")
+
+    '''Interaction with the reports table'''
     tickets = relationship("Ticket", back_populates="user")
+
+    '''Interaction with the alerts table'''
+    alerts = relationship("UserAlert", back_populates="user")
+
+    '''Interaction with the referrals table'''
+    referrals = relationship("Referral", back_populates="referrer")
 
 
 class AITool(Base):
@@ -187,6 +201,12 @@ class UserResponse(BaseModel):
     id: int
     name: str
     email: str
+    subscription_status: str
+    total_chops: int
+    reading_chops: int
+    sharing_chops: int
+    referral_chops: int
+    referral_count: int
 
 
 class AIToolBase(BaseModel):
@@ -441,7 +461,7 @@ class Review(Base):
     rating = Column(Integer)
     review_text = Column(Text)
     date_submitted = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="under-review")  # published, under-review, rejected
+    status = Column(String, default="Submitted")  # published, under-review, rejected
     category = Column(String, default="General")
     helpful = Column(Integer, default=0)
     verified = Column(Boolean, default=False)
@@ -506,3 +526,111 @@ class ConversationResponse(BaseModel):
 class UnreadCountResponse(BaseModel):
     total_unread: int
     reviews_with_unread: int
+
+
+'''Opportunity Alert Tables'''
+class Alert(Base):
+    __tablename__ = "alerts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    category = Column(String, nullable=False)
+    priority = Column(String, nullable=False)
+    score = Column(Integer, nullable=False)
+    time_remaining = Column(String, nullable=False)
+    why_act_now = Column(Text, nullable=False)
+    potential_reward = Column(Text, nullable=False)
+    action_required = Column(Text, nullable=False)
+    source = Column(String, nullable=True)
+    date = Column(String, nullable=False)
+    total_views = Column(Integer, default=0)
+    total_shares = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user_alerts = relationship("UserAlert", back_populates="alert")
+
+
+class UserAlert(Base):
+    __tablename__ = "user_alerts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    alert_id = Column(Integer, ForeignKey("alerts.id"))
+    has_viewed = Column(Boolean, default=False)
+    has_shared = Column(Boolean, default=False)
+    is_attended = Column(Boolean, default=False)
+    viewed_at = Column(DateTime, nullable=True)
+    shared_at = Column(DateTime, nullable=True)
+    chops_earned_from_view = Column(Integer, default=0)
+    chops_earned_from_share = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User", back_populates="user_alerts")
+    alert = relationship("Alert", back_populates="user_alerts")
+
+
+'''Referrals Table'''
+class Referral(Base):
+    __tablename__ = "referrals"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    referrer_id = Column(Integer, ForeignKey("users.id"))
+    referred_user_id = Column(Integer, ForeignKey("users.id"))
+    chops_awarded = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
+
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    subscription_status: str = "free"
+    referrer_username: Optional[str] = None
+
+class AlertCreate(BaseModel):
+    title: str
+    category: str
+    priority: str
+    score: int
+    time_remaining: str
+    why_act_now: str
+    potential_reward: str
+    action_required: str
+    source: Optional[str] = None
+    date: str
+
+class AlertResponse(BaseModel):
+    id: int
+    title: str
+    category: str
+    priority: str
+    score: int
+    time_remaining: str
+    why_act_now: str
+    potential_reward: str
+    action_required: str
+    source: Optional[str]
+    date: str
+    total_views: int
+    total_shares: int
+    has_viewed: bool = False
+    has_shared: bool = False
+    is_attended: bool = False
+    class Config:
+        from_attributes = True
+
+class ViewAlertRequest(BaseModel):
+    user_id: int
+    alert_id: int
+
+class ShareAlertRequest(BaseModel):
+    user_id: int
+    alert_id: int
+
+class ChopsBreakdown(BaseModel):
+    total_chops: int
+    reading_chops: int
+    sharing_chops: int
+    referral_chops: int
+    referral_count: int

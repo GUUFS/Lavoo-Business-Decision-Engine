@@ -9,33 +9,30 @@ from passlib.context import CryptContext
 from pydantic_settings import BaseSettings
 from sqlalchemy.orm import Session
 
-# Import PostgreSQL/Neon database connections
 from db.pg_connections import get_db
-
 from typing import Optional
-
-# Import PostgreSQL user models
 from db.pg_models import ShowUser, User, AuthResponse
 
-# store the token for admin logins
 bearer_scheme = HTTPBearer()
-
 router = APIRouter(prefix="", tags=["authenticate"])
 
 """Generating and storing the secret key"""
 
-
 class Settings(BaseSettings):
     secret_key: str = os.getenv("SECRET_KEY") or secrets.token_hex(32)
-
 
 settings = Settings()
 SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# Extended token expiration times
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days (was 30 minutes)
+REFRESH_TOKEN_EXPIRE_DAYS = 30  # 30 days (was 7 days)
+
+# Environment detection
+IS_PRODUCTION = os.getenv("ENVIRONMENT", "development") == "production"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 @router.get("/me", response_model=AuthResponse)
@@ -100,17 +97,17 @@ def get_admin_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_sc
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(days=7))  # 7 days
+    expire = datetime.utcnow() + (expires_delta or timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_current_user( authorization: Optional[str] = Header(None), access_token_cookie: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
+def get_current_user(authorization: Optional[str] = Header(None), access_token_cookie: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
     """
     Get current user from either Authorization header or cookie.
     Priority: Authorization header > Cookie
@@ -169,7 +166,7 @@ def get_current_user( authorization: Optional[str] = Header(None), access_token_
             headers={"WWW-Authenticate": "Bearer"},
         )
     except JWTError as e:
-        print(f"JWT decode error: {str(e)}")  # Debug logging
+        print(f"JWT decode error: {str(e)}")
         raise credentials_exception
 
     # Get user from database
@@ -199,67 +196,32 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
 
     role = "admin" if user.is_admin else "user"
 
-    # Generate access token
+    # Generate access token with extended expiration
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data = {"sub": user.email, "role": role, "id": user.id}, 
-        expires_delta=access_token_expires)
+        data={"sub": user.email, "role": role, "id": user.id}, 
+        expires_delta=access_token_expires
+    )
     
     refresh_token = create_refresh_token({"sub": user.email, "role": role, "id": user.id})
 
+    # Set cookies with extended max_age
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,  # Set to True in production (HTTPS required)
-        samesite="None", 
-        max_age=60 * 30  # 30 minutes
+        secure=IS_PRODUCTION,  # True in production, False in development
+        samesite="None" if IS_PRODUCTION else "lax",  # "None" for production (Stripe), "lax" for development
+        max_age=60 * 60 * 24 * 7  # 7 days to match token expiration
     )
 
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,   # change to True in production
-        samesite="None",
-        max_age=60 * 60 * 24 * 7  # 7 days
-    )
-
-    return {
-    "access_token": access_token,
-    "token_type": "bearer",
-    "id": user.id,
-    "name": user.name,
-    "email": user.email,
-    "role": role
-}
-
-   
-
-    
-@router.post("/refresh", response_model=AuthResponse)
-def refresh_token_endpoint(refresh_token: str = Cookie(None), db: Session = Depends(get_db)):
-    if not refresh_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
-        role = payload.get("role")
-        user_id = payload.get("id")
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid refresh token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    # Issue a new access token
-    access_token = create_access_token(
-        {"sub": email, "role": role, "id": user.id},
-        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        secure=IS_PRODUCTION,
+        samesite="None" if IS_PRODUCTION else "lax",
+        max_age=60 * 60 * 24 * 30  # 30 days
     )
 
     return {
@@ -271,7 +233,67 @@ def refresh_token_endpoint(refresh_token: str = Cookie(None), db: Session = Depe
         "role": role
     }
 
-# Add this new endpoint for Swagger UI OAuth2 form
+    
+@router.post("/refresh", response_model=AuthResponse)
+def refresh_token_endpoint(refresh_token: str = Cookie(None), response: Response = None, db: Session = Depends(get_db)):
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="No refresh token provided")
+
+    try:
+        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        role = payload.get("role")
+        user_id = payload.get("id")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh token has expired")
+    except JWTError as e:
+        print(f"Refresh token decode error: {str(e)}")
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    # Issue a new access token
+    access_token = create_access_token(
+        {"sub": email, "role": role, "id": user.id},
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    )
+    
+    # Also issue a new refresh token
+    new_refresh_token = create_refresh_token({"sub": email, "role": role, "id": user.id})
+
+    # Update cookies if response is provided
+    if response:
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=IS_PRODUCTION,
+            samesite="None" if IS_PRODUCTION else "lax",
+            max_age=60 * 60 * 24 * 7
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=new_refresh_token,
+            httponly=True,
+            secure=IS_PRODUCTION,
+            samesite="None" if IS_PRODUCTION else "lax",
+            max_age=60 * 60 * 24 * 30
+        )
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": role
+    }
+
+
 @router.post("/token")
 def login_for_swagger(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
@@ -297,10 +319,13 @@ def login_for_swagger(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    
     role = "admin" if user.is_admin else "user"
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.email, "role": role}, expires_delta=access_token_expires)
+        data={"sub": user.email, "role": role, "id": user.id}, 
+        expires_delta=access_token_expires
+    )
 
     return {"access_token": access_token, "token_type": "bearer", "role": role}
