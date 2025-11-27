@@ -1,160 +1,317 @@
-
-import { useState, useEffect} from 'react';
+import { useState, useEffect, useRef } from 'react';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
-import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { useCurrentUser  } from '../../../api/user';
 
+const API_BASE_URL = '/api';
+
+interface Insight {
+  id: number;
+  title: string;
+  category: string;
+  read_time: string;
+  date: string;
+  source: string;
+  image: string;
+  what_changed: string;
+  why_it_matters: string;
+  action_to_take: string;
+  is_read: boolean;
+  is_shared: boolean;
+  is_pinned: boolean;
+}
+
+interface UserStats {
+  total_insights: number;
+  total_chops: number;
+  is_pro: boolean;
+  total_insight_chops: number;
+  // read_today: number;
+  // shared_count: number;
+  shared_insight_chops: number;
+  viewed_insight_chops: number;
+}
 
 export default function DashboardInsights() {
+  const { data: user } = useCurrentUser();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [readInsights, setReadInsights] = useState<Set<Insight['id']>>(new Set());
-  const [sharedInsights, setSharedInsights] = useState(new Set());
-  const [earnedPoints, setEarnedPoints] = useState(0);
-  const [timers, setTimers] = useState<Record<Insight['id'], ReturnType<typeof setTimeout>>>({});
+  const [insights, setInsights] = useState<Insight[]>([]);
+  const [userStats, setUserStats] = useState<UserStats>({
+    total_chops: 0,
+    is_pro: false,
+    total_insight_chops: 0,
+    total_insights: 0,
+    // read_today: 0,
+    // shared_count: 0
+    shared_insight_chops: 0,
+    viewed_insight_chops: 0
+  });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [showShareModal, setShowShareModal] = useState(false);
   const [selectedInsight, setSelectedInsight] = useState<Insight | null>(null);
+  const [visibleInsights, setVisibleInsights] = useState<Set<number>>(new Set());
+  const [readingTimers, setReadingTimers] = useState<Record<number, NodeJS.Timeout>>({});
+  
+  const insightRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const observerRef = useRef<IntersectionObserver | null>(null);
 
-  // Mock user data
-  const isPremiumUser = false; // Change this to test different user types
-
-  // Load saved data from localStorage
-  useEffect(() => {
-    const savedReadInsights = localStorage.getItem('readInsights');
-    const savedSharedInsights = localStorage.getItem('sharedInsights');
-    const savedEarnedPoints = localStorage.getItem('earnedPoints');
-    
-    if (savedReadInsights) {
-      setReadInsights(new Set(JSON.parse(savedReadInsights)));
+  // Fetch insights from backend
+  const fetchInsights = async (page: number = 1) => {
+    try {
+      setLoading(true);
+      const response = await axios.get(`${API_BASE_URL}/insights`, {
+        params: { page, limit: 5 },
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}` // Add your auth token
+        }
+      });
+      
+      console.log('API Response:', response.data); // Debug log
+      
+      // Ensure insights is always an array
+      const insightsData = response.data.insights || [];
+      setInsights(insightsData);
+      setCurrentPage(response.data.current_page || 1);
+      setTotalPages(response.data.total_pages || 1);
+      setUserStats(prev => ({
+        ...prev,
+        is_pro: response.data.is_pro || false,
+        total_insights: response.data.total_insights || 0
+      }));
+    } catch (error: any) {
+      console.error('Error fetching insights:', error);
+      console.error('Error response:', error.response?.data);
+      showToastMessage('Error loading insights: ' + (error.response?.data?.detail || error.message));
+      // Set empty array to prevent undefined error
+      setInsights([]);
+    } finally {
+      setLoading(false);
     }
-    if (savedSharedInsights) {
-      setSharedInsights(new Set(JSON.parse(savedSharedInsights)));
-    }
-    if (savedEarnedPoints) {
-      setEarnedPoints(parseInt(savedEarnedPoints));
-    }
-  }, []);
-
-  interface Insight {
-    id: string;
-    title: string;
-    viewed: boolean;
-  }
-
-  // Save data to localStorage
-  const saveToLocalStorage = (insights: Insight[], shared: Insight[], points: number) => {
-    localStorage.setItem('readInsights', JSON.stringify([...insights]));
-    localStorage.setItem('sharedInsights', JSON.stringify([...shared]));
-    localStorage.setItem('earnedPoints', points.toString());
-    
-    // Dispatch event to update earnings page
-    window.dispatchEvent(new CustomEvent('pointsUpdated', { 
-      detail: { points: points } 
-    }));
   };
 
-  const insights = [
-    {
-      id: 1,
-      title: "AI-Powered Customer Service Revolution",
-      category: "Customer Service",
-      readTime: "3 min read",
-      date: "2024-01-15",
-      source: "https://www.salesforce.com/resources/articles/customer-service/",
-      image: "https://readdy.ai/api/search-image?query=modern%20customer%20service%20representative%20using%20AI%20chatbot%20technology%20in%20bright%20office%20environment%20with%20digital%20screens%20showing%20customer%20satisfaction%20metrics&width=400&height=250&seq=cs1&orientation=landscape",
-      whatChanged: "New chatbot technology reduces response time by 85% while maintaining 94% customer satisfaction rates. Advanced AI can now handle complex queries that previously required human intervention.",
-      whyItMatters: "Customer expectations for instant support are at an all-time high. Companies that don't adapt to AI-powered service will lose customers to competitors who provide faster, more efficient support experiences.",
-      actionToTake: "Evaluate your current customer service metrics, research AI chatbot solutions, and implement a pilot program for common customer queries within the next 30 days."
-    },
-    {
-      id: 2,
-      title: "Predictive Analytics Transforms Inventory Management",
-      category: "Operations",
-      readTime: "4 min read",
-      date: "2024-01-14",
-      source: "https://www.mckinsey.com/capabilities/operations/our-insights",
-      image: "https://readdy.ai/api/search-image?query=modern%20warehouse%20with%20automated%20inventory%20management%20systems%20and%20digital%20analytics%20dashboards%20showing%20predictive%20data%20visualization%20in%20clean%20industrial%20setting&width=400&height=250&seq=inv1&orientation=landscape",
-      whatChanged: "Machine learning algorithms now help retailers reduce waste by 40% and improve stock availability to 98%. Real-time demand forecasting has become incredibly accurate.",
-      whyItMatters: "Inventory costs can make or break a business. Poor inventory management leads to lost sales, excess storage costs, and cash flow problems that can cripple growth.",
-      actionToTake: "Audit your current inventory processes, identify pain points, and research predictive analytics tools that integrate with your existing systems."
-    },
-    {
-      id: 3,
-      title: "Marketing Automation Drives 300% ROI Increase",
-      category: "Marketing",
-      readTime: "5 min read",
-      date: "2024-01-13",
-      source: "https://blog.hubspot.com/marketing/marketing-automation",
-      image: "https://readdy.ai/api/search-image?query=digital%20marketing%20professional%20analyzing%20automated%20campaign%20results%20on%20multiple%20monitors%20with%20colorful%20data%20visualizations%20and%20ROI%20charts%20in%20modern%20office&width=400&height=250&seq=mark1&orientation=landscape",
-      whatChanged: "Marketing automation platforms now deliver personalized experiences at scale, resulting in 300% ROI improvements for businesses that implement comprehensive automation strategies.",
-      whyItMatters: "Manual marketing processes can't compete with automated personalization. Companies using marketing automation see 451% increase in qualified leads and 34% increase in sales-ready leads.",
-      actionToTake: "Map your customer journey, identify automation opportunities, select a marketing automation platform, and create personalized nurture campaigns for different customer segments."
-    },
-    {
-      id: 4,
-      title: "Financial Forecasting with Machine Learning",
-      category: "Finance",
-      readTime: "6 min read",
-      date: "2024-01-12",
-      source: "https://www.jpmorgan.com/insights/technology/artificial-intelligence",
-      image: "https://readdy.ai/api/search-image?query=financial%20analyst%20working%20with%20AI-powered%20forecasting%20tools%20showing%20market%20trend%20predictions%20and%20investment%20data%20on%20sleek%20trading%20desk%20setup&width=400&height=250&seq=fin1&orientation=landscape",
-      whatChanged: "AI-powered financial forecasting models now achieve 95% accuracy in predicting market trends and cash flow patterns, significantly outperforming traditional forecasting methods.",
-      whyItMatters: "Accurate financial forecasting is critical for strategic planning and risk management. Traditional methods often miss subtle patterns that AI can detect, leading to better investment decisions.",
-      actionToTake: "Evaluate your current forecasting methods, research AI-powered financial tools, and pilot machine learning models for your most critical financial predictions."
-    },
-    {
-      id: 5,
-      title: "Supply Chain Optimization Through AI",
-      category: "Logistics",
-      readTime: "4 min read",
-      date: "2024-01-11",
-      source: "https://www.dhl.com/global-en/home/insights-and-innovation/insights/artificial-intelligence.html",
-      image: "https://readdy.ai/api/search-image?query=advanced%20supply%20chain%20control%20center%20with%20AI%20optimization%20systems%20tracking%20global%20logistics%20and%20delivery%20routes%20on%20large%20digital%20displays&width=400&height=250&seq=log1&orientation=landscape",
-      whatChanged: "AI-driven supply chain optimization reduces costs by 15% and improves delivery times by 25%. Real-time route optimization and demand prediction are revolutionizing logistics.",
-      whyItMatters: "Supply chain disruptions cost businesses billions annually. AI optimization provides resilience and efficiency that traditional methods cannot match in today's complex global market.",
-      actionToTake: "Assess your supply chain vulnerabilities, implement AI-powered tracking systems, and develop predictive models for demand forecasting and route optimization."
-    },
-    {
-      id: 6,
-      title: "HR Analytics Revolutionizes Talent Acquisition",
-      category: "Human Resources",
-      readTime: "3 min read",
-      date: "2024-01-10",
-      source: "https://www.workday.com/en-us/applications/human-capital-management/workforce-analytics.html",
-      image: "https://readdy.ai/api/search-image?query=HR%20professional%20using%20advanced%20analytics%20dashboard%20for%20talent%20acquisition%20with%20candidate%20profiles%20and%20hiring%20metrics%20in%20modern%20corporate%20office&width=400&height=250&seq=hr1&orientation=landscape",
-      whatChanged: "HR analytics platforms now predict employee success with 87% accuracy and reduce time-to-hire by 50%. Data-driven hiring decisions significantly improve retention rates.",
-      whyItMatters: "The cost of bad hires can reach 30% of the employee's first-year earnings. HR analytics helps identify the best candidates and predict long-term success and cultural fit.",
-      actionToTake: "Implement HR analytics tools, define key performance indicators for hiring success, and create data-driven hiring processes that reduce bias and improve outcomes."
-    }
-  ];
-
-  const startReadingTimer = (insightId: string) => {
-    if (readInsights.has(insightId) || timers[insightId]) return;
-
-    const timer = setTimeout(() => {
-      const pointsToAdd = isPremiumUser ? 5 : 1;
-      const newEarnedPoints = earnedPoints + pointsToAdd;
-      const newReadInsights = new Set(readInsights);
-      newReadInsights.add(insightId);
-      // const newReadInsights = Array.from(new Set([...readInsights, insightId]));
-      
-      setReadInsights(newReadInsights);
-      setEarnedPoints(newEarnedPoints);
-      saveToLocalStorage(Array.from(newReadInsights) as any, Array.from(sharedInsights) as any, newEarnedPoints);
-      
-      setToastMessage(`You earned ${pointsToAdd} point${pointsToAdd > 1 ? 's' : ''} for reading this insight!`);
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
-      
-      // Clear the timer
-      setTimers(prev => {
-        const newTimers = { ...prev };
-        delete newTimers[insightId];
-        return newTimers;
+  // Fetch user stats
+  const fetchUserStats = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/user/stats`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
       });
-    }, 15000); // 15 seconds
+      setUserStats(response.data);
+    } catch (error) {
+      console.error('Error fetching user stats:', error);
+    }
+  };
 
-    setTimers(prev => ({ ...prev, [insightId]: timer }));
+  // Mark insight as read
+  const markAsRead = async (insightId: number) => {
+    if (!user?.id) {
+      console.error("User ID not available");
+      return;
+    }
+
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/insights/view`,
+        { 
+          user_id: user.id,      // ← ADD THIS
+          insight_id: insightId 
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          }
+        }
+    );
+
+    if (response.data.chops_earned > 0) {
+      setInsights(prev => 
+        prev.map(insight => 
+          insight.id === insightId ? { ...insight, is_read: true } : insight
+        )
+      );
+      
+      setUserStats(prev => ({
+        ...prev,
+        total_chops: response.data.total_chops ?? prev.total_chops,
+        viewed_insight_chops: response.data.insight_reading_chops ?? prev.viewed_insight_chops,
+        shared_insight_chops: response.data.insight_sharing_chops ?? prev.shared_insight_chops,
+        total_insight_chops: response.data.total_insight_chops ?? prev.total_insight_chops,
+      }));
+
+      showToastMessage(
+        `You earned ${response.data.chops_earned} chop${response.data.chops_earned > 1 ? 's' : ''} for reading this insight!`
+      );
+    }
+  } catch (error: any) {
+    console.error('Error marking as read:', error);
+    console.error('Error response:', error.response?.data);
+  }
+};
+
+  // Share insight
+  const shareInsight = async (insightId: number, platform: string) => {
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/insights/share`,
+        { insight_id: insightId, platform, user_id: user.id },
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          }
+        }
+      );
+
+      if (response.data.chops_earned > 0) {
+        // Update local state
+        setInsights(prev => 
+          prev.map(insight => 
+            insight.id === insightId ? { ...insight, is_shared: true } : insight
+          )
+        );
+        
+        setUserStats(prev => ({
+          ...prev,
+          total_chops: response.data.total_chops,
+          shared_insight_chops: response.data.insight_sharing_chops,
+          viewed_insight_chops: response.data.insight_reading_chops,
+          total_insight_chops: response.data.total_insight_chops
+        }));
+
+        showToastMessage(
+          `You earned ${response.data.chops_earned} chops for sharing this insight!`
+        );
+      }
+    } catch (error: any) {
+      console.error('Error sharing insight:', error);
+      console.error('Error response:', error.response?.data);
+    }
+  };
+
+  // Pin/Unpin insight
+  const togglePin = async (insightId: number) => {
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/insights/pin`,
+        { insight_id: insightId },
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          }
+        }
+      );
+
+      // Update local state
+      setInsights(prev => 
+        prev.map(insight => 
+          insight.id === insightId ? { ...insight, is_pinned: response.data.is_pinned } : insight
+        )
+      );
+
+      showToastMessage(response.data.message);
+      
+      // Refresh to reorder pinned items
+      fetchInsights(currentPage);
+    } catch (error) {
+      console.error('Error toggling pin:', error);
+    }
+  };
+
+  // Setup Intersection Observer for reading detection
+  useEffect(() => {
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const insightId = parseInt(entry.target.getAttribute('data-insight-id') || '0');
+          const insight = insights.find(i => i.id === insightId);
+          
+          if (!insight || insight.is_read) return;
+
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.8) {
+            // Insight is fully visible (80% threshold)
+            setVisibleInsights(prev => new Set(prev).add(insightId));
+            
+            // Start 10-second timer if not already started
+            if (!readingTimers[insightId]) {
+              const timer = setTimeout(() => {
+                markAsRead(insightId);
+                // Clear timer
+                setReadingTimers(prev => {
+                  const newTimers = { ...prev };
+                  delete newTimers[insightId];
+                  return newTimers;
+                });
+              }, 10000); // 10 seconds
+              
+              setReadingTimers(prev => ({ ...prev, [insightId]: timer }));
+            }
+          } else {
+            // Insight is not fully visible, clear timer
+            setVisibleInsights(prev => {
+              const newSet = new Set(prev);
+              newSet.delete(insightId);
+              return newSet;
+            });
+            
+            if (readingTimers[insightId]) {
+              clearTimeout(readingTimers[insightId]);
+              setReadingTimers(prev => {
+                const newTimers = { ...prev };
+                delete newTimers[insightId];
+                return newTimers;
+              });
+            }
+          }
+        });
+      },
+      {
+        threshold: [0, 0.5, 0.8, 1.0],
+        rootMargin: '0px'
+      }
+    );
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+      // Clear all timers on unmount
+      Object.values(readingTimers).forEach(timer => clearTimeout(timer));
+    };
+  }, [insights, readingTimers]);
+
+  // Observe insight elements
+  useEffect(() => {
+    Object.values(insightRefs.current).forEach((ref) => {
+      if (ref && observerRef.current) {
+        observerRef.current.observe(ref);
+      }
+    });
+
+    return () => {
+      if (observerRef.current) {
+        Object.values(insightRefs.current).forEach((ref) => {
+          if (ref) {
+            observerRef.current?.unobserve(ref);
+          }
+        });
+      }
+    };
+  }, [insights]);
+
+  // Initial load
+  useEffect(() => {
+    fetchInsights(1);
+    fetchUserStats();
+  }, []);
+
+  const showToastMessage = (message: string) => {
+    setToastMessage(message);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
   };
 
   const handleShare = (insight: Insight) => {
@@ -164,9 +321,10 @@ export default function DashboardInsights() {
 
   type Platform = 'twitter' | 'facebook' | 'linkedin' | 'whatsapp';
 
-  const shareToSocialMedia = (platform: Platform) => {
+  const shareToSocialMedia = async (platform: Platform) => {
     if (!selectedInsight) return;
-    const userName = 'John Doe'; // This should come from user data
+    
+    const userName = 'John Doe'; // Get from user context
     const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
     const insightUrl = `${referralLink}&insight=${selectedInsight.id}`;
     const text = `Check out this business insight: ${selectedInsight.title}`;
@@ -190,119 +348,57 @@ export default function DashboardInsights() {
     
     if (shareUrl) {
       window.open(shareUrl, '_blank');
-      awardSharingPoints();
+      await shareInsight(selectedInsight.id, platform);
     }
     
     setShowShareModal(false);
   };
 
-  const copyLink = () => {
+  const copyLink = async () => {
     if (!selectedInsight) return;
-    const userName = 'John Doe'; // This should come from user data
+    
+    const userName = 'John Doe';
     const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
     const insightUrl = `${referralLink}&insight=${selectedInsight.id}`;
-    navigator.clipboard.writeText(insightUrl);
-    awardSharingPoints();
-    setToastMessage(`Link copied! You earned ${isPremiumUser ? 10 : 5} points for sharing this insight!`);
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
+    
+    await navigator.clipboard.writeText(insightUrl);
+    await shareInsight(selectedInsight.id, 'copy_link');
+    
     setShowShareModal(false);
   };
 
-  const awardSharingPoints = () => {
-    if (!selectedInsight) return;
-    // Award points only if not already shared
-    if (!sharedInsights.has(selectedInsight.id)) {
-      const pointsToAdd = isPremiumUser ? 10 : 5;
-      const newEarnedPoints = earnedPoints + pointsToAdd;
-      const newSharedInsights = new Set([...sharedInsights, selectedInsight.id]);
-      
-      setEarnedPoints(newEarnedPoints);
-      setSharedInsights(newSharedInsights);
-      saveToLocalStorage(Array.from(readInsights) as any , Array.from(newSharedInsights) as any, newEarnedPoints);
-      
-      if (!showToast) {
-        setToastMessage(`You earned ${pointsToAdd} points for sharing this insight!`);
-        setShowToast(true);
-        setTimeout(() => setShowToast(false), 3000);
-      }
-    }
+  const getReadingStatus = (insight: Insight) => {
+    if (insight.is_read) return 'read';
+    if (readingTimers[insight.id]) return 'reading';
+    return 'unread';
   };
 
-  // Start timers for unread insights when component mounts
-  useEffect(() => {
-    insights.forEach(insight => {
-      const insightIdStr = insight.id.toString();
-      if (!readInsights.has(insightIdStr) && insight.id <= 2) { // Only for first 2 insights
-        startReadingTimer(insightIdStr);
-      }
-    });
-
-    // Cleanup timers on unmount
-    return () => {
-      Object.values(timers).forEach(timer => clearTimeout(timer));
-    };
-  }, [[insights, readInsights]]);
-
-  const getButtonState = (insightId: string) => {
-    if (readInsights.has(insightId)) {
-      return 'read';
-    }
-    if (timers[insightId]) {
-      return 'reading';
-    }
-    return 'inactive';
-  };
-
-  const getButtonText = (insightId: string) => {
-    const state = getButtonState(insightId);
+  const getButtonText = (insight: Insight) => {
+    const status = getReadingStatus(insight);
+    const chops = userStats.is_pro ? 5 : 1;
     
-    switch (state) {
+    switch (status) {
       case 'read':
-        return 'Insight read';
+        return 'Insight Read';
       case 'reading':
-        return `Reading... (+${isPremiumUser ? 5 : 1} point${isPremiumUser ? 's' : ''} in 15s)`;
-      case 'inactive':
-        return 'Mark as Read';
+        return `Reading... (+${chops} chop${chops > 1 ? 's' : ''} in 10s)`;
+      case 'unread':
+        return 'Scroll to Read';
     }
   };
 
-  const getButtonStyle = (insightId: string) => {
-    const state = getButtonState(insightId);
-    const baseStyle = {
-      padding: '12px 20px',
-      borderRadius: '8px',
-      border: 'none',
-      fontSize: '14px',
-      fontWeight: '600',
-      cursor: state === 'inactive' ? 'not-allowed' : 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      transition: 'all 0.3s ease',
-      minWidth: '200px',
-      whiteSpace: 'nowrap'
-    };
+  const getButtonStyle = (insight: Insight) => {
+    const status = getReadingStatus(insight);
+    const baseStyle = {padding: '12px 20px', borderRadius: '8px', border: 'none', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s ease', minWidth: '200px', whiteSpace: 'nowrap' as const
+ };
     
-    switch (state) {
+    switch (status) {
       case 'read':
-        return {
-          ...baseStyle,
-          backgroundColor: '#10b981',
-          color: '#ffffff'
-        };
+        return { ...baseStyle, backgroundColor: '#10b981', color: '#ffffff' };
       case 'reading':
-        return {
-          ...baseStyle,
-          backgroundColor: '#f97316',
-          color: '#ffffff'
-        };
-      case 'inactive':
-        return {
-          ...baseStyle,
-          backgroundColor: '#e5e7eb',
-          color: '#9ca3af'
-        };
+        return { ...baseStyle, backgroundColor: '#f97316', color: '#ffffff' };
+      case 'unread':
+        return { ...baseStyle, backgroundColor: '#e5e7eb', color: '#9ca3af', cursor: 'default' };
     }
   };
 
@@ -313,38 +409,30 @@ export default function DashboardInsights() {
         setIsMobileMenuOpen={setIsMobileMenuOpen} 
       />
 
-      {/* Main Content */}
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white"style={{ 
-        flex: 1, marginLeft: '0', display: 'flex', flexDirection: 'column'}}>
+      <div style={{ flex: 1, marginLeft: '0', display: 'flex', flexDirection: 'column' }}>
         {/* Header */}
-        <header style={{ 
-          backgroundColor: '#ffffff', 
-          borderBottom: '1px solid #e5e7eb', 
-          padding: '16px 24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between'
-        }}>
+        <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <button
-              style={{ display: window.innerWidth >= 768 ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px',
-                backgroundColor: 'transparent', border: 'none', borderRadius: '6px', color: '#6b7280', cursor: 'pointer', marginRight: '16px'}}
+              style={{ 
+                display: window.innerWidth >= 768 ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', width: '40px', height: '40px', backgroundColor: 'transparent', border: 'none', borderRadius: '6px', color: '#6b7280', cursor: 'pointer', marginRight: '16px' }}
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             >
               <i className="ri-menu-line" style={{ fontSize: '20px' }}></i>
             </button>
-            <h1 style={{ 
-              fontSize: '24px', 
-              fontWeight: 'bold', 
-              color: '#111827',
-              margin: 0
-            }}>AI Insights Feed</h1>
+            <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+              AI Insights Feed
+            </h1>
           </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{ backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '500', color: '#374151'}}>
-              Chops: {earnedPoints}
-            </div>
+            {userStats.is_pro && (
+              <div style={{ backgroundColor: '#fef3c7', padding: '6px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', color: '#92400e', display: 'flex', alignItems: 'center', gap: '4px'
+              }}>
+                <i className="ri-vip-crown-fill"></i>
+                Pro User
+              </div>
+            )}
           </div>
         </header>
 
@@ -353,449 +441,201 @@ export default function DashboardInsights() {
           {/* Stats Cards */}
           <div style={{ 
             display: 'grid', 
-            gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr',
-            gap: '24px',
-            marginBottom: '32px'
+            gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr', gap: '24px', marginBottom: '32px' 
           }}>
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '24px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
+            <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>Total Insights</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>24</p>
+                  <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>Total Insights Chops</p>
+                  <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+                    {userStats.total_insight_chops}
+                  </p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: '#dbeafe', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
+                <div style={{ width: '48px', height: '48px', backgroundColor: '#dbeafe', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <i className="ri-lightbulb-line" style={{ color: '#3b82f6', fontSize: '20px' }}></i>
                 </div>
               </div>
             </div>
 
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '24px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
+            <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>Read Today</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>{readInsights.size}</p>
+                  <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>Reading</p>
+                  <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+                    {userStats.viewed_insight_chops}
+                  </p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: '#dcfce7', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
+                <div style={{ width: '48px', height: '48px', backgroundColor: '#dcfce7', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <i className="ri-check-line" style={{ color: '#16a34a', fontSize: '20px' }}></i>
                 </div>
               </div>
             </div>
 
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '24px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
+            <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>Points Earned</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>{earnedPoints}</p>
+                  <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>Total Chops</p>
+                  <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+                    {userStats.total_chops}
+                  </p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: '#fef3c7', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
+                <div style={{ width: '48px', height: '48px', backgroundColor: '#fef3c7', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <i className="ri-star-line" style={{ color: '#f59e0b', fontSize: '20px' }}></i>
                 </div>
               </div>
             </div>
 
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '24px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
+            <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>Shared</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>{sharedInsights.size}</p>
+                  <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>Sharing</p>
+                  <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+                    {userStats.shared_insight_chops}
+                  </p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: '#f3e8ff', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
+                <div style={{ width: '48px', height: '48px', backgroundColor: '#f3e8ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <i className="ri-share-line" style={{ color: '#8b5cf6', fontSize: '20px' }}></i>
                 </div>
               </div>
             </div>
           </div>
 
+          {/* Loading State */}
+          {loading && (
+            <div style={{ textAlign: 'center', padding: '40px' }}>
+              <div style={{ fontSize: '18px', color: '#6b7280' }}>Loading insights...</div>
+            </div>
+          )}
+
           {/* Insights List */}
-          <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column',
-            gap: '32px'
-          }}>
-            {insights.map((insight, index) => {
-              const isLocked = !isPremiumUser && index >= 2;
-              
-              return (
-                <div key={insight.id} style={{ 
-                  backgroundColor: '#ffffff', 
-                  borderRadius: '16px', 
-                  overflow: 'hidden', 
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                  transition: 'box-shadow 0.3s ease',
-                  position: 'relative'
+          {!loading && (
+            <>
+              {insights.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '60px 24px', backgroundColor: '#ffffff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'  
                 }}>
-                  <img 
-                    src={insight.image} 
-                    alt={insight.title}
-                    style={{ 
-                      width: '100%', 
-                      height: '250px', 
-                      objectFit: 'cover',
-                      objectPosition: 'top',
-                      filter: isLocked ? 'blur(8px)' : 'none'
-                    }}
-                  />
-                  
-                  <div style={{ padding: '32px', position: 'relative' }}>
-                    {/* Header */}
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '12px', 
-                      marginBottom: '16px' 
+                  <i className="ri-lightbulb-line" style={{ 
+                    fontSize: '64px', 
+                    color: '#d1d5db',
+                    marginBottom: '16px',
+                    display: 'block'
+                  }}></i>
+                  <h3 style={{ 
+                    fontSize: '20px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    marginBottom: '8px'
+                  }}>
+                    No Insights Available
+                  </h3>
+                  <p style={{ fontSize: '14px', color: '#6b7280' }}>
+                    Check back later for new insights!
+                  </p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                  {insights.map((insight) => (
+                <div 
+                  key={insight.id}
+                  ref={(el) => (insightRefs.current[insight.id] = el)}
+                  data-insight-id={insight.id}
+                  style={{ 
+                    backgroundColor: '#ffffff', 
+                    borderRadius: '16px', 
+                    overflow: 'hidden', 
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                    transition: 'box-shadow 0.3s ease',
+                    position: 'relative',
+                    border: insight.is_pinned ? '2px solid #f59e0b' : 'none'
+                  }}
+                >
+                  {/* Pinned Badge */}
+                  {insight.is_pinned && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '16px',
+                      right: '16px',
+                      backgroundColor: '#f59e0b',
+                      color: '#ffffff',
+                      padding: '6px 12px',
+                      borderRadius: '20px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      zIndex: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
                     }}>
-                      <span style={{ 
-                        backgroundColor: '#f3f4f6', 
-                        color: '#374151', 
-                        padding: '6px 16px', 
-                        borderRadius: '20px', 
-                        fontSize: '14px', 
-                        fontWeight: '500' 
-                      }}>
+                      <i className="ri-pushpin-fill"></i>
+                      Pinned
+                    </div>
+                  )}
+
+                  
+                  <div style={{ padding: '32px' }}>
+                    {/* Header */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                      <span style={{ backgroundColor: '#f3f4f6', color: '#374151', padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '500' }}>
                         {insight.category}
                       </span>
-                      <span style={{ 
-                        fontSize: '14px', 
-                        color: '#6b7280' 
-                      }}>
-                        {insight.readTime}
-                      </span>
-                      <span style={{ 
-                        fontSize: '14px', 
-                        color: '#6b7280' 
-                      }}>
-                        {insight.date}
-                      </span>
+                      <span style={{ fontSize: '14px', color: '#6b7280' }}>{insight.read_time}</span>
+                      <span style={{ fontSize: '14px', color: '#6b7280' }}>{insight.date}</span>
                     </div>
                     
-                    <h2 style={{ 
-                      fontSize: window.innerWidth >= 768 ? '24px' : '20px', 
-                      fontWeight: 'bold', 
-                      color: '#111827', 
-                      marginBottom: '24px',
-                      lineHeight: '1.3'
-                    }}>
+                    <h2 style={{  fontSize: window.innerWidth >= 768 ? '24px' : '20px', fontWeight: 'bold',  color: '#111827', marginBottom: '24px',lineHeight: '1.3' }}>
                       {insight.title}
                     </h2>
 
-                    {/* Content Sections - Only for first 2 insights */}
-                    {!isLocked && insight.whatChanged && (
-                      <div style={{ 
-                        display: 'flex', 
-                        flexDirection: window.innerWidth >= 1024 ? 'row' : 'column',
-                        gap: '24px', 
-                        marginBottom: '32px' 
-                      }}>
-                        {/* What Changed */}
-                        <div style={{ 
-                          flex: 1,
-                          backgroundColor: '#eff6ff', 
-                          padding: '20px', 
-                          borderRadius: '12px',
-                          border: '1px solid #3b82f6'
-                        }}>
-                          <h3 style={{ 
-                            fontSize: '16px', 
-                            fontWeight: 'bold', 
-                            color: '#1d4ed8', 
-                            marginBottom: '12px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px'
-                          }}>
-                            <i className="ri-refresh-line" style={{ fontSize: '18px' }}></i>
-                            What Changed
-                          </h3>
-                          <p style={{ 
-                            fontSize: '14px', 
-                            color: '#4b5563', 
-                            lineHeight: '1.6',
-                            margin: 0
-                          }}>
-                            {insight.whatChanged}
-                          </p>
-                        </div>
-
-                        {/* Why it matters */}
-                        <div style={{ 
-                          flex: 1,
-                          backgroundColor: '#fef7ff', 
-                          padding: '20px', 
-                          borderRadius: '12px',
-                          border: '1px solid #a855f7'
-                        }}>
-                          <h3 style={{ 
-                            fontSize: '16px', 
-                            fontWeight: 'bold', 
-                            color: '#7c3aed', 
-                            marginBottom: '12px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px'
-                          }}>
-                            <i className="ri-question-line" style={{ fontSize: '18px' }}></i>
-                            Why it matters
-                          </h3>
-                          <p style={{ 
-                            fontSize: '14px', 
-                            color: '#4b5563', 
-                            lineHeight: '1.6',
-                            margin: 0
-                          }}>
-                            {insight.whyItMatters}
-                          </p>
-                        </div>
-
-                        {/* Action to take */}
-                        <div style={{ 
-                          flex: 1,
-                          backgroundColor: '#f0fdf4', 
-                          padding: '20px', 
-                          borderRadius: '12px',
-                          border: '1px solid #22c55e'
-                        }}>
-                          <h3 style={{ 
-                            fontSize: '16px', 
-                            fontWeight: 'bold', 
-                            color: '#16a34a', 
-                            marginBottom: '12px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px'
-                          }}>
-                            <i className="ri-flashlight-line" style={{ fontSize: '18px' }}></i>
-                            Action to take
-                          </h3>
-                          <p style={{ 
-                            fontSize: '14px', 
-                            color: '#4b5563', 
-                            lineHeight: '1.6',
-                            margin: 0
-                          }}>
-                            {insight.actionToTake}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Premium Overlay for locked content */}
-                    {isLocked && (
-                      <div style={{
-                        position: 'absolute',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        backgroundColor: 'rgba(0, 0, 0, 0.9)',
-                        color: '#ffffff',
-                        padding: '32px',
-                        borderRadius: '16px',
-                        textAlign: 'center',
-                        zIndex: 10,
-                        minWidth: '300px'
-                      }}>
-                        <i className="ri-vip-crown-line" style={{ fontSize: '48px', color: '#f59e0b', marginBottom: '16px' }}></i>
-                        <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '12px', margin: '0 0 12px 0' }}>
-                          Upgrade to Pro
+                    {/* Content Sections */}
+                    <div style={{ display: 'flex', flexDirection: window.innerWidth >= 1024 ? 'row' : 'column', gap: '24px', marginBottom: '32px'}}>
+                      <div style={{ flex: 1, backgroundColor: '#eff6ff', padding: '20px', borderRadius: '12px', border: '1px solid #3b82f6' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: '#1d4ed8', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <i className="ri-refresh-line" style={{ fontSize: '18px' }}></i>
+                          What Changed
                         </h3>
-                        <p style={{ fontSize: '14px', color: '#d1d5db', marginBottom: '20px', margin: '0 0 20px 0' }}>
-                          Unlock full insights and earn more points
+                        <p style={{ fontSize: '14px', color: '#4b5563', lineHeight: '1.6', margin: 0 }}>
+                          {insight.what_changed}
                         </p>
-                        <button style={{
-                          backgroundColor: '#f97316',
-                          color: '#ffffff',
-                          padding: '12px 24px',
-                          borderRadius: '8px',
-                          border: 'none',
-                          fontSize: '14px',
-                          fontWeight: '600',
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          Upgrade Now
-                        </button>
                       </div>
-                    )}
 
-                    {/* Blur overlay for locked content */}
-                    {isLocked && (
-                      <div style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(255, 255, 255, 0.8)',
-                        backdropFilter: 'blur(4px)',
-                        zIndex: 5
-                      }} />
-                    )}
+                      <div style={{ flex: 1, backgroundColor: '#fef7ff', padding: '20px', borderRadius: '12px', border: '1px solid #a855f7' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: '#7c3aed', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <i className="ri-question-line" style={{ fontSize: '18px' }}></i>
+                          Why it matters
+                        </h3>
+                        <p style={{ fontSize: '14px', color: '#4b5563', lineHeight: '1.6', margin: 0 }}>
+                          {insight.why_it_matters}
+                        </p>
+                      </div>
+
+                      <div style={{ flex: 1, backgroundColor: '#f0fdf4', padding: '20px', borderRadius: '12px', border: '1px solid #22c55e' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: 'bold', color: '#16a34a', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <i className="ri-flashlight-line" style={{ fontSize: '18px' }}></i>
+                          Action to take
+                        </h3>
+                        <p style={{ fontSize: '14px', color: '#4b5563', lineHeight: '1.6', margin: 0 }}>
+                          {insight.action_to_take}
+                        </p>
+                      </div>
+                    </div>
                     
                     {/* Action Buttons */}
-                    <div style={{ 
-                      display: 'flex', 
-                      flexDirection: window.innerWidth >= 640 ? 'row' : 'column',
-                      gap: '16px',
-                      position: 'relative',
-                      zIndex: isLocked ? 1 : 'auto'
-                    }}>
-                      {!isLocked ? (
-                        <>
-                          <button
-                            style={getButtonStyle(insight.id.toString())}
-                            disabled={getButtonState(insight.id.toString()) === 'inactive'}
-                          >
-                            {getButtonState(insight.id.toString()) === 'read' && (
-                              <i className="ri-check-line" style={{ marginRight: '8px' }}></i>
-                            )}
-                            {getButtonText(insight.id.toString())}
-                          </button>
-                          
-                          <button
-                            onClick={() => handleShare({...insight,
-                                                      id: insight.id.toString(),
-                                                      viewed: false})}
-                            style={{ 
-                              flex: 1,
-                              backgroundColor: sharedInsights.has(insight.id) ? '#10b981' : '#3b82f6', 
-                              color: '#ffffff', 
-                              padding: '12px 20px', 
-                              borderRadius: '8px', 
-                              border: 'none', 
-                              fontSize: '14px', 
-                              fontWeight: '600', 
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              transition: 'background-color 0.3s ease',
-                              whiteSpace: 'nowrap'
-                            }}
-                            onMouseOver={(e) => e.currentTarget.style.backgroundColor = sharedInsights.has(insight.id) ? '#059669' : '#2563eb'}
-                            onMouseOut={(e) => e.currentTarget.style.backgroundColor = sharedInsights.has(insight.id) ? '#10b981' : '#3b82f6'}
-                          >
-                            <i className={sharedInsights.has(insight.id) ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px' }}></i>
-                            {sharedInsights.has(insight.id) ? 'Shared' : `Share (+${isPremiumUser ? 10 : 5} points)`}
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          style={{ 
-                            flex: 1,
-                            backgroundColor: '#e5e7eb', 
-                            color: '#9ca3af', 
-                            padding: '12px 20px', 
-                            borderRadius: '8px', 
-                            border: 'none', 
-                            fontSize: '14px', 
-                            fontWeight: '600', 
-                            cursor: 'not-allowed',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            whiteSpace: 'nowrap'
-                          }}
-                          disabled
-                        >
-                          <i className="ri-lock-line" style={{ marginRight: '8px' }}></i>
-                          Premium Required
-                        </button>
-                      )}
+                    <div style={{ display: 'flex', flexDirection: window.innerWidth >= 640 ? 'row' : 'column', gap: '16px', flexWrap: 'wrap' }}>
+                      <button
+                        style={getButtonStyle(insight)}
+                      >
+                        {getReadingStatus(insight) === 'read' && (
+                          <i className="ri-check-line" style={{ marginRight: '8px' }}></i>
+                        )}
+                        {getButtonText(insight)}
+                      </button>
                       
                       <button
-                        onClick={() => window.open(insight.source, '_blank')}
+                        onClick={() => handleShare(insight)}
                         style={{ 
                           flex: 1,
-                          backgroundColor: '#f3f4f6', 
-                          color: '#374151', 
-                          padding: '12px 20px', 
+                          backgroundColor: insight.is_shared ? '#10b981' : '#3b82f6', 
+                          color: '#ffffff', 
+                          padding: '12px', 
                           borderRadius: '8px', 
                           border: 'none', 
                           fontSize: '14px', 
@@ -805,20 +645,112 @@ export default function DashboardInsights() {
                           alignItems: 'center',
                           justifyContent: 'center',
                           transition: 'background-color 0.3s ease',
-                          whiteSpace: 'nowrap'
+                          whiteSpace: 'nowrap',
+                          minWidth: '200px'
                         }}
-                        onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#e5e7eb'}
-                        onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                      >
+                        <i className={insight.is_shared ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px' }}></i>
+                        {insight.is_shared ? 'Shared' : `Share (+${userStats.is_pro ? 10 : 5} chops)`}
+                      </button>
+
+                      <button
+                        onClick={() => togglePin(insight.id)}
+                        style={{ backgroundColor: insight.is_pinned ? '#fef3c7' : '#f3f4f6', color: insight.is_pinned ? '#92400e' : '#374151', padding: '12px 20px', borderRadius: '8px',border: 'none', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.3s ease', whiteSpace: 'nowrap'}}
+                      >
+                        <i className={insight.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'} style={{ marginRight: '8px' }}></i>
+                        {insight.is_pinned ? 'Unpin' : 'Pin'}
+                      </button>
+                      
+                      <button
+                        onClick={() => window.open(insight.source, '_blank')}
+                        style={{ backgroundColor: '#f3f4f6', color: '#374151',  padding: '12px 20px',borderRadius: '8px', border: 'none', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex',alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.3s ease', whiteSpace: 'nowrap'}}
                       >
                         <i className="ri-external-link-line" style={{ marginRight: '8px' }}></i>
-                        View Details
+                        View Source
                       </button>
                     </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'center', 
+              alignItems: 'center',
+              gap: '12px',
+              marginTop: '40px'
+            }}>
+              <button
+                onClick={() => fetchInsights(currentPage - 1)}
+                disabled={currentPage === 1}
+                style={{
+                  padding: '10px 16px',
+                  backgroundColor: currentPage === 1 ? '#e5e7eb' : '#3b82f6',
+                  color: currentPage === 1 ? '#9ca3af' : '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: currentPage === 1 ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                <i className="ri-arrow-left-s-line"></i>
+                Previous
+              </button>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                  <button
+                    key={page}
+                    onClick={() => fetchInsights(page)}
+                    style={{
+                      padding: '10px 14px',
+                      backgroundColor: currentPage === page ? '#3b82f6' : '#f3f4f6',
+                      color: currentPage === page ? '#ffffff' : '#374151',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      minWidth: '40px'
+                    }}
+                  >
+                    {page}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={() => fetchInsights(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                style={{
+                  padding: '10px 16px',
+                  backgroundColor: currentPage === totalPages ? '#e5e7eb' : '#3b82f6',
+                  color: currentPage === totalPages ? '#9ca3af' : '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: currentPage === totalPages ? 'not-allowed' : 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                Next
+                <i className="ri-arrow-right-s-line"></i>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -845,15 +777,10 @@ export default function DashboardInsights() {
       )}
 
       {/* Share Modal */}
-      {showShareModal && (
+      {showShareModal && selectedInsight && (
         <>
           <div 
-            style={{ 
-              position: 'fixed', 
-              inset: 0, 
-              backgroundColor: 'rgba(0, 0, 0, 0.5)', 
-              zIndex: 40 
-            }}
+            style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 40 }}
             onClick={() => setShowShareModal(false)}
           />
           <div style={{ 
@@ -869,22 +796,11 @@ export default function DashboardInsights() {
             width: '90%',
             maxWidth: '400px'
           }}>
-            <h3 style={{ 
-              fontSize: '18px', 
-              fontWeight: 'bold', 
-              color: '#111827', 
-              marginBottom: '16px',
-              textAlign: 'center'
-            }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: '#111827', marginBottom: '16px', textAlign: 'center' }}>
               Share Insight
             </h3>
             
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(2, 1fr)', 
-              gap: '12px', 
-              marginBottom: '16px' 
-            }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '16px' }}>
               <button
                 onClick={() => shareToSocialMedia('twitter')}
                 style={{ 
@@ -1008,7 +924,7 @@ export default function DashboardInsights() {
         </>
       )}
 
-      <style jsx>{`
+      <style>{`
         @keyframes slideIn {
           from {
             transform: translateX(100%);
@@ -1023,4 +939,3 @@ export default function DashboardInsights() {
     </div>
   );
 }
-

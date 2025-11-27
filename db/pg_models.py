@@ -34,13 +34,17 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     total_chops = total_chops = Column(Integer, default=0)
-    reading_chops = Column(Integer, default=0)
-    sharing_chops = Column(Integer, default=0)
+    alert_reading_chops = Column(Integer, default=0)
+    alert_sharing_chops = Column(Integer, default=0)
+    insight_reading_chops = Column(Integer, default=0)
+    insight_sharing_chops = Column(Integer, default=0)
     referral_chops = Column(Integer, default=0)
     referral_count = Column(Integer, default=0)
     is_admin = Column(Boolean, default=False)
     subscription_status = Column(String, default="Free")
     subscription_plan = Column(String, nullable=True)
+    referral_code = Column(String, unique=True, index=True)
+    referrer_code = Column(String, nullable=True)
 
     '''Interaction with the subscriptions table'''
     subscriptions = relationship("Subscriptions", back_populates="user")
@@ -49,10 +53,16 @@ class User(Base):
     tickets = relationship("Ticket", back_populates="user")
 
     '''Interaction with the alerts table'''
-    alerts = relationship("UserAlert", back_populates="user")
+    user_alerts = relationship("UserAlert", back_populates="user")
+
+    '''Interaction with the insights table'''
+    user_insights = relationship("UserInsight", back_populates="user")
+
+    '''Interaction to check pinned insights'''
+    pinned_insights = relationship("UserPinnedInsight", back_populates = "user")
 
     '''Interaction with the referrals table'''
-    referrals = relationship("Referral", back_populates="referrer")
+    referrals = relationship("Referral", foreign_keys="[Referral.referrer_id]", back_populates="referrer")
 
 
 class AITool(Base):
@@ -203,8 +213,10 @@ class UserResponse(BaseModel):
     email: str
     subscription_status: str
     total_chops: int
-    reading_chops: int
-    sharing_chops: int
+    alert_reading_chops: int
+    alert_sharing_chops: int
+    insight_reading_chops: int
+    insight_sharing_chops: int
     referral_chops: int
     referral_count: int
 
@@ -528,7 +540,7 @@ class UnreadCountResponse(BaseModel):
     reviews_with_unread: int
 
 
-'''Opportunity Alert Tables'''
+'''Opportunity Alert Tables and Schema'''
 class Alert(Base):
     __tablename__ = "alerts"
     
@@ -580,13 +592,13 @@ class Referral(Base):
     chops_awarded = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
+    referrer = relationship("User", foreign_keys="[Referral.referrer_id]", back_populates="referrals")
 
 class UserCreate(BaseModel):
-    username: str
+    name: str
     email: str
     subscription_status: str = "free"
-    referrer_username: Optional[str] = None
+    referrer_name: Optional[str] = None
 
 class AlertCreate(BaseModel):
     title: str
@@ -628,9 +640,111 @@ class ShareAlertRequest(BaseModel):
     user_id: int
     alert_id: int
 
+
+'''Insights Tables and Schema'''
+class Insight(Base):
+    __tablename__ = "insights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    category = Column(String)
+    read_time = Column(String)
+    date = Column(String, nullable=False)
+    source = Column(String)
+    what_changed = Column(Text)
+    why_it_matters = Column(Text)
+    action_to_take = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+    total_views = Column(Integer, default=0)
+    total_shares = Column(Integer, default=0)
+
+    user_insights = relationship("UserInsight", back_populates="insight")
+
+
+class UserInsight(Base):
+    __tablename__ = "user_insights"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    insight_id = Column(Integer, ForeignKey("insights.id"))
+    has_viewed = Column(Boolean, default=False)
+    has_shared = Column(Boolean, default=False)
+    is_attended = Column(Boolean, default=False)
+    viewed_at = Column(DateTime, nullable=True)
+    shared_at = Column(DateTime, nullable=True)
+    chops_earned_from_view = Column(Integer, default=0)
+    chops_earned_from_share = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    user = relationship("User", back_populates="user_insights")
+    insight = relationship("Insight", back_populates="user_insights")
+
+
+class UserPinnedInsight(Base):
+    __tablename__ = "user_pinned_insights"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    insight_id = Column(Integer, ForeignKey("insights.id"))
+    pinned_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="pinned_insights")
+
+
+class InsightItems(BaseModel):
+    id: int
+    title: str
+    category: str
+    read_time: str
+    time_remaining: str
+    why_changed: str
+    why_it_matters: str
+    action_to_take: str
+    source: Optional[str]
+    date: str
+    total_views: int
+    total_shares: int
+    has_viewed: bool = False
+    has_shared: bool = False
+    is_attended: bool = False
+    is_pinned: bool = False
+    class Config:
+        from_attributes = True
+
+
+class InsightResponse(BaseModel):
+    insights: List[InsightItems]
+    current_page: int
+    total_pages: int
+    total_insights: int
+    is_pro: bool
+class InsightCreate(BaseModel):
+    title: str
+    category: str
+    read_time: str
+    what_changed: str
+    why_it_matters: str
+    action_to_take: str
+    source: Optional[str] = None
+    date: str
+class ViewInsightRequest(BaseModel):
+    insight_id: int
+
+class ShareInsightRequest(BaseModel):
+    insight_id: int
+    
+    class Config:
+        extra = "ignore"
+
+class PinInsightRequest(BaseModel):
+    insight_id: int
+
 class ChopsBreakdown(BaseModel):
     total_chops: int
-    reading_chops: int
-    sharing_chops: int
+    alert_reading_chops: int
+    alert_sharing_chops: int
+    insight_reading_chops: int
+    insight_sharing_chops: int
     referral_chops: int
     referral_count: int

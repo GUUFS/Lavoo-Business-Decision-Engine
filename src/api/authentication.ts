@@ -4,6 +4,7 @@ import { toast } from "react-toastify";
 import Cookies from "js-cookie";
 
 interface AuthResponse {
+  id: number;
   access_token: string;
   token_type?: string;
   refresh_token?: string;
