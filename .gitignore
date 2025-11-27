@@ -33,7 +33,7 @@ logs/
 # Environment variables
 .env.local
 .env.production
-
+.env
 
 # Data and models
 ai/data/*.csv
@@ -58,3 +58,4 @@ Thumbs.db
 # Testing
 coverage/
 ai/cache/
+.env
