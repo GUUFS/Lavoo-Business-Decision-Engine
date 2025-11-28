@@ -158,7 +158,7 @@ def get_insights(
                 "read_time": insight.read_time,
                 "date": insight.date,
                 "source": insight.source,
-                "image": insight.image if hasattr(insight, 'image') else "",  # Add default image
+
                 "what_changed": insight.what_changed,
                 "why_it_matters": insight.why_it_matters,
                 "action_to_take": insight.action_to_take,
@@ -340,7 +340,7 @@ def view_insight( request: ViewInsightRequest, current_user = Depends(get_curren
             db.commit()
             
             return {
-                "message": "Alert viewed successfully",
+                "message": "Insight viewed successfully",
                 "chops_earned": chops_to_award,
                 "total_chops": user.total_chops,
                 "insight_sharing_chops": user.insight_sharing_chops,  # ← ADD THIS

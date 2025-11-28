@@ -619,54 +619,44 @@ export default function DashboardInsights() {
                     </div>
                     
                     {/* Action Buttons */}
-                    <div style={{ display: 'flex', flexDirection: window.innerWidth >= 640 ? 'row' : 'column', gap: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr', gap: '16px', marginTop: '8px'}}>
+                      {/* Read Status Button */}
                       <button
-                        style={getButtonStyle(insight)}
+                        style={{
+                          ...getButtonStyle(insight), height: '52px', minWidth: '0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        title={getButtonText(insight)} // Tooltip on long text
                       >
                         {getReadingStatus(insight) === 'read' && (
-                          <i className="ri-check-line" style={{ marginRight: '8px' }}></i>
+                          <i className="ri-check-line" style={{ marginRight: '8px', fontSize: '16px' }}></i>
+                        )}
+                        {getReadingStatus(insight) === 'reading' && (
+                          <i className="ri-time-line" style={{ marginRight: '8px', fontSize: '16px' }}></i>
                         )}
                         {getButtonText(insight)}
                       </button>
-                      
-                      <button
-                        onClick={() => handleShare(insight)}
-                        style={{ 
-                          flex: 1,
-                          backgroundColor: insight.is_shared ? '#10b981' : '#3b82f6', 
-                          color: '#ffffff', 
-                          padding: '12px', 
-                          borderRadius: '8px', 
-                          border: 'none', 
-                          fontSize: '14px', 
-                          fontWeight: '600', 
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          transition: 'background-color 0.3s ease',
-                          whiteSpace: 'nowrap',
-                          minWidth: '200px'
-                        }}
+
+                      {/* Share Button */}
+                      <button onClick={() => handleShare(insight)}
+                        style={{ height: '52px', backgroundColor: insight.is_shared ? '#10b981' : '#3b82f6', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', whiteSpace: 'nowrap', transition: 'all 0.3s ease'}}
                       >
-                        <i className={insight.is_shared ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px' }}></i>
+                        <i className={insight.is_shared ? 'ri-check-line' : 'ri-share-line'}></i>
                         {insight.is_shared ? 'Shared' : `Share (+${userStats.is_pro ? 10 : 5} chops)`}
                       </button>
 
-                      <button
-                        onClick={() => togglePin(insight.id)}
-                        style={{ backgroundColor: insight.is_pinned ? '#fef3c7' : '#f3f4f6', color: insight.is_pinned ? '#92400e' : '#374151', padding: '12px 20px', borderRadius: '8px',border: 'none', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.3s ease', whiteSpace: 'nowrap'}}
+                      {/* Pin Button */}
+                      <button onClick={() => togglePin(insight.id)}
+                        style={{ height: '52px', backgroundColor: insight.is_pinned ? '#fef3c7' : '#f3f4f6', color: insight.is_pinned ? '#92400e' : '#374151', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.3s ease'}}
                       >
-                        <i className={insight.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'} style={{ marginRight: '8px' }}></i>
+                        <i className={insight.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'}></i>
                         {insight.is_pinned ? 'Unpin' : 'Pin'}
                       </button>
-                      
-                      <button
-                        onClick={() => window.open(insight.source, '_blank')}
-                        style={{ backgroundColor: '#f3f4f6', color: '#374151',  padding: '12px 20px',borderRadius: '8px', border: 'none', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex',alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.3s ease', whiteSpace: 'nowrap'}}
+
+                      {/* View Source Button */}
+                      <button onClick={() => window.open(insight.source, '_blank')}
+                        style={{ height: '52px', backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.3s ease'}}
                       >
-                        <i className="ri-external-link-line" style={{ marginRight: '8px' }}></i>
-                        View Source
+                        <i className="ri-external-link-line"></i>
+                        View Details
                       </button>
                     </div>
                   </div>

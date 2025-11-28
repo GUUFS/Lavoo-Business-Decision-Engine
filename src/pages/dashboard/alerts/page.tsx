@@ -104,6 +104,7 @@ interface Alert {
     is_attended: boolean;
     total_views: number;
     total_shares: number; 
+    is_pinned: boolean;
 }
 
 interface AlertStats {
@@ -145,6 +146,7 @@ export default function AlertsPage() {
         total_alerts: 0,
         unattended_count: 0
     });
+    const [pinnedAlerts, setPinnedAlerts] = useState<Set<number>>(new Set());
 
     const ALERTS_PER_PAGE = 5;
     const FREE_USER_ALERT_LIMIT = 3;
@@ -279,16 +281,19 @@ export default function AlertsPage() {
             const viewed = new Set<string>();
             const shared = new Set<string>();
             const attended = new Set<number>();
+            const pinned = new Set<number>();
             
             alertsData.forEach((alert: Alert) => {
                 if (alert.has_viewed) viewed.add(alert.id.toString());
                 if (alert.has_shared) shared.add(alert.id.toString());
                 if (alert.is_attended) attended.add(alert.id);
+                if (alert.is_pinned) pinned.add(alert.id);
             });
             
             setViewedAlerts(viewed);
             setSharedAlerts(shared);
             setAttendedAlerts(attended);
+            setPinnedAlerts(pinned);
             console.log(`✅ FETCH_ALERTS: ${alertsData.length} alerts loaded.`);
 
         } catch (error) {
@@ -327,6 +332,55 @@ export default function AlertsPage() {
         } catch (error) {
             console.error('❌ FETCH_STATS: Error fetching alert stats:', error);
             throw error;
+        }
+    };
+
+    const handlePinAlert = async (alertId: number) => {
+        const currentUserId = userId;
+        if (currentUserId === null) {
+            console.error('❌ ACTION_PIN: User ID is null. Cannot pin alert.');
+            showToastNotification('Error: User session invalid. Please refresh.');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/alerts/pin`, {
+                method: 'POST',
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ alert_id: alertId })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Update local state
+                const newPinnedAlerts = new Set(pinnedAlerts);
+                if (data.is_pinned) {
+                    newPinnedAlerts.add(alertId);
+                    showToastNotification('Alert pinned to top!');
+                } else {
+                    newPinnedAlerts.delete(alertId);
+                    showToastNotification('Alert unpinned');
+                }
+                setPinnedAlerts(newPinnedAlerts);
+
+                // Update the alerts list to reflect pinned status
+                setAlerts(prevAlerts => 
+                    prevAlerts.map(alert => 
+                        alert.id === alertId 
+                            ? { ...alert, is_pinned: data.is_pinned }
+                            : alert
+                    )
+                );
+
+                console.log(`✅ ACTION_PIN: Alert ${alertId} ${data.is_pinned ? 'pinned' : 'unpinned'}.`);
+            } else {
+                console.error(`❌ ACTION_PIN: Failed to toggle pin. Status: ${response.status}`);
+                showToastNotification('Error toggling pin status');
+            }
+        } catch (error) {
+            console.error('❌ ACTION_PIN: Error toggling pin:', error);
+            showToastNotification('Error toggling pin status');
         }
     };
 
@@ -550,15 +604,32 @@ export default function AlertsPage() {
     const startIndex = (currentPage - 1) * ALERTS_PER_PAGE;
     const endIndex = startIndex + ALERTS_PER_PAGE;
     
-    let displayedAlerts: Alert[] = [];
-    let hasMoreAlerts = false;
-    
-    if (isPro) {
-        displayedAlerts = alerts.slice(startIndex, endIndex);
-    } else {
-        displayedAlerts = alerts.slice(0, FREE_USER_ALERT_LIMIT);
-        hasMoreAlerts = alerts.length > FREE_USER_ALERT_LIMIT;
+    let sortedAlerts = [...alerts];
+
+// Sort: pinned first, then by attended status, then newest first
+sortedAlerts.sort((a, b) => {
+    // Pinned alerts come first
+    if (a.is_pinned !== b.is_pinned) {
+        return a.is_pinned ? -1 : 1;
     }
+    // Then unattended alerts
+    if (a.is_attended !== b.is_attended) {
+        return a.is_attended ? 1 : -1;
+    }
+    // Then by date (newest first)
+    return new Date(b.date).getTime() - new Date(a.date).getTime();
+});
+
+let displayedAlerts: Alert[] = [];
+let hasMoreAlerts = false;
+
+if (isPro) {
+    displayedAlerts = sortedAlerts.slice(startIndex, endIndex);
+} else {
+    displayedAlerts = sortedAlerts.slice(0, FREE_USER_ALERT_LIMIT);
+    hasMoreAlerts = sortedAlerts.length > FREE_USER_ALERT_LIMIT;
+}
+
 
     // --- RENDERING (UNCHANGED) ---
 
@@ -662,11 +733,32 @@ export default function AlertsPage() {
                     {displayedAlerts.map((alert: Alert) => (
                         <div key={alert.id} style={{ 
                             backgroundColor: '#ffffff', borderRadius: '16px', padding: viewportWidth >= 768 ? '32px' : '20px',
-                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                            border: attendedAlerts.has(alert.id) ? '2px solid #10b981' : '1px solid #e5e7eb'
+                            boxShadow: alert.is_pinned ?'0 8px 16px -1px rgba(249, 115, 22, 0.3)' : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                            border: alert.is_pinned ? '2px solid #f97316' : attendedAlerts.has(alert.id) ? '2px solid #10b981' : '1px solid #e5e7eb', position: 'relative'
                         }}>
+                            {/* Pin indicator badge */}
+        {alert.is_pinned && (
+            <div style={{ 
+                position: 'absolute', 
+                top: '16px', 
+                right: '16px',
+                backgroundColor: '#fff7ed',
+                color: '#ea580c',
+                padding: '6px 12px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                boxShadow: '0 2px 4px rgba(249, 115, 22, 0.2)'
+            }}>
+                <i className="ri-pushpin-fill" style={{ fontSize: '14px' }}></i>
+                Pinned
+            </div>
+        )}
                             {/* Header */}
-                            <div style={{ display: 'flex', flexDirection: viewportWidth >= 768 ? 'row' : 'column', justifyContent: 'space-between', marginBottom: '20px', gap: '16px' }}>
+                            <div style={{ display: 'flex', flexDirection: viewportWidth >= 768 ? 'row' : 'column', justifyContent: 'space-between', marginBottom: '20px', gap: '16px', paddingRight: alert.is_pinned ? '90px' : '0' }}>
                                 <div style={{ flex: 1 }}>
                                     <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
                                         <span style={{ backgroundColor: getScoreBgColor(alert.score), color: getScoreColor(alert.score), padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '700' }}>
@@ -683,11 +775,36 @@ export default function AlertsPage() {
                                         {alert.title}
                                     </h2>
                                 </div>
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                
                                 {attendedAlerts.has(alert.id) && (
-                                    <div style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '10px 18px', borderRadius: '24px', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <div style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '10px 18px', borderRadius: '24px', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                                         <i className="ri-check-line"></i>Attended
                                     </div>
                                 )}
+                                {/* Pin Button */}
+                                <button 
+                    onClick={() => handlePinAlert(alert.id)}
+                    style={{ 
+                        backgroundColor: alert.is_pinned ? '#fff7ed' : '#f9fafb',
+                        color: alert.is_pinned ? '#ea580c' : '#6b7280',
+                        border: alert.is_pinned ? '2px solid #f97316' : '1px solid #d1d5db',
+                        padding: '10px',
+                        borderRadius: '12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '44px',
+                        height: '44px',
+                        transition: 'all 0.2s',
+                        fontSize: '18px'
+                    }}
+                    title={alert.is_pinned ? 'Unpin alert' : 'Pin alert to top'}
+                >
+                    <i className={alert.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'}></i>
+                </button>
+                </div>
                             </div>
 
                             {/* Content */}

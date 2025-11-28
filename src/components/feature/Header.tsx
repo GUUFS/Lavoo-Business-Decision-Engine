@@ -75,7 +75,7 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
                 <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
               </div>
               <span className="text-lg sm:text-xl font-bold text-black">
-                AItugo+
+                Lavoo
               </span>
             </div>
             )}

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from db.pg_connections import get_db
 from db.pg_models import (User, Alert, Referral, UserAlert, UserResponse, UserCreate, AlertResponse, AlertCreate,
-                            ViewAlertRequest, ShareAlertRequest, ChopsBreakdown)
+                            ViewAlertRequest, ShareAlertRequest, ChopsBreakdown, PinAlertRequest, UserPinnedAlert)
 from api.routes.login import get_current_user
 
 from typing import Optional, List
@@ -103,6 +103,15 @@ def get_alerts(
     
     alerts = query.order_by(Alert.created_at.desc()).offset(skip).limit(limit).all()
     
+    # Get all pinned alerts for this user
+    pinned_alert_ids = set(
+        db.query(UserPinnedAlert.alert_id)
+        .filter(UserPinnedAlert.user_id == user_id)
+        .all()
+    )
+
+    pinned_alert_ids = {pid[0] for pid in pinned_alert_ids}
+
     # Always include user interaction data when authenticated
     result = []
     for alert in alerts:
@@ -132,10 +141,14 @@ def get_alerts(
             "total_shares": alert.total_shares,
             "has_viewed": user_alert.has_viewed if user_alert else False,
             "has_shared": user_alert.has_shared if user_alert else False,
-            "is_attended": is_attended
+            "is_attended": is_attended,
+            "is_pinned": alert.id in pinned_alert_ids
         }
         result.append(AlertResponse(**alert_dict))
     
+    # Sort: pinned alerts first, then by created_at
+    result.sort(key=lambda x: (not x.is_pinned, alerts[[a.id for a in alerts].index(x.id)].created_at), reverse=True)
+
     return result
 
 
@@ -377,6 +390,45 @@ def get_user_alert_stats(user_id: int, db: Session = Depends(get_db)):
         "unattended_count": unattended_count
     }
 
+
+@router.post("/api/alerts/pin")
+def pin_alert(
+    request: PinAlertRequest, 
+    current_user = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """Pin or unpin an alert"""
+    user = current_user["user"]
+    
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    # Verify alert exists
+    alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    
+    # Check if already pinned (fix the column name here)
+    existing = db.query(UserPinnedAlert).filter(
+        UserPinnedAlert.user_id == user.id,
+        UserPinnedAlert.alert_id == request.alert_id  # Fixed: was alert_id_id
+    ).first()
+    
+    if existing:
+        # Unpin
+        db.delete(existing)
+        db.commit()
+        return {"message": "Alert unpinned", "is_pinned": False}
+    
+    # Pin
+    pinned_record = UserPinnedAlert(
+        user_id=user.id,
+        alert_id=request.alert_id
+    )
+    db.add(pinned_record)
+    db.commit()
+    
+    return {"message": "Alert pinned", "is_pinned": True}
 
 # Health check
 @router.get("/")

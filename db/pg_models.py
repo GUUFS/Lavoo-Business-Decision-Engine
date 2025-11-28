@@ -61,6 +61,9 @@ class User(Base):
     '''Interaction to check pinned insights'''
     pinned_insights = relationship("UserPinnedInsight", back_populates = "user")
 
+    '''Interaction to check pinned alerts'''
+    pinned_alerts = relationship("UserPinnedAlert", back_populates="user")
+    
     '''Interaction with the referrals table'''
     referrals = relationship("Referral", foreign_keys="[Referral.referrer_id]", back_populates="referrer")
 
@@ -629,6 +632,8 @@ class AlertResponse(BaseModel):
     has_viewed: bool = False
     has_shared: bool = False
     is_attended: bool = False
+    is_pinned: bool = False
+    
     class Config:
         from_attributes = True
 
@@ -692,6 +697,16 @@ class UserPinnedInsight(Base):
     user = relationship("User", back_populates="pinned_insights")
 
 
+class UserPinnedAlert(Base):
+    __tablename__ = "user_pinned_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    alert_id = Column(Integer, ForeignKey("alerts.id"))
+    pinned_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="pinned_alerts")
+
 class InsightItems(BaseModel):
     id: int
     title: str
@@ -719,6 +734,8 @@ class InsightResponse(BaseModel):
     total_pages: int
     total_insights: int
     is_pro: bool
+
+
 class InsightCreate(BaseModel):
     title: str
     category: str
@@ -728,8 +745,11 @@ class InsightCreate(BaseModel):
     action_to_take: str
     source: Optional[str] = None
     date: str
+
+
 class ViewInsightRequest(BaseModel):
     insight_id: int
+
 
 class ShareInsightRequest(BaseModel):
     insight_id: int
@@ -737,8 +757,14 @@ class ShareInsightRequest(BaseModel):
     class Config:
         extra = "ignore"
 
+
 class PinInsightRequest(BaseModel):
     insight_id: int
+
+
+class PinAlertRequest(BaseModel):
+    alert_id: int
+
 
 class ChopsBreakdown(BaseModel):
     total_chops: int
