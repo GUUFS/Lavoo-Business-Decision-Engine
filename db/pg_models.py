@@ -65,7 +65,8 @@ class User(Base):
     pinned_alerts = relationship("UserPinnedAlert", back_populates="user")
     
     '''Interaction with the referrals table'''
-    referrals = relationship("Referral", foreign_keys="[Referral.referrer_id]", back_populates="referrer")
+    referrals = relationship("Referral", foreign_keys="Referral.referrer_id", back_populates="referrer")
+    referred_by = relationship("Referral", foreign_keys="Referral.referred_user_id", back_populates="referred_user")
 
 
 class AITool(Base):
@@ -222,6 +223,7 @@ class UserResponse(BaseModel):
     insight_sharing_chops: int
     referral_chops: int
     referral_count: int
+    referral_code: str
 
 
 class AIToolBase(BaseModel):
@@ -324,6 +326,8 @@ class AuthResponse(BaseModel):
     role: str
     subscription_status: str | None = None
     subscription_plan: str | None = None
+    referral_code: str
+
 
 # Paypal payment gateway
 class CreateOrderRequest(BaseModel):
@@ -590,12 +594,42 @@ class Referral(Base):
     __tablename__ = "referrals"
     
     id = Column(Integer, primary_key=True, index=True)
-    referrer_id = Column(Integer, ForeignKey("users.id"))
-    referred_user_id = Column(Integer, ForeignKey("users.id"))
+    referrer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    referred_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     chops_awarded = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    referrer = relationship("User", foreign_keys="[Referral.referrer_id]", back_populates="referrals")
+    referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
+    referred_user = relationship("User",foreign_keys=[referred_user_id], back_populates="referred_by")
+
+class ReferralResponse(BaseModel):
+    id: int
+    referred_user_id: int
+    referred_user_email: str
+    referred_user_name: str
+    chops_awarded: int
+    created_at: str
+    is_active: bool
+    
+    class Config:
+        from_attributes = True
+        
+class ReferralStats(BaseModel):
+    total_referrals: int
+    total_chops_earned: int
+    referrals_this_month: int
+    recent_referrals: List[dict]
+    
+    class Config:
+        from_attributes = True
+
+
+class ReferralCreate(BaseModel):
+    referred_user_id: int
+    chops_awarded: int = 0
+    
+    class Config:
+        from_attributes = True
 
 class UserCreate(BaseModel):
     name: str
@@ -638,11 +672,9 @@ class AlertResponse(BaseModel):
         from_attributes = True
 
 class ViewAlertRequest(BaseModel):
-    user_id: int
     alert_id: int
 
 class ShareAlertRequest(BaseModel):
-    user_id: int
     alert_id: int
 
 

@@ -12,7 +12,6 @@ interface Insight {
   read_time: string;
   date: string;
   source: string;
-  image: string;
   what_changed: string;
   why_it_matters: string;
   action_to_take: string;
@@ -32,10 +31,16 @@ interface UserStats {
   viewed_insight_chops: number;
 }
 
+const FREE_USER_LIMIT = 3;
+
 export default function DashboardInsights() {
   const { data: user } = useCurrentUser();
+  const referral_code = user?.referral_code || null;
+ 
+
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [insights, setInsights] = useState<Insight[]>([]);
+  const [displayInsights, setDisplayInsights] = useState<Insight[]>([]);
   const [userStats, setUserStats] = useState<UserStats>({
     total_chops: 0,
     is_pro: false,
@@ -59,6 +64,7 @@ export default function DashboardInsights() {
   const insightRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const observerRef = useRef<IntersectionObserver | null>(null);
 
+  
   // Fetch insights from backend
   const fetchInsights = async (page: number = 1) => {
     try {
@@ -74,6 +80,13 @@ export default function DashboardInsights() {
       
       // Ensure insights is always an array
       const insightsData = response.data.insights || [];
+      const isProUser = response.data.is_pro || false;
+
+      const insightsToDisplay = isProUser 
+        ? insightsData 
+        : insightsData.slice(0, FREE_USER_LIMIT);
+
+      setDisplayInsights(insightsToDisplay)
       setInsights(insightsData);
       setCurrentPage(response.data.current_page || 1);
       setTotalPages(response.data.total_pages || 1);
@@ -221,42 +234,37 @@ export default function DashboardInsights() {
     }
   };
 
-  // Setup Intersection Observer for reading detection
+
   useEffect(() => {
-    observerRef.current = new IntersectionObserver(
+    const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          const insightId = parseInt(entry.target.getAttribute('data-insight-id') || '0');
+          const insightId = parseInt(entry.target.getAttribute('data-insight-id') || '0', 10);
           const insight = insights.find(i => i.id === insightId);
-          
           if (!insight || insight.is_read) return;
 
           if (entry.isIntersecting && entry.intersectionRatio >= 0.8) {
-            // Insight is fully visible (80% threshold)
             setVisibleInsights(prev => new Set(prev).add(insightId));
-            
-            // Start 10-second timer if not already started
+
             if (!readingTimers[insightId]) {
               const timer = setTimeout(() => {
                 markAsRead(insightId);
-                // Clear timer
                 setReadingTimers(prev => {
                   const newTimers = { ...prev };
                   delete newTimers[insightId];
                   return newTimers;
                 });
-              }, 10000); // 10 seconds
-              
+              }, 10000);
+
               setReadingTimers(prev => ({ ...prev, [insightId]: timer }));
             }
           } else {
-            // Insight is not fully visible, clear timer
             setVisibleInsights(prev => {
               const newSet = new Set(prev);
               newSet.delete(insightId);
               return newSet;
             });
-            
+
             if (readingTimers[insightId]) {
               clearTimeout(readingTimers[insightId]);
               setReadingTimers(prev => {
@@ -270,37 +278,42 @@ export default function DashboardInsights() {
       },
       {
         threshold: [0, 0.5, 0.8, 1.0],
-        rootMargin: '0px'
+        rootMargin: '0px 0px -100px 0px', // Optional: trigger a bit earlier
       }
     );
 
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-      // Clear all timers on unmount
-      Object.values(readingTimers).forEach(timer => clearTimeout(timer));
-    };
-  }, [insights, readingTimers]);
-
-  // Observe insight elements
-  useEffect(() => {
-    Object.values(insightRefs.current).forEach((ref) => {
-      if (ref && observerRef.current) {
-        observerRef.current.observe(ref);
-      }
+    const insightsToObserve = displayInsights.map(i => insightRefs.current[i.id]).filter(Boolean) as HTMLDivElement[];
+    insightsToObserve.forEach(el => {
+      if (el) observer.observe(el);
     });
 
+    // Observe all CURRENTLY rendered insight elements
+    const currentElements = Object.values(insightRefs.current).filter(Boolean);
+    currentElements.forEach(el => {
+      if (el) observer.observe(el);
+    });
+
+    // Save observer for cleanup
+    observerRef.current = observer;
+
+    // Cleanup: unobserve all + clear timers
     return () => {
-      if (observerRef.current) {
-        Object.values(insightRefs.current).forEach((ref) => {
-          if (ref) {
-            observerRef.current?.unobserve(ref);
-          }
-        });
-      }
+      insightsToObserve.forEach(el => {
+        if (el) observer.unobserve(el);
+      });
+      // currentElements.forEach(el => {
+        // if (el) observer.unobserve(el);
+      //  });
+      Object.values(readingTimers).forEach(clearTimeout);
     };
-  }, [insights]);
+  }, [displayInsights, insights, readingTimers]); // Critical: re-run when insights change
+
+  useEffect(() => {
+    return () => {
+      Object.values(readingTimers).forEach(clearTimeout);
+      setReadingTimers({});
+    };
+  }, []);
 
   // Initial load
   useEffect(() => {
@@ -323,9 +336,7 @@ export default function DashboardInsights() {
 
   const shareToSocialMedia = async (platform: Platform) => {
     if (!selectedInsight) return;
-    
-    const userName = 'John Doe'; // Get from user context
-    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
+    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(referral_code)}`;
     const insightUrl = `${referralLink}&insight=${selectedInsight.id}`;
     const text = `Check out this business insight: ${selectedInsight.title}`;
     
@@ -356,9 +367,7 @@ export default function DashboardInsights() {
 
   const copyLink = async () => {
     if (!selectedInsight) return;
-    
-    const userName = 'John Doe';
-    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
+    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(referral_code)}`;
     const insightUrl = `${referralLink}&insight=${selectedInsight.id}`;
     
     await navigator.clipboard.writeText(insightUrl);
@@ -513,18 +522,10 @@ export default function DashboardInsights() {
               {insights.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '60px 24px', backgroundColor: '#ffffff', borderRadius: '16px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'  
                 }}>
-                  <i className="ri-lightbulb-line" style={{ 
-                    fontSize: '64px', 
-                    color: '#d1d5db',
-                    marginBottom: '16px',
-                    display: 'block'
-                  }}></i>
-                  <h3 style={{ 
-                    fontSize: '20px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    marginBottom: '8px'
-                  }}>
+                  <i className="ri-lightbulb-line" style={{ fontSize: '64px', color: '#d1d5db', marginBottom: '16px',display: 'block'
+               }}></i>
+                  <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', marginBottom: '8px'
+                 }}>
                     No Insights Available
                   </h3>
                   <p style={{ fontSize: '14px', color: '#6b7280' }}>
@@ -533,20 +534,17 @@ export default function DashboardInsights() {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                  {insights.map((insight) => (
+                  {displayInsights.map((insight) => (
                 <div 
                   key={insight.id}
-                  ref={(el) => (insightRefs.current[insight.id] = el)}
+                  ref={(el) => {
+                                  if (el) insightRefs.current[insight.id] = el;
+                                  else delete insightRefs.current[insight.id];
+                                }}
                   data-insight-id={insight.id}
                   style={{ 
-                    backgroundColor: '#ffffff', 
-                    borderRadius: '16px', 
-                    overflow: 'hidden', 
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                    transition: 'box-shadow 0.3s ease',
-                    position: 'relative',
-                    border: insight.is_pinned ? '2px solid #f59e0b' : 'none'
-                  }}
+                    backgroundColor: '#ffffff', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', transition: 'box-shadow 0.3s ease', position: 'relative', border: insight.is_pinned ? '2px solid #f59e0b' : 'none'
+                }}
                 >
                   {/* Pinned Badge */}
                   {insight.is_pinned && (
@@ -662,6 +660,40 @@ export default function DashboardInsights() {
                   </div>
                 </div>
                   ))}
+                  {!userStats.is_pro && insights.length > FREE_USER_LIMIT && (
+          <div style={{ 
+            textAlign: 'center', 
+            padding: '40px 24px', 
+            backgroundColor: '#fff7ed', 
+            borderRadius: '16px', 
+            border: '2px dashed #fb923c',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+            marginTop: '32px'
+          }}>
+            <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#c2410c', marginBottom: '12px' }}>
+              Unlock More Insights!
+            </h3>
+            <p style={{ fontSize: '16px', color: '#9a3412', marginBottom: '20px' }}>
+              You've viewed your first {FREE_USER_LIMIT} insights. Upgrade to Pro to access the full AI Insights Feed and earn up to 5x more Chops!
+            </p>
+            <button
+              onClick={() => showToastMessage('Upgrade functionality would go here!')} // Replace with actual upgrade link/modal logic
+              style={{
+                backgroundColor: '#f97316',
+                color: '#ffffff',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                border: 'none',
+                fontSize: '16px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                transition: 'background-color 0.3s ease',
+              }}
+            >
+              Go Pro Now!
+            </button>
+          </div>
+        )}
                 </div>
               )}
             </>

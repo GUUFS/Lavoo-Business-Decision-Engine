@@ -61,6 +61,7 @@ def me(access_token: str = Cookie(None), db: Session = Depends(get_db)):
         "subscription_status": user.subscription_status,
         "subscription_plan": user.subscription_plan,
         "role": role,
+        "referral_code": user.referral_code,
         "access_token": access_token,
         "token_type": "bearer"
     }
@@ -101,11 +102,13 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+
 def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 def get_current_user(authorization: Optional[str] = Header(None), access_token_cookie: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
     """
@@ -155,6 +158,7 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
         role: str = payload.get("role")
         email: str = payload.get("sub")
         user_id: int = payload.get("id")
+        referral_code: str = payload.get("referral_code")
         
         if email is None:
             raise credentials_exception
@@ -174,7 +178,7 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
     if user is None:
         raise credentials_exception
 
-    return {"user": user, "role": role}
+    return {"user": user, "role": role, "referral_code":referral_code}
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -230,7 +234,8 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
         "id": user.id,
         "name": user.name,
         "email": user.email,
-        "role": role
+        "role": role,
+        "referral_code": user.referral_code
     }
 
     

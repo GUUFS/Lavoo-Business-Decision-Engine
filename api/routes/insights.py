@@ -15,7 +15,7 @@ from typing import Optional, List
 router = APIRouter(prefix="/api", tags=["insights"])
 
 # Get current user (simplified - implement your auth)
-@router.get("/users/me")
+@router.get("/users/person")
 def get_current_user_route(current_user=Depends(get_current_user)):
     user = current_user["user"]  # extract actual user object
     if not user:
@@ -30,7 +30,8 @@ def get_current_user_route(current_user=Depends(get_current_user)):
         "insight_reading_chops": user.insight_reading_chops,
         "insight_sharing_chops": user.insight_sharing_chops,
         "referral_chops": user.referral_chops,
-        "referral_count": user.referral_count
+        "referral_count": user.referral_count,
+        "referral_code": user.referral_code
     }
 
 @router.get("/user/stats")
@@ -298,7 +299,7 @@ def view_insight( request: ViewInsightRequest, current_user = Depends(get_curren
         # Create new record
         user_insight = UserInsight(
             user_id=user.id,
-            insight_id=request.alert_id,
+            insight_id=request.insight_id,
             has_viewed=True,
             is_attended=True,
             viewed_at=datetime.utcnow()

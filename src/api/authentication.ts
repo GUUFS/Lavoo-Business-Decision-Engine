@@ -9,7 +9,6 @@ interface AuthResponse {
   token_type?: string;
   refresh_token?: string;
   role: "admin" | "user";
-  // data: string
 }
 
 interface LoginData {
@@ -20,7 +19,7 @@ interface LoginData {
 interface SignupData {
   email: string;
   password: string;
-  confirm_password:string;
+  confirm_password: string;
   name?: string;
 }
 
@@ -33,8 +32,8 @@ export const useAdmin = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(data),
-      });  
-      
+      });
+
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({}));
         const message =
@@ -44,9 +43,8 @@ export const useAdmin = () => {
       return response.json();
     },
     onSuccess: (data) => {
-      // Save token to cookies (15-minute expiry)
       Cookies.set("access_token", data.access_token, {
-        expires: 1 / 96, // 15 minutes = 1/96 of a day
+        expires: 1 / 96,
         secure: true,
         sameSite: "strict",
       });
@@ -57,8 +55,6 @@ export const useAdmin = () => {
     },
   });
 };
-
-
 
 export const useLogin = () => {
   return useMutation<AuthResponse, Error, LoginData>({
@@ -77,14 +73,12 @@ export const useLogin = () => {
           errorBody.detail || `Login failed with status ${response.status}`;
         throw new Error(message);
       }
-       return (await response.json()) as AuthResponse
-      // return response.json();
+      return (await response.json()) as AuthResponse;
     },
 
     onSuccess: (data) => {
-      // Save token to cookies (15-minute expiry)
       Cookies.set("access_token", data.access_token, {
-        expires: 1 / 96, // 15 minutes = 1/96 of a day
+        expires: 1 / 96,
         secure: true,
         sameSite: "strict",
       });
@@ -98,10 +92,23 @@ export const useLogin = () => {
   });
 };
 
+// ✅ FIXED: Use fetch instead of axios instance and correct endpoint
 export const useSignup = () => {
-  return useMutation<AuthResponse, Error, FormData>({
+  return useMutation<any, Error, FormData>({
     mutationFn: async (data) => {
-      const res = await instance.post<AuthResponse>("/api/signup", data);
-      return res.data;    },
+      const response = await fetch("http://localhost:8000/signup", {
+        method: "POST",
+        body: data, // Don't set Content-Type for FormData
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        const message =
+          errorBody.detail || `Signup failed with status ${response.status}`;
+        throw new Error(message);
+      }
+
+      return response.json();
+    },
   });
 };

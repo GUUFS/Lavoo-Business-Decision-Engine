@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
+
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -32,6 +34,9 @@ export default function SignUp() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  const [searchParams] = useSearchParams();
+  const referralCode = searchParams.get("ref");
+
   const {
     register,
     handleSubmit,
@@ -48,6 +53,15 @@ export default function SignUp() {
     payload.append("name", data.fullName);
     payload.append("confirm_password", data.confirmPassword);
 
+    if (referralCode) {
+      payload.append("referrer_code", referralCode);
+      console.log("DEBUG - Sending referral code:", referralCode);
+    }
+
+    console.log("🔍 DEBUG - FormData contents:");
+  for (let [key, value] of payload.entries()) {
+    console.log(`  ${key}:`, value);
+  }
     mutate(payload, {
       onSuccess: () => {
         toast.success("Account created successfully!");

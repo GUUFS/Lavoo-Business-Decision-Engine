@@ -409,7 +409,7 @@ export default function AlertsPage() {
                 const response = await fetch(`${API_BASE_URL}/api/alerts/view`, {
                     method: 'POST',
                     headers: getAuthHeaders(), // Used token-based headers
-                    body: JSON.stringify({ user_id: currentUserId, alert_id: alert.id })
+                    body: JSON.stringify({ alert_id: alert.id })
                 });
                 
                 if (response.ok) {
@@ -547,7 +547,7 @@ export default function AlertsPage() {
                 const response = await fetch(`${API_BASE_URL}/api/alerts/share`, {
                     method: 'POST',
                     headers: getAuthHeaders(), // Used token-based headers
-                    body: JSON.stringify({ user_id: currentUserId, alert_id: selectedAlert.id }) 
+                    body: JSON.stringify({ alert_id: selectedAlert.id }) 
                 });
                 
                 if (response.ok) {

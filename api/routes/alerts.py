@@ -194,10 +194,10 @@ def get_alert(alert_id: int, user_id: Optional[int] = None, db: Session = Depend
 
 
 @router.post("/api/alerts/view")
-def view_alert(request: ViewAlertRequest, db: Session = Depends(get_db)):
+def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """Mark alert as viewed and award chops if first time"""
     # Get user and alert
-    user = db.query(User).filter(User.id == request.user_id).first()
+    user = current_user["user"]
     alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
     
     if not user:
@@ -207,14 +207,14 @@ def view_alert(request: ViewAlertRequest, db: Session = Depends(get_db)):
     
     # Check if user_alert record exists
     user_alert = db.query(UserAlert).filter(
-        UserAlert.user_id == request.user_id,
+        UserAlert.user_id == user.id,
         UserAlert.alert_id == request.alert_id
     ).first()
     
     if not user_alert:
         # Create new record
         user_alert = UserAlert(
-            user_id=request.user_id,
+            user_id=user.id,
             alert_id=request.alert_id,
             has_viewed=True,
             is_attended=True,
@@ -271,10 +271,10 @@ def view_alert(request: ViewAlertRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/api/alerts/share")
-def share_alert(request: ShareAlertRequest, db: Session = Depends(get_db)):
+def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """Mark alert as shared and award chops if first time"""
     # Get user and alert
-    user = db.query(User).filter(User.id == request.user_id).first()
+    user = current_user["user"]
     alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
     
     if not user:
@@ -284,14 +284,14 @@ def share_alert(request: ShareAlertRequest, db: Session = Depends(get_db)):
     
     # Check if user_alert record exists
     user_alert = db.query(UserAlert).filter(
-        UserAlert.user_id == request.user_id,
+        UserAlert.user_id == user.id,
         UserAlert.alert_id == request.alert_id
     ).first()
     
     if not user_alert:
         # Create new record
         user_alert = UserAlert(
-            user_id=request.user_id,
+            user_id=user.id,
             alert_id=request.alert_id,
             has_shared=True,
             is_attended=True,  # Mark as attended when sharing
