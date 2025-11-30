@@ -8,6 +8,7 @@ export interface User {
   name?: string;
   subscription_status?: string;
   subscription_plan?: string;
+  referral_code?: string;
 }
 
 export const useCurrentUser = () => {

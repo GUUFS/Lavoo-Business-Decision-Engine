@@ -509,447 +509,1650 @@ export default function InsightsPage() {
 }
 
 
-upgrade page with paypal and flutterwave
+
+
+/// Default alerts page
 import { useState, useEffect } from 'react';
-import { useCurrentUser } from "./../../../api/user"; // Adjust path to your user.ts file
-import PayPalCheckout from './paypal';
-import FlutterwaveCheckout from './flutterwave';
+import { useNavigate } from 'react-router-dom';
 
-interface PayPalResponse {
-  paymentId: string;
-}
+export default function AlertsPage() {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedPriority, setSelectedPriority] = useState('all');
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [userPoints, setUserPoints] = useState(0);
+  const [sharedAlerts, setSharedAlerts] = useState(new Set());
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState(null);
+  const [isPremium] = useState(false); // This would come from user's subscription statuss
+  const navigate = useNavigate()
 
-interface FlutterwaveResponse {
-  transaction_id: string;
-}
-
-type PaymentResponse = PayPalResponse | FlutterwaveResponse;
-
-interface Feature {
-  icon: string;
-  title: string;
-  description: string;
-}
-
-// PayPal Logo Component
-const PayPalLogo = () => (
-  <svg viewBox="0 0 124 33" className="h-5 w-auto" fill="currentColor">
-    <path d="M46.211 6.749h-6.839a.95.95 0 0 0-.939.802l-2.766 17.537a.57.57 0 0 0 .564.658h3.265a.95.95 0 0 0 .939-.803l.746-4.73a.95.95 0 0 1 .938-.803h2.165c4.505 0 7.105-2.18 7.784-6.5.306-1.89.013-3.375-.872-4.415-.972-1.142-2.696-1.746-4.985-1.746zM47 13.154c-.374 2.454-2.249 2.454-4.062 2.454h-1.032l.724-4.583a.57.57 0 0 1 .563-.481h.473c1.235 0 2.4 0 3.002.704.359.42.469 1.044.332 1.906zM66.654 13.075h-3.275a.57.57 0 0 0-.563.481l-.145.916-.229-.332c-.709-1.029-2.29-1.373-3.868-1.373-3.619 0-6.71 2.741-7.312 6.586-.313 1.918.132 3.752 1.22 5.031.998 1.176 2.426 1.666 4.125 1.666 2.916 0 4.533-1.875 4.533-1.875l-.146.91a.57.57 0 0 0 .562.66h2.95a.95.95 0 0 0 .939-.803l1.77-11.209a.568.568 0 0 0-.561-.658zm-4.565 6.374c-.316 1.871-1.801 3.127-3.695 3.127-.951 0-1.711-.305-2.199-.883-.484-.574-.668-1.391-.514-2.301.295-1.855 1.805-3.152 3.67-3.152.93 0 1.686.309 2.184.892.499.589.697 1.411.554 2.317zM84.096 13.075h-3.291a.954.954 0 0 0-.787.417l-4.539 6.686-1.924-6.425a.953.953 0 0 0-.912-.678h-3.234a.57.57 0 0 0-.541.754l3.625 10.638-3.408 4.811a.57.57 0 0 0 .465.9h3.287a.949.949 0 0 0 .781-.408l10.946-15.8a.57.57 0 0 0-.468-.895z" fill="#003087"/>
-    <path d="M94.992 6.749h-6.84a.95.95 0 0 0-.938.802l-2.766 17.537a.569.569 0 0 0 .562.658h3.51a.665.665 0 0 0 .656-.562l.785-4.971a.95.95 0 0 1 .938-.803h2.164c4.506 0 7.105-2.18 7.785-6.5.307-1.89.012-3.375-.873-4.415-.971-1.142-2.694-1.746-4.983-1.746zm.789 6.405c-.373 2.454-2.248 2.454-4.062 2.454h-1.031l.725-4.583a.568.568 0 0 1 .562-.481h.473c1.234 0 2.4 0 3.002.704.359.42.468 1.044.331 1.906zM115.434 13.075h-3.273a.567.567 0 0 0-.562.481l-.145.916-.23-.332c-.709-1.029-2.289-1.373-3.867-1.373-3.619 0-6.709 2.741-7.311 6.586-.312 1.918.131 3.752 1.219 5.031 1 1.176 2.426 1.666 4.125 1.666 2.916 0 4.533-1.875 4.533-1.875l-.146.91a.57.57 0 0 0 .564.66h2.949a.95.95 0 0 0 .938-.803l1.771-11.209a.571.571 0 0 0-.565-.658zm-4.565 6.374c-.314 1.871-1.801 3.127-3.695 3.127-.949 0-1.711-.305-2.199-.883-.484-.574-.666-1.391-.514-2.301.297-1.855 1.805-3.152 3.67-3.152.93 0 1.686.309 2.184.892.501.589.699 1.411.554 2.317zM119.295 7.23l-2.807 17.858a.569.569 0 0 0 .562.658h2.822c.469 0 .867-.34.939-.803l2.768-17.536a.57.57 0 0 0-.562-.659h-3.16a.571.571 0 0 0-.562.482z" fill="#009cde"/>
-    <path d="M7.266 29.154l.523-3.322-1.165-.027H1.061L4.927 1.292a.316.316 0 0 1 .314-.268h9.38c3.114 0 5.263.648 6.385 1.927.526.6.861 1.227 1.023 1.917.17.724.173 1.589.007 2.644l-.012.077v.676l.526.298a3.69 3.69 0 0 1 1.065.812c.45.513.741 1.165.864 1.938.127.795.085 1.741-.123 2.812-.24 1.232-.628 2.305-1.152 3.183a6.547 6.547 0 0 1-1.825 2c-.696.494-1.523.869-2.458 1.109-.906.236-1.939.355-3.072.355h-.73c-.522 0-1.029.188-1.427.525a2.21 2.21 0 0 0-.744 1.328l-.055.299-.924 5.855-.042.215c-.011.068-.03.102-.058.125a.155.155 0 0 1-.096.035H7.266z" fill="#003087"/>
-    <path d="M23.048 7.667c-.028.179-.06.362-.096.55-1.237 6.351-5.469 8.545-10.874 8.545H9.326c-.661 0-1.218.48-1.321 1.132L6.596 26.83l-.399 2.533a.704.704 0 0 0 .695.814h4.881c.578 0 1.069-.42 1.16-.99l.048-.248.919-5.832.059-.32c.09-.572.582-.992 1.16-.992h.73c4.729 0 8.431-1.92 9.513-7.476.452-2.321.218-4.259-.978-5.622a4.667 4.667 0 0 0-1.336-1.03z" fill="#009cde"/>
-    <path d="M21.754 7.151a9.757 9.757 0 0 0-1.203-.267 15.284 15.284 0 0 0-2.426-.177h-7.352a1.172 1.172 0 0 0-1.159.992L8.05 17.605l-.045.289a1.336 1.336 0 0 1 1.321-1.132h2.752c5.405 0 9.637-2.195 10.874-8.545.037-.188.068-.371.096-.55a6.594 6.594 0 0 0-1.017-.429 9.045 9.045 0 0 0-.277-.087z" fill="#012169"/>
-  </svg>
-);
-
-// Flutterwave Logo Component
-const FlutterwaveLogo = () => (
-  <svg viewBox="0 0 200 40" className="h-7 w-auto" fill="none" xmlns="http://www.w3.org/2000/svg">
-    {/* Three interlocking swoosh shapes forming the Flutterwave icon */}
-    {/* <g> */}
-      {/* Orange/Yellow swoosh 1 */}
-      {/* <path d="M15 8C15 5 17 3 20 3C25 3 28 7 28 12C28 15 26 17 23 17L15 8Z" fill="#F5A623"/> */}
-      {/* Orange swoosh 2 */}
-      {/* <path d="M8 15C5 15 3 17 3 20C3 25 7 28 12 28C15 28 17 26 17 23L8 15Z" fill="#FFA726"/> */}
-      {/* Green swoosh 3 */}
-      {/* <path d="M23 17C26 17 28 19 28 22C28 27 24 30 19 30C16 30 14 28 14 25L23 17Z" fill="#54BA8C"/> */}
-    {/* </g> */}
-    
-    {/* Text "Flutterwave" */}
-    <g transform="translate(38, 12)">
-      <text x="0" y="10" fontFamily="Arial, sans-serif" fontSize="20" fontWeight="400" fill="#1A1A1A">
-        Flutter<tspan fontWeight="700">wave</tspan>
-      </text>
-    </g>
-  </svg>
-);
-
-export default function UpgradePage() {
-  const [isYearly, setIsYearly] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [showPaymentOptions, setShowPaymentOptions] = useState(false);
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'paypal' | 'flutterwave' | null>(null);
-
-  // Get authenticated user using your existing React Query hook
-  const { data: user, isLoading, isError } = useCurrentUser();
-
+  const [viewedAlerts, setViewedAlerts] = useState<Set<string>>(new Set());
+  const [viewportWidth, setViewportWidth] = useState(0);
+  
+  // Load saved data from localStorage
   useEffect(() => {
-    const timer = setTimeout(() => {
-      window.scrollTo(0, 0);
-    }, 0);
-    return () => clearTimeout(timer);
+    setViewportWidth(window.innerWidth);
+
+    const savedViewedAlerts = localStorage.getItem('viewedAlerts');
+    const savedSharedAlerts = localStorage.getItem('sharedAlerts');
+    const savedUserPoints = localStorage.getItem('userPoints');
+    
+    if (savedViewedAlerts) {
+      setViewedAlerts(new Set(JSON.parse(savedViewedAlerts)));
+    }
+    if (savedSharedAlerts) {
+      setSharedAlerts(new Set(JSON.parse(savedSharedAlerts)));
+    }
+    if (savedUserPoints) {
+      setUserPoints(parseInt(savedUserPoints));
+    }
+
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  useEffect(() => {
-    if (showPaymentOptions) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-  }, [showPaymentOptions]);
-
-  // Show loading state while fetching user
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-4">
-        <div className="text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Show login prompt if user is not authenticated
-  if (isError || !user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-4">
-        <div className="text-center max-w-md mx-auto bg-white p-8 rounded-2xl shadow-xl">
-          <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <span className="text-red-600 text-4xl">🔒</span>
-          </div>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-4">
-            Please Log In
-          </h1>
-          <p className="text-lg text-gray-600 mb-6">
-            You need to be logged in to upgrade your account.
-          </p>
-          <button
-            onClick={() => window.location.href = '/login'}
-            className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-6 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all"
-          >
-            Go to Login
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const userData = {
-    email: user.email,
-    name: user.name || 'User',
-    id: user.id
-  };
-
-  console.log('Logged-in user data:', userData);
-
-  const currentAmount = isYearly ? 290 : 29.95;
-  const planType = isYearly ? 'yearly' : 'monthly';
-
-  const handleUpgrade = () => {
-    setShowPaymentOptions(true);
-    setSelectedPaymentMethod(null);
-  };
-
-  const handlePaymentMethodSelect = (method: 'paypal' | 'flutterwave') => {
-    setSelectedPaymentMethod(method);
-  };
-
-  const handlePaymentSuccess = (response: PaymentResponse) => {
-    setIsProcessing(false);
-    setShowSuccess(true);
+  // Save data to localStorage
+  const saveToLocalStorage = (viewed: Set<string>, shared: Set<string>, points: number) => {
+    localStorage.setItem('viewedAlerts', JSON.stringify([...viewed]));
+    localStorage.setItem('sharedAlerts', JSON.stringify([...shared]));
+    localStorage.setItem('userPoints', points.toString());
     
-    setTimeout(() => {
-      alert('Redirecting to dashboard...');
-    }, 2000);
+    // Update earnings page progress
+    const currentEarningsPoints = parseInt(localStorage.getItem('earnedPoints') || '0');
+    const totalPoints = currentEarningsPoints + points;
+    localStorage.setItem('earnedPoints', totalPoints.toString());
+    
+    // Dispatch event to update earnings page
+    window.dispatchEvent(new CustomEvent('pointsUpdated', { 
+      detail: { points: totalPoints } 
+    }));
   };
 
-  const handlePaymentError = (error: string) => {
-    setIsProcessing(false);
-    alert(`Payment failed: ${error}. Please try again.`);
-  };
-
-  const features: Feature[] = [
+  const alerts = [
+    
     {
-      icon: '🔔',
-      title: 'Unlimited Opportunity Alerts',
-      description: 'Get access to all business opportunities and market insights without any limits'
-    },
-    {
-      icon: '🧠',
-      title: 'Advanced AI Insights',
-      description: 'Deep AI analysis with predictive analytics and personalized recommendations'
-    },
-    {
-      icon: '🗺️',
-      title: 'Detailed Action Plans',
-      description: 'Step-by-step implementation guides with timelines and resource requirements'
-    },
-    {
-      icon: '⭐',
-      title: 'Priority Scoring System',
-      description: 'Advanced scoring algorithms to prioritize opportunities by potential ROI'
-    },
-    {
-      icon: '⏰',
-      title: 'Real-time Notifications',
-      description: 'Instant alerts for time-sensitive opportunities and market changes'
-    },
-    {
-      icon: '🎧',
-      title: 'Premium Support',
-      description: '24/7 priority support with dedicated account manager and consultation calls'
+      id: 5,
+      title: "Competitor Pricing Strategy Shift",
+      category: "Competitive",
+      priority: "High",
+      score: 90,
+      timeRemaining: "4 days",
+      whyActNow: "Main competitor increased prices by 35% effective next week. Market research shows 40% of their customers are actively seeking alternatives. Perfect timing to capture market share.",
+      potentialReward: "Acquire 200-300 new customers within 60 days. Increase market share by 12%. Generate additional $180,000 in quarterly revenue.",
+      actionRequired: "Launch competitive pricing campaign highlighting value proposition. Create comparison chart showing cost savings. Offer limited-time migration incentive with 3 months free service.",
+      date: new Date().toISOString().split('T')[0]
     }
   ];
 
-  if (showSuccess) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-4">
-        <div className="text-center max-w-md mx-auto bg-white p-8 rounded-2xl shadow-xl">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <span className="text-green-600 text-4xl">✓</span>
-          </div>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-4">
-            Welcome to Pro!
-          </h1>
-          <p className="text-lg text-gray-600 mb-8">
-            Your upgrade was successful. You now have access to all pro features.
-          </p>
-          
-          {/* Updated section for the new button */}
-          <a 
-            href="/dashboard" /* Replace with your actual dashboard path if different */
-            className="inline-flex items-center justify-center px-8 py-3 
-                       border border-transparent text-base font-medium rounded-xl 
-                       text-white bg-orange-600 hover:bg-orange-700 
-                       shadow-lg transition duration-150 ease-in-out 
-                       transform hover:scale-105 active:scale-95 
-                       focus:outline-none focus:ring-4 focus:ring-orange-500 focus:ring-opacity-50"
-            role="button"
-          >
-            Enjoy Aitugo+
-            <svg className="ml-2 -mr-1 w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-              <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd"></path>
-            </svg>
-          </a>
-          
-        </div>
-      </div>
-    );
+  const MyComponent = () => {
+  // Declare state for attended alerts
+  const [attendedAlerts, setAttendedAlerts] = useState<Set<number>>(new Set());
+
+  // Function to mark an alert as attended
+  const markAsAttended = (alertId: number) => {
+    setAttendedAlerts(prev => new Set([...prev, alertId]));
+  };
+
+
+  const handleShare = (alert: any) => {
+    setSelectedAlert(alert);
+    setShowShareModal(true);
+  };
+
+  
+  const [sharedAlerts, setSharedAlerts] = useState<Set<string>>(new Set());
+  const [userPoints, setUserPoints] = useState<number>(0);
+
+  interface Alert {
+    id: number | string;
+    title: string;
+    category: string;
+    priority: string;
+    score: number;
+    timeRemaining: string;
+    whyActNow: string;
+    potentialReward: string;
+    actionRequired: string;
+    date: string;
   }
 
+  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+
+    // Award points only if not already viewed
+  const handleViewDetails = (alert: any) => {
+    markAsAttended(alert.id.toString());
+    if (!viewedAlerts.has(alert.id)) {
+      const pointsToAdd = isPremium ? 10 : 5;
+      const newUserPoints = userPoints + pointsToAdd;
+      const newViewedAlerts = new Set([...viewedAlerts, alert.id]);
+      
+      
+      setUserPoints(newUserPoints);
+      setViewedAlerts(newViewedAlerts);
+      saveToLocalStorage(newViewedAlerts, sharedAlerts, newUserPoints);
+      
+      setToastMessage(`You earned ${pointsToAdd} Chops for viewing this alert!`);
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    }
+    
+    if (alert.source && alert.source !== '#') {
+      window.open(alert.source, '_blank');
+    } else {
+      window.open('https://www.google.com/search?q=business+opportunities', '_blank');
+    }
+  };
+
+  type Platform = 'twitter' | 'facebook' | 'linkedin' | 'whatsapp';
+
+  const shareToSocialMedia = (platform: Platform) => {
+    if (!selectedAlert) return;
+
+    const userName = 'John Doe'; // This should come from user data
+    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
+    const alertUrl = `${referralLink}&alert=${selectedAlert!.id}`;
+    const text = `Check out this business opportunity: ${selectedAlert.title}`;
+    
+    let shareUrl = '';
+    
+    switch (platform) {
+      case 'twitter':
+        shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(alertUrl)}`;
+        break;
+      case 'facebook':
+        shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(alertUrl)}`;
+        break;
+      case 'linkedin':
+        shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(alertUrl)}`;
+        break;
+      case 'whatsapp':
+        shareUrl = `https://wa.me/?text=${encodeURIComponent(text + ' ' + alertUrl)}`;
+        break;
+    }
+    
+    if (shareUrl) {
+      window.open(shareUrl, '_blank');
+      awardSharingPoints();
+    }
+    
+    setShowShareModal(false);
+  };
+
+  const copyLink = () => {
+    if (!selectedAlert) return;
+    const userName = 'John Doe'; // This should come from user data
+    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
+    const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
+    navigator.clipboard.writeText(alertUrl);
+    awardSharingPoints();
+    setToastMessage('Link copied to clipboard!');
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+    setShowShareModal(false);
+  };
+
+  const awardSharingPoints = () => {
+    if (!selectedAlert) return;
+    const alertId = selectedAlert.id.toString();
+    // Award points only if not already shared
+    if (!sharedAlerts.has(alertId)) {
+      const pointsToAdd = isPremium ? 10 : 5;
+      const newUserPoints = userPoints + pointsToAdd;
+      const newSharedAlerts = new Set([...sharedAlerts, alertId]);
+      
+      setUserPoints(newUserPoints);
+      setSharedAlerts(newSharedAlerts);
+      saveToLocalStorage(viewedAlerts, newSharedAlerts, newUserPoints);
+      
+      if (!showToast) {
+        setToastMessage(`You earned ${pointsToAdd} points for sharing this alert!`);
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 3000);
+      }
+    }
+  };
+
+  const unattendedCount = alerts.length - attendedAlerts.size;
+
+
+  const getScoreBgColor = (score: any) => {
+    if (score >= 90) return '#dcfce7'; // Green bg
+    if (score >= 80) return '#fef3c7'; // Yellow bg
+    if (score >= 70) return '#fed7aa'; // Orange bg
+    return '#fecaca'; // Red bg
+  };
+
+
+  const getPriorityBgColor = (priority: any) => {
+    switch (priority) {
+      case 'High':
+        return '#fef2f2';
+      case 'Medium':
+        return '#fffbeb';
+      case 'Low':
+        return '#f0fdf4';
+      default:
+        return '#f9fafb';
+    }
+  };
+
+  const filteredAlerts = alerts.filter(alert => {
+    const categoryMatch = selectedCategory === 'all' || alert.category.toLowerCase() === selectedCategory;
+    const priorityMatch = selectedPriority === 'all' || alert.priority.toLowerCase() === selectedPriority;
+    return categoryMatch && priorityMatch;
+  });
+
+  // Show only first 2 alerts + premium upgrade alert if not premium
+  const displayedAlerts = isPremium ? filteredAlerts : filteredAlerts.slice(0, 2);
+  const hasMoreAlerts = !isPremium && filteredAlerts.length > 2;
+
+  const getScoreColor = (score: number) => {
+    if (score >= 90) return 'text-green-600 bg-green-50 border-green-200';
+    if (score >= 80) return 'text-blue-600 bg-blue-50 border-blue-200';
+    if (score >= 70) return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+    return 'text-red-600 bg-red-50 border-red-200';
+  };
+
+  
+  const getPriorityColor = (priority: string) => {
+    if (priority === 'High') return 'bg-red-100 text-red-800 border-red-200';
+    if (priority === 'Medium') return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    return 'bg-green-100 text-green-800 border-green-200';
+  };
+
+  const getCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'Market': return 'ri-line-chart-line';
+      case 'Content': return 'ri-article-line';
+      case 'Customer': return 'ri-user-heart-line';
+      case 'Technology': return 'ri-robot-line';
+      case 'Competitive': return 'ri-sword-line';
+      default: return 'ri-notification-line';
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8 min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-            Upgrade to Pro
-          </h1>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Unlock the full power of AI-driven business insights and take your strategy to the next level
-          </p>
+        <div className="mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Opportunity Alerts</h1>
+          <p className="text-sm sm:text-base text-gray-600">AI-powered opportunities to grow your business</p>
         </div>
 
-        {/* Pricing Section */}
-        <div className="mb-16">
-          {/* Billing Toggle */}
-          <div className="flex items-center justify-center mb-8">
-            <span className={`text-sm font-medium mr-3 transition-colors ${!isYearly ? 'text-gray-900' : 'text-gray-500'}`}>
-              Monthly
-            </span>
+        {/* Stats Overview */}
+        {/* Main Content */}
+        <div style={{  flex: 1, marginLeft: '0', display: 'flex', flexDirection: 'column'}}>
+        
+        {/* Header */}
+        <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
             <button
-              onClick={() => setIsYearly(!isYearly)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                isYearly ? 'bg-orange-600' : 'bg-gray-200'
-              }`}
+              style={{ 
+                display: window.innerWidth >= 768 ? 'none' : 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '40px',
+                height: '40px',
+                backgroundColor: 'transparent',
+                border: 'none',
+                borderRadius: '6px',
+                color: '#6b7280', cursor: 'pointer', marginRight: '16px' }}    
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                  isYearly ? 'translate-x-6' : 'translate-x-1'
-                }`}
-              />
+              <i className="ri-menu-line" style={{ fontSize: '20px' }}></i>
             </button>
-            <span className={`text-sm font-medium ml-3 transition-colors ${isYearly ? 'text-gray-900' : 'text-gray-500'}`}>
-              Yearly
-            </span>
-            {isYearly && (
-              <span className="ml-3 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                Save 17%
-              </span>
-            )}
+            <h1 style={{ 
+              fontSize: window.innerWidth >= 640 ? '24px' : '20px', fontWeight: 'bold', color: '#111827', margin: 0  
+            }}>Opportunity Alerts</h1>
           </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ 
+              backgroundColor: '#f3f4f6', 
+              padding: '8px 16px', 
+              borderRadius: '20px',
+              fontSize: '14px',
+              fontWeight: '500', color: '#374151', display: window.innerWidth >= 640 ? 'block' : 'none'
+            }}>
+              Chops: {userPoints}
+            </div>
+            <div style={{ backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', fontSize: '14px',
+              fontWeight: '500', color: '#374151', display: window.innerWidth >= 640 ? 'block' : 'none'  
+            }}>
+              {unattendedCount} unattended
+            </div>
+          </div>
+        </header>
 
-          {/* Pricing Card */}
-          <div className="max-w-lg mx-auto">
-            <div className="bg-white rounded-2xl shadow-xl border-2 border-orange-200 p-8 relative overflow-hidden">
-              <div className="absolute top-0 right-0 bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-1 text-xs font-semibold rounded-bl-lg">
-                MOST POPULAR
-              </div>
-              
-              <div className="text-center mb-6">
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Pro Plan</h3>
-                <div className="flex items-center justify-center mb-4">
-                  <span className="text-5xl font-bold text-gray-900">
-                    ${currentAmount}
-                  </span>
-                  <span className="text-lg text-gray-600 ml-2">
-                    /{isYearly ? 'year' : 'month'}
-                  </span>
+        {/* Content */}
+        <div style={{ flex: 1, padding: window.innerWidth >= 768 ? '24px' : '16px' }}>
+          {/* Summary Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr', gap: '16px',
+            marginBottom: '32px'}}>
+            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>Total Alerts</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>{alerts.length}</p>
                 </div>
-                {isYearly && (
-                  <p className="text-sm text-gray-500">
-                    <span className="line-through">$348/year</span>
-                    <span className="text-green-600 font-semibold"> - Save $58</span>
-                  </p>
-                )}
-              </div>
-
-              {!showPaymentOptions ? (
-                <button
-                  onClick={handleUpgrade}
-                  disabled={isProcessing}
-                  className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all ${
-                    isProcessing
-                      ? 'bg-gray-400 cursor-not-allowed'
-                      : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-600 hover:to-orange-700 transform hover:scale-105 shadow-lg'
-                  }`}
-                >
-                 Upgrade Now
-                </button>
-              ) : (
-                <div className="space-y-4">
-                  <h3 className="text-lg font-semibold text-gray-900 text-center mb-4">
-                    Choose Payment Method
-                  </h3>
-                  
-                  {/* Payment Method Tabs - Enhanced with Logos */}
-                  <div className="grid grid-cols-2 gap-3 mb-6">
-                    <button
-                      onClick={() => handlePaymentMethodSelect('paypal')}
-                      className={`group relative py-4 px-4 rounded-xl font-medium transition-all border-2 ${
-                        selectedPaymentMethod === 'paypal'
-                          ? 'bg-blue-50 border-blue-500 shadow-lg scale-105'
-                          : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-md'
-                      }`}
-                    >
-                      <div className="flex flex-col items-center gap-2">
-                        <div className={`transition-colors ${
-                          selectedPaymentMethod === 'paypal' ? 'text-blue-600' : 'text-gray-600 group-hover:text-blue-600'
-                        }`}>
-                          <PayPalLogo />
-                        </div>
-                        {selectedPaymentMethod === 'paypal' && (
-                          <div className="absolute top-2 right-2 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                            </svg>
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                    
-                    <button
-                      onClick={() => handlePaymentMethodSelect('flutterwave')}
-                      className={`group relative py-4 px-4 rounded-xl font-medium transition-all border-2 ${
-                        selectedPaymentMethod === 'flutterwave'
-                          ? 'bg-orange-50 border-orange-500 shadow-lg scale-105'
-                          : 'bg-white border-gray-200 hover:border-orange-300 hover:shadow-md'
-                      }`}
-                    >
-                      <div className="flex flex-col items-center gap-2">
-                        <div className={`transition-colors ${
-                          selectedPaymentMethod === 'flutterwave' ? 'text-orange-600' : 'text-gray-600 group-hover:text-orange-600'
-                        }`}>
-                          <FlutterwaveLogo />
-                        </div>
-                        {selectedPaymentMethod === 'flutterwave' && (
-                          <div className="absolute top-2 right-2 w-5 h-5 bg-orange-600 rounded-full flex items-center justify-center">
-                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                            </svg>
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  </div>
-
-                  {/* Payment Components */}
-                  <div className="min-h-[140px] bg-gray-50 rounded-xl p-6 border border-gray-200">
-                    {selectedPaymentMethod === 'paypal' && (
-                      <div key={`paypal-${currentAmount}`}>
-                        <PayPalCheckout
-                          amount={currentAmount}
-                          onSuccess={handlePaymentSuccess}
-                          onError={handlePaymentError}
-                        />
-                      </div>
-                    )}
-                    
-                    {selectedPaymentMethod === 'flutterwave' && (
-                      <div key={`flutterwave-${currentAmount}`}>
-                        <FlutterwaveCheckout
-                          amount={currentAmount}
-                          email={userData.email}
-                          name={userData.name}
-                          planType={planType}
-                          onSuccess={handlePaymentSuccess}
-                          onError={handlePaymentError}
-                        />
-                      </div>
-                    )}
-
-                    {!selectedPaymentMethod && (
-                      <div className="text-center py-8">
-                        <div className="text-4xl mb-3">🔒</div>
-                        <p className="text-gray-500 font-medium">Select a payment method above</p>
-                        <p className="text-sm text-gray-400 mt-1">Secure payment powered by industry leaders</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setShowPaymentOptions(false);
-                      setSelectedPaymentMethod(null);
-                    }}
-                    className="w-full py-3 px-4 text-gray-600 hover:text-gray-800 font-medium transition-colors rounded-lg hover:bg-gray-100"
-                  >
-                    ← Back to Plan Selection
-                  </button>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: '#dbeafe', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className="ri-notification-line" style={{ color: '#3b82f6', fontSize: '20px' }}></i>
                 </div>
-              )}
+              </div>
+            </div>
 
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
-                  <div className="flex items-center gap-1">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd"/>
-                    </svg>
-                    Secure Payment
-                  </div>
-                  <span>•</span>
-                  <div>30-day Money-back</div>
-                  <span>•</span>
-                  <div>Cancel Anytime</div>
+            <div style={{ 
+              backgroundColor: '#ffffff', 
+              padding: '20px', 
+              borderRadius: '12px', 
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>Points Earned</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>{userPoints}</p>
+                </div>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: '#fef3c7', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className="ri-star-line" style={{ color: '#f59e0b', fontSize: '20px' }}></i>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ 
+              backgroundColor: '#ffffff', 
+              padding: '20px', 
+              borderRadius: '12px', 
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>Attended</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>{attendedAlerts.size}</p>
+                </div>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: '#dcfce7', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className="ri-check-line" style={{ color: '#16a34a', fontSize: '20px' }}></i>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ 
+              backgroundColor: '#ffffff', 
+              padding: '20px', 
+              borderRadius: '12px', 
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <p style={{ 
+                    fontSize: '14px', 
+                    color: '#6b7280', 
+                    margin: '0 0 4px 0' 
+                  }}>User Type</p>
+                  <p style={{ 
+                    fontSize: '24px', 
+                    fontWeight: 'bold', 
+                    color: '#111827',
+                    margin: 0
+                  }}>{isPremium ? 'Premium' : 'Free'}</p>
+                </div>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  backgroundColor: isPremium ? '#f3e8ff' : '#f3f4f6', 
+                  borderRadius: '12px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center' 
+                }}>
+                  <i className={isPremium ? 'ri-vip-crown-line' : 'ri-user-line'} style={{ color: isPremium ? '#8b5cf6' : '#6b7280', fontSize: '20px' }}></i>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Features Grid */}
-        <div className="mb-16">
-          <h2 className="text-3xl font-bold text-gray-900 text-center mb-8">
-            Everything You Get with Pro
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feature, index) => (
-              <div key={index} className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
-                <div className="text-4xl mb-3">{feature.icon}</div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  {feature.title}
-                </h3>
-                <p className="text-gray-600 text-sm">
-                  {feature.description}
-                </p>
+          {/* Alerts List */}
+          <div style={{ 
+            display: 'flex', 
+            flexDirection: 'column', gap: '32px' }}>
+            {alerts.map((alert) => (
+              <div key={alert.id} style={{ 
+                backgroundColor: '#ffffff', 
+                borderRadius: '16px', 
+                padding: '32px', 
+                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                border: attendedAlerts.has(alert.id) ? '2px solid #10b981' : '1px solid #e5e7eb',
+                transition: 'all 0.3s ease'}}>
+                {/* Header Section */}
+                <div style={{ 
+                  display: 'flex', flexDirection: window.innerWidth >= 768 ? 'row' : 'column', alignItems: window.innerWidth >= 768 ? 'flex-start' : 'stretch',
+                  justifyContent: 'space-between', marginBottom: '24px',
+                  gap: '16px'}}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '12px', 
+                      marginBottom: '12px',
+                      flexWrap: 'wrap'}}>
+                      <span style={{ 
+                        backgroundColor: getScoreBgColor(alert.score),
+                        color: getScoreColor(alert.score),
+                        padding: '6px 16px', 
+                        borderRadius: '20px', 
+                        fontSize: '14px', 
+                        fontWeight: '700',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}>
+                        <i className="ri-star-fill" style={{ fontSize: '12px' }}></i>
+                        Score: {alert.score}
+                      </span>
+                      <span style={{ 
+                        backgroundColor: getPriorityBgColor(alert.priority),
+                        color: getPriorityColor(alert.priority),
+                        padding: '6px 16px', 
+                        borderRadius: '20px', 
+                        fontSize: '14px', 
+                        fontWeight: '600' 
+                      }}>
+                        {alert.priority} Priority
+                      </span>
+                      <span style={{ 
+                        backgroundColor: '#f3f4f6', 
+                        color: '#374151', 
+                        padding: '6px 16px', 
+                        borderRadius: '20px', 
+                        fontSize: '14px', 
+                        fontWeight: '500' 
+                      }}>
+                        {alert.category}
+                      </span>
+                      <span style={{ 
+                        fontSize: '14px', 
+                        color: '#6b7280',
+                        fontWeight: '500'
+                      }}>
+                        {alert.date}
+                      </span>
+                    </div>
+                    <h2 style={{ 
+                      fontSize: window.innerWidth >= 768 ? '24px' : '20px', 
+                      fontWeight: 'bold', 
+                      color: '#111827', 
+                      marginBottom: '0',
+                      lineHeight: '1.3'
+                    }}>
+                      {alert.title}
+                    </h2>
+                  </div>
+                  
+                  {attendedAlerts.has(alert.id) && (
+                    <div style={{ 
+                      backgroundColor: '#dcfce7', 
+                      color: '#16a34a', 
+                      padding: '12px 20px', 
+                      borderRadius: '24px', 
+                      fontSize: '14px', 
+                      fontWeight: '600',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      alignSelf: window.innerWidth >= 768 ? 'flex-start' : 'center'}}>
+                      <i className="ri-check-line" style={{ fontSize: '16px' }}></i>
+                      Attended
+                    </div>
+                  )}
+                </div>
+
+                {/* Content Sections */}
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(3, 1fr)' : '1fr',
+                  gap: '24px', 
+                  marginBottom: '32px' }}>
+                  {/* Why Act Now */}
+                  <div style={{ 
+                    backgroundColor: '#fef7ff', 
+                    padding: '20px', 
+                    borderRadius: '12px',
+                    border: '1px solid #e879f9'}}>
+                    <h3 style={{ 
+                      fontSize: '16px', 
+                      fontWeight: 'bold', 
+                      color: '#a21caf', 
+                      marginBottom: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <i className="ri-time-line" style={{ fontSize: '18px' }}></i>
+                      Why Act Now
+                    </h3>
+                    <p style={{ 
+                      fontSize: '14px', 
+                      color: '#4b5563', 
+                      lineHeight: '1.6',
+                      margin: 0
+                    }}>
+                      {alert.whyActNow}
+                    </p>
+                  </div>
+
+                  {/* Potential Reward */}
+                  <div style={{ 
+                    backgroundColor: '#f0fdf4', 
+                    padding: '20px', 
+                    borderRadius: '12px',
+                    border: '1px solid #22c55e'}}>
+                    <h3 style={{ 
+                      fontSize: '16px', 
+                      fontWeight: 'bold', 
+                      color: '#16a34a', 
+                      marginBottom: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <i className="ri-trophy-line" style={{ fontSize: '18px' }}></i>
+                      Potential Reward
+                    </h3>
+                    <p style={{ 
+                      fontSize: '14px', 
+                      color: '#4b5563', 
+                      lineHeight: '1.6',
+                      margin: 0
+                    }}>
+                      {alert.potentialReward}
+                    </p>
+                  </div>
+
+                  {/* Action Required */}
+                  <div style={{ 
+                    backgroundColor: '#fff7ed', 
+                    padding: '20px', 
+                    borderRadius: '12px',
+                    border: '1px solid #f97316',
+                    gridColumn: window.innerWidth >= 1024 ? 'auto' : '1 / -1'}}>
+                    <h3 style={{ 
+                      fontSize: '16px', 
+                      fontWeight: 'bold', 
+                      color: '#ea580c', 
+                      marginBottom: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <i className="ri-flashlight-line" style={{ fontSize: '18px' }}></i>
+                      Action Required
+                    </h3>
+                    <p style={{ 
+                      fontSize: '14px', 
+                      color: '#4b5563', 
+                      lineHeight: '1.6',
+                      margin: 0
+                    }}>
+                      {alert.actionRequired}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ 
+                  display: 'flex', 
+                  flexDirection: window.innerWidth >= 640 ? 'row' : 'column',
+                  gap: '16px', 
+                  paddingTop: '24px', 
+                  borderTop: '1px solid #e5e7eb' }}>
+                  <button 
+                    onClick={() => handleShare(alert)}
+                    style={{ 
+                      flex: 1,
+                      backgroundColor: sharedAlerts.has(alert.id.toString()) ? '#10b981' : '#f97316', 
+                      color: '#ffffff', padding: '14px 20px', borderRadius: '10px',  border: 'none', fontSize: '15px',
+                      fontWeight: '600', cursor: 'pointer', display: 'flex',alignItems: 'center',  justifyContent: 'center', transition: 'background-color 0.3s ease', whiteSpace: 'nowrap' }}        
+                    onMouseOver={(e : React.MouseEvent<HTMLButtonElement>) => 
+                      e.currentTarget.style.backgroundColor = sharedAlerts.has(alert.id.toString()) ? '#059669' : '#ea580c'}
+                    onMouseOut={(e : React.MouseEvent<HTMLButtonElement>) => 
+                      e.currentTarget.style.backgroundColor = sharedAlerts.has(alert.id.toString()) ? '#10b981' : '#f97316'}
+                  >
+                    <i className={sharedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px', fontSize: '16px' }}></i>
+                    {sharedAlerts.has(alert.id.toString()) ? 'Shared' : `Share (+${isPremium ? 10 : 5} points)`}
+                  </button>
+                  <button 
+                    onClick={() => handleViewDetails(alert)}
+                    style={{ 
+                      flex: 1,
+                      backgroundColor: viewedAlerts.has(alert.id.toString()) ? '#10b981' : 'transparent', 
+                      color: viewedAlerts.has(alert.id.toString()) ? '#ffffff' : '#6b7280',  padding: '14px 20px', 
+                      borderRadius: '10px', fontSize: '15px', fontWeight: '600',cursor: 'pointer', alignItems: 'center',
+                      justifyContent: 'center', transition: 'all 0.3s ease', whiteSpace: 'nowrap',
+                      display: 'flex', border: viewedAlerts.has(alert.id.toString()) ? 'none' : '2px solid #d1d5db',}}
+                    onMouseOver={(e) => {
+                      if (!viewedAlerts.has(alert.id.toString())) {
+                        e.currentTarget.style.backgroundColor = '#f9fafb';
+                        e.currentTarget.style.borderColor = '#9ca3af';
+                        e.currentTarget.style.color = '#374151';
+                      }
+                    }}
+                    onMouseOut={(e) => {
+                      if (!viewedAlerts.has(alert.id.toString())) {
+                        e.currentTarget.style.backgroundColor = 'transparent';
+                        e.currentTarget.style.borderColor = '#d1d5db';
+                        e.currentTarget.style.color = '#6b7280';
+                      }
+                    }}
+                  >
+                    <i className={viewedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-external-link-line'} style={{ marginRight: '8px', fontSize: '16px' }}></i>
+                    {viewedAlerts.has(alert.id.toString()) ? 'Viewed' : `View Details (+${isPremium ? 10 : 5} points)`}
+                  </button>
+                  <button style={{ 
+                    flex: 1, backgroundColor: 'transparent', color: '#6b7280',padding: '14px 20px', borderRadius: '10px', border: '2px solid #d1d5db', fontSize: '15px', fontWeight: '600',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s ease', whiteSpace: 'nowrap'}}
+                  onMouseOver={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f9fafb';
+                    e.currentTarget.style.borderColor = '#9ca3af';
+                    e.currentTarget.style.color = '#374151';
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                    e.currentTarget.style.borderColor = '#d1d5db';
+                    e.currentTarget.style.color = '#6b7280';
+                  }}>
+                    <i className="ri-time-line" style={{ marginRight: '8px', fontSize: '16px' }}></i>
+                    Remind Later
+                  </button>
+              </div>
               </div>
             ))}
           </div>
         </div>
+        </div>
+
+        {/* Toast Notification */}
+        {showToast && (
+        <div style={{ 
+          position: 'fixed', 
+          top: '24px', 
+          right: '24px', 
+          backgroundColor: '#f97316', 
+          color: '#ffffff', 
+          padding: '16px 20px', 
+          borderRadius: '8px', 
+          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', 
+          zIndex: 50,
+          display: 'flex',
+          alignItems: 'center',
+          maxWidth: window.innerWidth >= 640 ? '400px' : '90%',
+          animation: 'slideIn 0.3s ease-out'
+        }}>
+          <i className="ri-star-fill" style={{ marginRight: '8px', fontSize: '16px' }}></i>
+          {toastMessage}
+        </div>
+        )}
+
+        {/* Share Modal */}
+        {showShareModal && (
+        <>
+          <div 
+            style={{ position: 'fixed', inset: 0,backgroundColor: 'rgba(0, 0, 0, 0.5)',  zIndex: 40 }}
+            onClick={() => setShowShareModal(false)}
+          />
+          <div style={{ 
+            position: 'fixed', 
+            top: '50%', 
+            left: '50%', 
+            transform: 'translate(-50%, -50%)', 
+            backgroundColor: '#ffffff', 
+            borderRadius: '12px', 
+            padding: '24px', 
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', 
+            zIndex: 50,
+            width: '90%',
+            maxWidth: '400px'
+          }}>
+            <h3 style={{ 
+              fontSize: '18px', 
+              fontWeight: 'bold', 
+              color: '#111827', 
+              marginBottom: '16px',
+              textAlign: 'center'
+            }}>
+              Share Alert
+            </h3>
+            
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(2, 1fr)', 
+              gap: '12px', 
+              marginBottom: '16px' 
+            }}>
+              <button
+                onClick={() => shareToSocialMedia('twitter')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#1da1f2', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-twitter-fill" style={{ marginRight: '8px' }}></i>
+                Twitter
+              </button>
+              
+              <button
+                onClick={() => shareToSocialMedia('facebook')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#4267b2', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-facebook-fill" style={{ marginRight: '8px' }}></i>
+                Facebook
+              </button>
+              
+              <button
+                onClick={() => shareToSocialMedia('linkedin')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#0077b5', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-linkedin-fill" style={{ marginRight: '8px' }}></i>
+                LinkedIn
+              </button>
+              
+              <button
+                onClick={() => shareToSocialMedia('whatsapp')}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  backgroundColor: '#25d366', 
+                  color: '#ffffff', 
+                  borderRadius: '8px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '500'
+                }}
+              >
+                <i className="ri-whatsapp-fill" style={{ marginRight: '8px' }}></i>
+                WhatsApp
+              </button>
+            </div>
+            
+            <button
+              onClick={copyLink}
+              style={{ 
+                width: '100%', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                padding: '12px', 
+                backgroundColor: '#f3f4f6', 
+                color: '#374151', 
+                borderRadius: '8px', 
+                border: 'none', 
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500',
+                marginBottom: '16px'
+              }}
+            >
+              <i className="ri-file-copy-line" style={{ marginRight: '8px' }}></i>
+              Copy Link
+            </button>
+            
+            <button
+              onClick={() => setShowShareModal(false)}
+              style={{ 
+                width: '100%', 
+                padding: '12px', 
+                backgroundColor: 'transparent', 
+                color: '#6b7280', 
+                border: '1px solid #d1d5db', 
+                borderRadius: '8px', 
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '500'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+        )}
+        
+        {/* Premium Upgrade Alert */}
+        {hasMoreAlerts && (
+        <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              {/* Alert Header */}
+              <div className="p-4 sm:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3 sm:gap-4">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-orange-400 to-orange-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-vip-crown-line text-white text-lg sm:text-xl"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">
+                        {filteredAlerts.length - 2} More Pro Opportunities Available
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-orange-100 to-orange-200 text-orange-800 border border-orange-300">
+                          Pro Content
+                        </span>
+                        <span className="text-xs sm:text-sm text-gray-500">
+                          <i className="ri-lock-line mr-1"></i>
+                          Unlock with Pro
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <div className="px-3 py-2 rounded-lg border bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200 text-center">
+                      <div className="text-lg sm:text-xl font-bold text-orange-600">★</div>
+                      <div className="text-xs font-medium text-orange-600">Pro</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Premium Content */}
+              <div className="p-4 sm:p-6">
+                <div className="text-center py-8 sm:py-12">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <i className="ri-vip-crown-line text-white text-2xl sm:text-3xl"></i>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Unlock Pro Opportunities</h3>
+                  <p className="text-sm sm:text-base text-gray-600 mb-2 max-w-md mx-auto">
+                    Get access to high-value opportunities with detailed insights and action plans
+                  </p>
+                  <p className="text-xs sm:text-sm text-orange-600 font-medium mb-8">
+                    Pro members see 10x more opportunities on average
+                  </p>
+                  
+                  {/* Premium Features */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 max-w-2xl mx-auto">
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-eye-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">Full Alert Details</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-lightbulb-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">AI Insights</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
+                        <i className="ri-rocket-line text-orange-600"></i>
+                      </div>
+                      <p className="text-xs sm:text-sm font-medium text-gray-700">Action Plans</p>
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => navigate('/dashboard/upgrade')}
+                    className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-8 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all font-medium text-sm sm:text-base whitespace-nowrap shadow-lg cursor-pointer transform hover:scale-105"
+                  >
+                    Upgrade to Pro
+                  </button>
+                  <p className="text-xs text-gray-5	00 mt-3">Starting at $29.95/month • Cancel anytime</p>
+                </div>
+              </div>
+        </div>
+        )}
       </div>
+
+      {/* Show message if no alerts match filters */}
+      {displayedAlerts.length === 0 && !hasMoreAlerts && (
+      <div className="text-center py-12">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <i className="ri-notification-off-line text-gray-400 text-2xl"></i>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No alerts found</h3>
+            <p className="text-gray-600">Try adjusting your filters to see more opportunities.</p>
+      </div>
+      )}
     </div>
+  
   );
 }
+  
+  return <MyComponent />;
+}
 
-      
 
+
+// Prime debugged alerts pageimport { useState, useEffect } from 'react';
+
+// NOTE: The useNavigate hook from react-router-dom was imported but not used.
+// I will keep it commented out for now.
+// import { useNavigate } from 'react-router-dom'; 
+
+const API_BASE_URL = 'http://localhost:8000/api';
+
+// --- INTERFACES ---
+interface Alert {
+    id: number;
+    title: string;
+    source: string;
+    score: number;
+    priority: 'High' | 'Medium' | 'Low';
+    category: string;
+    time_remaining: string;
+    date: string | Date;
+    why_act_now: string;
+    potential_reward: string;
+    action_required: string;
+    has_viewed: boolean;
+    has_shared: boolean;
+    is_attended: boolean;
+    total_views: number;
+    total_shares: number; 
+}
+
+interface AlertStats {
+    total_alerts: number;
+    unattended_count: number;
+}
+
+type SocialPlatform = 'twitter' | 'facebook' | 'linkedin' | 'whatsapp';
+interface SocialButton {
+    name: string;
+    platform: SocialPlatform;
+    icon: string;
+    color: string;
+}
+
+// --- COMPONENT START ---
+
+export default function AlertsPage() {
+    const [showToast, setShowToast] = useState(false);
+    const [toastMessage, setToastMessage] = useState('');
+    const [userChops, setUserChops] = useState(0);
+    
+    // FIX 1: Explicitly type Sets to avoid 'any'
+    const [sharedAlerts, setSharedAlerts] = useState<Set<string>>(new Set());
+    const [viewedAlerts, setViewedAlerts] = useState<Set<string>>(new Set());
+    const [attendedAlerts, setAttendedAlerts] = useState<Set<number>>(new Set());
+    
+    const [showShareModal, setShowShareModal] = useState(false);
+    // FIX 2: Correctly type selectedAlert to accept Alert object or null
+    const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+    
+    const [subscriptionStatus, setSubscriptionStatus] = useState('free');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+    const [userId, setUserId] = useState<number | null>(null);
+    const [referralCount, setReferralCount] = useState(0);
+    
+    // FIX 3: Correctly type the alerts array state
+    const [alerts, setAlerts] = useState<Alert[]>([]);
+    
+    const [loading, setLoading] = useState(true);
+    const [readingChops, setReadingChops] = useState(0);
+    const [sharingChops, setSharingChops] = useState(0);
+    const [referralChops, setReferralChops] = useState(0);
+    const [alertStats, setAlertStats] = useState<AlertStats>({
+        total_alerts: 0,
+        unattended_count: 0
+    });
+
+    const ALERTS_PER_PAGE = 5;
+    const FREE_USER_ALERT_LIMIT = 3;
+    const isPro = subscriptionStatus === 'active';
+
+    // --- USE EFFECTS ---
+
+    useEffect(() => {
+        initializeData();
+        const handleResize = () => setViewportWidth(window.innerWidth);
+        window.addEventListener("resize", handleResize);
+        return () => window.removeEventListener("resize", handleResize);
+    }, []);
+
+    // --- DATA FETCHING & LOGIC ---
+
+    const initializeData = async () => {
+        try {
+            setLoading(true); // Start loading immediately
+            let storedUserId = localStorage.getItem('userId');
+            
+            if (!storedUserId) {
+                // No ID found locally. Redirect since login is required.
+                window.location.href = '/login';
+                return;
+            }
+            
+            const currentUserId = parseInt(storedUserId);
+            
+            // 1. Fetch user data (including subscription status and chops)
+            await fetchUserData(currentUserId);
+            
+            // 2. Set the userId state (important for other components/logic that might read it)
+            setUserId(currentUserId); 
+            
+            // 3. Fetch alert data and stats
+            await fetchAlerts(currentUserId);
+            await fetchAlertStats(currentUserId);
+
+        } catch (error) {
+            // If fetchUserData or any other critical fetch failed (e.g., 'Invalid user session')
+            console.error('Critical initialization error, redirecting to login:', error);
+            localStorage.removeItem('userId');
+            window.location.href = '/login';
+        } finally {
+            setLoading(false); // Stop loading regardless of success/failure
+        }
+    };
+
+    const fetchUserData = async (id: number) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/users/${id}`);
+            if (!response.ok) {
+                // If the user's local ID is rejected by the server, handle as broken session
+                throw new Error('Invalid user session');
+            }
+            const userData = await response.json();
+            setUserChops(userData.total_chops);
+            setSubscriptionStatus(userData.subscription_status);
+            setReferralCount(userData.referral_count);
+            setReadingChops(userData.reading_chops);
+            setSharingChops(userData.sharing_chops);
+            setReferralChops(userData.referral_chops);
+        } catch (error) {
+            console.error('Error fetching user data:', error);
+            throw error; // Re-throw to be caught by initializeData
+        }
+    };
+
+    const fetchAlerts = async (id: number) => {
+        try {
+            setLoading(true);
+            const response = await fetch(`${API_BASE_URL}/alerts/?user_id=${id}`);
+            if (response.ok) {
+                const alertsData: Alert[] = await response.json();
+                setAlerts(alertsData);
+                
+                // ... (rest of the logic for setting viewed/shared/attended Sets)
+                const viewed = new Set<string>();
+                const shared = new Set<string>();
+                const attended = new Set<number>();
+                
+                alertsData.forEach((alert: Alert) => {
+                    if (alert.has_viewed) viewed.add(alert.id.toString());
+                    if (alert.has_shared) shared.add(alert.id.toString());
+                    if (alert.is_attended) attended.add(alert.id);
+                });
+                
+                setViewedAlerts(viewed);
+                setSharedAlerts(shared);
+                setAttendedAlerts(attended);
+            }
+            setLoading(false);
+        } catch (error) {
+            console.error('Error fetching alerts:', error);
+            setLoading(false);
+            showToastNotification('Error loading alerts');
+            throw error;
+        }
+    };
+
+    const fetchAlertStats = async (id: number) => {
+        try {
+            const response = await fetch(`${API_BASE_URL}/users/${id}/alerts/stats`);
+            if (response.ok) {
+                const stats: AlertStats = await response.json();
+                setAlertStats(stats);
+            }
+        } catch (error) {
+            console.error('Error fetching alert stats:', error);
+            throw error;
+        }
+    };
+
+    const showToastNotification = (message: string) => {
+        setToastMessage(message);
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 3000);
+    };
+
+    const handleViewDetails = async (alert:Alert) => {
+        const alertId = alert.id.toString();
+        const newAttendedAlerts = new Set([...attendedAlerts, alert.id]);
+        setAttendedAlerts(newAttendedAlerts);
+        
+        // FIX: Check for null userId and assign to a non-null variable
+        const currentUserId = userId; 
+        if (currentUserId === null) {
+            console.error('User ID is null. Cannot record view or fetch data.');
+            showToastNotification('Error: User session invalid.');
+            return;
+        }
+
+        if (!viewedAlerts.has(alertId)) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/alerts/view`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: currentUserId, alert_id: alert.id })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    setUserChops(data.total_chops);
+                    setViewedAlerts(new Set([...viewedAlerts, alertId]));
+                    
+                    if (data.chops_earned > 0) {
+                        showToastNotification(`You earned ${data.chops_earned} Chops for viewing this alert!`);
+                        // FIX: Pass the non-null ID to the fetch functions
+                        await fetchUserData(currentUserId);
+                        await fetchAlertStats(currentUserId);
+                    }
+                }
+            } catch (error) {
+                console.error('Error viewing alert:', error);
+                showToastNotification('Error recording alert view');
+            }
+        }
+        
+        if (alert.source && alert.source !== '#') {
+            window.open(alert.source, '_blank');
+        } else {
+            window.open('https://www.google.com/search?q=business+opportunities', '_blank');
+        }
+    };
+
+    const handleShare = (alert: Alert) => {
+        setSelectedAlert(alert);
+        setShowShareModal(true);
+    };
+
+
+    const shareToSocialMedia = async (platform: SocialPlatform) => {
+        if (!selectedAlert) return;
+
+        // FIX: Check for null userId and assign to a non-null variable
+        const currentUserId = userId; 
+        if (currentUserId === null) {
+            console.error('User ID is null. Cannot share.');
+            showToastNotification('Error: User session invalid.');
+            return;
+        }
+
+        const userResponse = await fetch(`${API_BASE_URL}/users/${currentUserId}`); // Use checked ID
+        const userData = await userResponse.json();
+        const userName = userData.username;
+        
+        const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
+        const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
+        const text = `Check out this business opportunity: ${selectedAlert.title}`;
+        
+        let shareUrl = '';
+        
+        switch (platform) {
+            case 'twitter':
+                shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(alertUrl)}`;
+                break;
+            case 'facebook':
+                shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(alertUrl)}`;
+                break;
+            case 'linkedin':
+                shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(alertUrl)}`;
+                break;
+            case 'whatsapp':
+                shareUrl = `https://wa.me/?text=${encodeURIComponent(text + ' ' + alertUrl)}`;
+                break;
+        }
+        
+        if (shareUrl) {
+            window.open(shareUrl, '_blank');
+            await awardSharingPoints();
+        }
+        
+        setShowShareModal(false);
+    };
+
+    const copyLink = async () => {
+        if (!selectedAlert) return;
+        
+        // FIX: Check for null userId and assign to a non-null variable
+        const currentUserId = userId; 
+        if (currentUserId === null) {
+            console.error('User ID is null. Cannot copy link.');
+            showToastNotification('Error: User session invalid.');
+            return;
+        }
+        
+        const userResponse = await fetch(`${API_BASE_URL}/users/${currentUserId}`); // Use checked ID
+        const userData = await userResponse.json();
+        
+        const referralLink = `${window.location.origin}/signup?ref=$${userData.id}-${userData.referral_code}`;
+        const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
+        navigator.clipboard.writeText(alertUrl);
+        await awardSharingPoints();
+        showToastNotification('Link copied to clipboard!');
+        setShowShareModal(false);
+    };
+
+    const awardSharingPoints = async () => {
+        if (!selectedAlert) return;
+        
+        // FIX: Check for null userId and assign to a non-null variable
+        const currentUserId = userId; 
+        if (currentUserId === null) {
+            console.error('User ID is null. Cannot award sharing points.');
+            showToastNotification('Error: User session invalid.');
+            return;
+        }
+
+        const alertId = selectedAlert.id.toString();
+        
+        if (!sharedAlerts.has(alertId)) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/alerts/share`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // FIX: Use the non-null currentUserId
+                    body: JSON.stringify({ user_id: currentUserId, alert_id: selectedAlert.id }) 
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    setUserChops(data.total_chops);
+                    setSharedAlerts(new Set([...sharedAlerts, alertId]));
+                    
+                    if (data.chops_earned > 0) {
+                        showToastNotification(`You earned ${data.chops_earned} Chops for sharing this alert!`);
+                        // FIX: Pass the non-null ID to the fetch functions
+                        await fetchUserData(currentUserId); 
+                        await fetchAlertStats(currentUserId);
+                    }
+                }
+            } catch (error) {
+                console.error('Error sharing alert:', error);
+                showToastNotification('Error recording alert share');
+            }
+        }
+    };
+
+    // FIX 4: Use indexed access type for score
+    const getScoreBgColor = (score: Alert['score']) => {
+        if (score >= 90) return '#dcfce7';
+        if (score >= 80) return '#fef3c7';
+        if (score >= 70) return '#fed7aa';
+        return '#fecaca';
+    };
+
+    // FIX 5: Use indexed access type for priority
+    const getPriorityBgColor = (priority: Alert['priority']) => {
+        if (priority === 'High') return '#fef2f2';
+        if (priority === 'Medium') return '#fffbeb';
+        return '#f0fdf4';
+    };
+
+    // FIX 6: Use indexed access type for score
+    const getScoreColor = (score: Alert['score']) => {
+        if (score >= 90) return '#16a34a';
+        if (score >= 80) return '#3b82f6';
+        if (score >= 70) return '#f59e0b';
+        return '#ef4444';
+    };
+
+    // FIX 7: Use indexed access type for priority
+    const getPriorityColor = (priority: Alert['priority']) => {
+        if (priority === 'High') return '#dc2626';
+        if (priority === 'Medium') return '#f59e0b';
+        return '#16a34a';
+    };
+
+    const totalPages = Math.ceil(alerts.length / ALERTS_PER_PAGE);
+    const startIndex = (currentPage - 1) * ALERTS_PER_PAGE;
+    const endIndex = startIndex + ALERTS_PER_PAGE;
+    
+    // FIX 8: Explicitly type displayedAlerts
+    let displayedAlerts: Alert[] = [];
+    let hasMoreAlerts = false;
+    
+    if (isPro) {
+        displayedAlerts = alerts.slice(startIndex, endIndex);
+    } else {
+        displayedAlerts = alerts.slice(0, FREE_USER_ALERT_LIMIT);
+        hasMoreAlerts = alerts.length > FREE_USER_ALERT_LIMIT;
+    }
+
+    // --- RENDERING ---
+
+    if (loading) {
+        return (
+            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(to bottom right, #fff7ed, #ffffff)' }}>
+                <div style={{ textAlign: 'center' }}>
+                    <div style={{ 
+                        width: '48px', height: '48px', border: '4px solid #fed7aa', borderTop: '4px solid #f97316',
+                        borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite'
+                    }}></div>
+                    <p style={{ color: '#6b7280', fontSize: '16px' }}>Loading alerts...</p>
+                </div>
+                <style>{`
+                    @keyframes spin {
+                        to { transform: rotate(360deg); }
+                    }
+                `}</style>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ background: 'linear-gradient(to bottom right, #fff7ed, #ffffff)', minHeight: '100vh', padding: '16px' }}>
+            <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+                {/* Header */}
+                <header style={{ 
+                    backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '16px 24px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    borderRadius: '12px', marginBottom: '24px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+                }}>
+                    <h1 style={{ fontSize: viewportWidth >= 640 ? '24px' : '20px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+                        Opportunity Alerts
+                    </h1>
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ 
+                            backgroundColor: '#fff7ed', padding: '8px 16px', borderRadius: '20px',
+                            fontSize: '14px', fontWeight: '600', color: '#ea580c', display: 'flex', alignItems: 'center', gap: '6px'
+                        }}>
+                            <i className="ri-coin-line" style={{ fontSize: '16px' }}></i>
+                            {userChops} Chops
+                        </div>
+                        {viewportWidth >= 640 && (
+                            <div style={{ 
+                                backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px',
+                                fontSize: '14px', fontWeight: '500', color: '#374151'
+                            }}>
+                                {alertStats.unattended_count} unattended
+                            </div>
+                        )}
+                    </div>
+                </header>
+
+                {/* Summary Cards */}
+                <div style={{ 
+                    display: 'grid',
+                    gridTemplateColumns: viewportWidth >= 1024 ? 'repeat(5, 1fr)' : viewportWidth >= 640 ? 'repeat(2, 1fr)' : '1fr',
+                    gap: '16px', marginBottom: '32px'
+                }}>
+                    {[
+                        { label: 'Total Alerts', value: alertStats.total_alerts, icon: 'ri-notification-line', bg: '#dbeafe', color: '#3b82f6' },
+                        { label: 'Total Chops', value: userChops, icon: 'ri-coin-line', bg: '#fef3c7', color: '#f59e0b' },
+                        { label: 'Reading', value: readingChops, icon: 'ri-book-open-line', bg: '#e0e7ff', color: '#6366f1' },
+                        { label: 'Sharing', value: sharingChops, icon: 'ri-share-line', bg: '#dcfce7', color: '#16a34a' },
+                        { label: 'Referrals', value: referralCount, icon: 'ri-user-add-line', bg: subscriptionStatus === 'active' ? '#f3e8ff' : '#f3f4f6', color: subscriptionStatus === 'active' ? '#8b5cf6' : '#6b7280', sub: `+${referralChops} Chops` }
+                    ].map((card, idx) => (
+                        <div key={idx} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div>
+                                    <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>{card.label}</p>
+                                    <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>{card.value}</p>
+                                    {card.sub && <p style={{ fontSize: '12px', color: '#10b981', margin: '4px 0 0 0', fontWeight: '500' }}>{card.sub}</p>}
+                                </div>
+                                <div style={{ width: '48px', height: '48px', backgroundColor: card.bg, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <i className={card.icon} style={{ color: card.color, fontSize: '20px' }}></i>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Alerts List */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '32px' }}>
+                    {displayedAlerts.map((alert: Alert) => (
+                        <div key={alert.id} style={{ 
+                            backgroundColor: '#ffffff', borderRadius: '16px', padding: viewportWidth >= 768 ? '32px' : '20px',
+                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                            border: attendedAlerts.has(alert.id) ? '2px solid #10b981' : '1px solid #e5e7eb'
+                        }}>
+                            {/* Header */}
+                            <div style={{ display: 'flex', flexDirection: viewportWidth >= 768 ? 'row' : 'column', justifyContent: 'space-between', marginBottom: '20px', gap: '16px' }}>
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                                        <span style={{ backgroundColor: getScoreBgColor(alert.score), color: getScoreColor(alert.score), padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '700' }}>
+                                            <i className="ri-star-fill" style={{ fontSize: '12px', marginRight: '4px' }}></i>{alert.score}
+                                        </span>
+                                        <span style={{ backgroundColor: getPriorityBgColor(alert.priority), color: getPriorityColor(alert.priority), padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '600' }}>
+                                            {alert.priority}
+                                        </span>
+                                        <span style={{ backgroundColor: '#f3f4f6', color: '#374151', padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '500' }}>
+                                            {alert.category}
+                                        </span>
+                                    </div>
+                                    <h2 style={{ fontSize: viewportWidth >= 768 ? '22px' : '18px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
+                                        {alert.title}
+                                    </h2>
+                                </div>
+                                {attendedAlerts.has(alert.id) && (
+                                    <div style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '10px 18px', borderRadius: '24px', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <i className="ri-check-line"></i>Attended
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Content */}
+                            <div style={{ display: 'grid', gridTemplateColumns: viewportWidth >= 1024 ? 'repeat(3, 1fr)' : '1fr', gap: '20px', marginBottom: '24px' }}>
+                                {[
+                                    { title: 'Why Act Now', content: alert.why_act_now, bg: '#fef7ff', border: '#e879f9', color: '#a21caf', icon: 'ri-time-line' },
+                                    { title: 'Potential Reward', content: alert.potential_reward, bg: '#f0fdf4', border: '#22c55e', color: '#16a34a', icon: 'ri-trophy-line' },
+                                    { title: 'Action Required', content: alert.action_required, bg: '#fff7ed', border: '#f97316', color: '#ea580c', icon: 'ri-flashlight-line' }
+                                ].map((section, idx) => (
+                                    <div key={idx} style={{ backgroundColor: section.bg, padding: '18px', borderRadius: '12px', border: `1px solid ${section.border}`, gridColumn: idx === 2 && viewportWidth >= 1024 ? 'auto' : '1 / -1' }}>
+                                        <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: section.color, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <i className={section.icon}></i>{section.title}
+                                        </h3>
+                                        <p style={{ fontSize: '14px', color: '#4b5563', lineHeight: '1.6', margin: 0 }}>{section.content}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Buttons */}
+                            <div style={{ display: 'flex', flexDirection: viewportWidth >= 640 ? 'row' : 'column', gap: '16px', paddingTop: '24px', borderTop: '1px solid #e5e7eb' }}>
+                                <button onClick={() => handleShare(alert)} style={{ flex: 1, backgroundColor: sharedAlerts.has(alert.id.toString()) ? '#10b981' : '#f97316', color: '#fff', padding: '14px 20px', borderRadius: '10px', border: 'none', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <i className={sharedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px' }}></i>
+                                    {sharedAlerts.has(alert.id.toString()) ? 'Shared' : `Share (+${isPro ? 10 : 5} Chops)`}
+                                </button>
+                                <button onClick={() => handleViewDetails(alert)} style={{ flex: 1, backgroundColor: viewedAlerts.has(alert.id.toString()) ? '#10b981' : 'transparent', color: viewedAlerts.has(alert.id.toString()) ? '#fff' : '#6b7280', padding: '14px 20px', borderRadius: '10px', border: viewedAlerts.has(alert.id.toString()) ? 'none' : '2px solid #d1d5db', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <i className={viewedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-external-link-line'} style={{ marginRight: '8px' }}></i>
+                                    {viewedAlerts.has(alert.id.toString()) ? 'Viewed' : `View (+${isPro ? 5 : 1} Chops)`}
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Pagination for Premium Users */}
+                {isPro && totalPages > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '32px' }}>
+                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} style={{ padding: '8px 16px', backgroundColor: currentPage === 1 ? '#f3f4f6' : '#fff', color: currentPage === 1 ? '#9ca3af' : '#374151', border: '1px solid #e5e7eb', borderRadius: '8px', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}>
+                            Previous
+                        </button>
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                            <button key={page} onClick={() => setCurrentPage(page)} style={{ width: '40px', height: '40px', backgroundColor: currentPage === page ? '#f97316' : '#fff', color: currentPage === page ? '#fff' : '#374151', border: '1px solid #e5e7eb', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
+                                {page}
+                            </button>
+                        ))}
+                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} style={{ padding: '8px 16px', backgroundColor: currentPage === totalPages ? '#f3f4f6' : '#fff', color: currentPage === totalPages ? '#9ca3af' : '#374151', border: '1px solid #e5e7eb', borderRadius: '8px', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}>
+                            Next
+                        </button>
+                    </div>
+                )}
+
+                {/* Upgrade Prompt for Free Users */}
+                {hasMoreAlerts && (
+                    <div style={{ backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)', overflow: 'hidden', marginBottom: '32px' }}>
+                        <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb' }}>
+                            <div style={{ display: 'flex', gap: '16px' }}>
+                                <div style={{ width: '48px', height: '48px', background: 'linear-gradient(135deg, #fb923c, #ea580c)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <i className="ri-vip-crown-line" style={{ color: '#fff', fontSize: '24px' }}></i>
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}>
+                                        {alerts.length - FREE_USER_ALERT_LIMIT} More Pro Opportunities
+                                    </h3>
+                                    <p style={{ color: '#6b7280', margin: 0 }}>Upgrade to Pro to unlock all alerts</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div style={{ padding: '32px', textAlign: 'center' }}>
+                            <div style={{ width: '80px', height: '80px', background: 'linear-gradient(135deg, #fb923c, #ea580c)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+                                <i className="ri-vip-crown-line" style={{ color: '#fff', fontSize: '40px' }}></i>
+                            </div>
+                            <h3 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '12px' }}>Unlock Pro Opportunities</h3>
+                            <p style={{ color: '#6b7280', marginBottom: '32px' }}>Get 10x more opportunities with Pro</p>
+                            <button onClick={() => window.location.href = '/upgrade'} style={{ background: 'linear-gradient(to right, #f97316, #ea580c)', color: '#fff', padding: '14px 32px', borderRadius: '12px', border: 'none', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
+                                Upgrade to Pro
+                            </button>
+                            <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '12px' }}>$29.95/month • Cancel anytime</p>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* Toast */}
+            {showToast && (
+                <div style={{ position: 'fixed', top: '24px', right: '24px', backgroundColor: '#f97316', color: '#fff', padding: '16px 20px', borderRadius: '8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', zIndex: 50, animation: 'slideIn 0.3s ease' }}>
+                    <i className="ri-star-fill" style={{ marginRight: '8px' }}></i>{toastMessage}
+                </div>
+            )}
+
+            {/* Share Modal */}
+            {showShareModal && (
+                <>
+                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 40 }} onClick={() => setShowShareModal(false)} />
+                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', backgroundColor: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', zIndex: 50, width: '90%', maxWidth: '400px' }}>
+                        <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'center' }}>
+                            Share & Earn {isPro ? 10 : 5} Chops
+                        </h3>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '16px' }}>
+                            {/* FIX 9: Correctly wrap the array and map in parentheses for type assertion */}
+                            {([
+                                { name: 'Twitter', platform: 'twitter', icon: 'ri-twitter-fill', color: '#1da1f2' },
+                                { name: 'Facebook', platform: 'facebook', icon: 'ri-facebook-fill', color: '#4267b2' },
+                                { name: 'LinkedIn', platform: 'linkedin', icon: 'ri-linkedin-fill', color: '#0077b5' },
+                                { name: 'WhatsApp', platform: 'whatsapp', icon: 'ri-whatsapp-fill', color: '#25d366' }
+                            ] as SocialButton[]).map(social => (
+                                <button key={social.platform} onClick={() => shareToSocialMedia(social.platform)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px', backgroundColor: social.color, color: '#fff', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                                    <i className={social.icon} style={{ marginRight: '8px' }}></i>{social.name}
+                                </button>
+                            ))}
+                        </div>
+                        <button onClick={copyLink} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px', backgroundColor: '#f3f4f6', color: '#374151', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '500', marginBottom: '16px' }}>
+                            <i className="ri-file-copy-line" style={{ marginRight: '8px' }}></i>Copy Link
+                        </button>
+                        <button onClick={() => setShowShareModal(false)} style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
+                            Cancel
+                        </button>
+                    </div>
+                </>
+            )}
+
+            <style>{`
+                @keyframes slideIn {
+                    from {
+                        transform: translateX(100%);
+                        opacity: 0;
+                    }
+                    to {
+                        transform: translateX(0);
+                        opacity: 1;
+                    }
+                }
+                @keyframes spin {
+                    to { transform: rotate(360deg); }
+                }
+            `}</style>
+        </div>
+    );
+}

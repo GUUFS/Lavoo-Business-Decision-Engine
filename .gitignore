@@ -6,7 +6,25 @@ __pycache__/
 .Python
 venv/
 env/
+env/
 *.egg-info/
+*.egg
+.pytest_cache/
+*.db
+
+# Node.js / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+out/
+build/
+web/
 *.egg
 .pytest_cache/
 *.db
@@ -27,6 +45,13 @@ web/
 
 # Logs
 ai/logs/*.log
+*.log
+logs/
+
+# Environment variables
+.env.local
+.env.production
+.env
 *.log
 logs/
 

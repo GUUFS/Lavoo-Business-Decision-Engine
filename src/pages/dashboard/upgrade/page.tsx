@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useCurrentUser } from '../../../api/user';
+import { useCurrentUser } from "./../../../api/user";
 import PayPalCheckout from './paypal';
 import FlutterwaveCheckout from './flutterwave';
 import StripeCheckout from './stripe';
@@ -131,7 +131,7 @@ export default function UpgradePage() {
   const handlePaymentSuccess = (response: PaymentResponse) => {
     setIsProcessing(false);
     setShowSuccess(true);
-
+    
     setTimeout(() => {
       alert('Redirecting to dashboard...');
     }, 2000);
@@ -188,14 +188,14 @@ export default function UpgradePage() {
           <p className="text-lg text-gray-600 mb-8">
             Your upgrade was successful. You now have access to all pro features.
           </p>
-
-          <a
+          
+          <a 
             href="/dashboard"
-            className="inline-flex items-center justify-center px-8 py-3
-                       border border-transparent text-base font-medium rounded-xl
-                       text-white bg-orange-600 hover:bg-orange-700
-                       shadow-lg transition duration-150 ease-in-out
-                       transform hover:scale-105 active:scale-95
+            className="inline-flex items-center justify-center px-8 py-3 
+                       border border-transparent text-base font-medium rounded-xl 
+                       text-white bg-orange-600 hover:bg-orange-700 
+                       shadow-lg transition duration-150 ease-in-out 
+                       transform hover:scale-105 active:scale-95 
                        focus:outline-none focus:ring-4 focus:ring-orange-500 focus:ring-opacity-50"
             role="button"
           >
@@ -253,7 +253,7 @@ export default function UpgradePage() {
               <div className="absolute top-0 right-0 bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-1 text-xs font-semibold rounded-bl-lg">
                 MOST POPULAR
               </div>
-
+              
               <div className="text-center mb-6">
                 <h3 className="text-2xl font-bold text-gray-900 mb-2">Pro Plan</h3>
                 <div className="flex items-center justify-center mb-4">
@@ -289,7 +289,7 @@ export default function UpgradePage() {
                   <h3 className="text-lg font-semibold text-gray-900 text-center mb-4">
                     Choose Payment Method
                   </h3>
-
+                  
                   <div className="grid grid-cols-3 gap-3 mb-6">
                     {/* Stripe */}
                     <button
@@ -317,30 +317,30 @@ export default function UpgradePage() {
                     </button>
 
                     {/* PayPal */}
-                    <button
-                      onClick={() => handlePaymentMethodSelect('paypal')}
-                      className={`group relative py-4 px-3 rounded-xl font-medium transition-all border-2 ${
-                        selectedPaymentMethod === 'paypal'
-                          ? 'bg-blue-50 border-blue-500 shadow-lg scale-105'
-                          : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-md'
-                      }`}
-                    >
-                      <div className="flex flex-col items-center gap-2">
-                        <div className={`transition-colors ${
-                          selectedPaymentMethod === 'paypal' ? 'text-blue-600' : 'text-gray-600 group-hover:text-blue-600'
-                        }`}>
-                          <PayPalLogo />
-                        </div>
-                        {selectedPaymentMethod === 'paypal' && (
-                          <div className="absolute top-2 right-2 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center">
-                            <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                            </svg>
-                          </div>
-                        )}
-                      </div>
-                    </button>
-
+                    {/* <button */}
+                      {/* onClick={() => handlePaymentMethodSelect('paypal')} */}
+                      {/* className={`group relative py-4 px-3 rounded-xl font-medium transition-all border-2 ${ */}
+                        {/* selectedPaymentMethod === 'paypal' */}
+                          {/* ? 'bg-blue-50 border-blue-500 shadow-lg scale-105' */}
+                          {/* : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-md' */}
+                      {/* }`} */}
+                    {/* > */}
+                      {/* <div className="flex flex-col items-center gap-2"> */}
+                        {/* <div className={`transition-colors ${ */}
+                          {/* selectedPaymentMethod === 'paypal' ? 'text-blue-600' : 'text-gray-600 group-hover:text-blue-600' */}
+                        {/* }`}> */}
+                          {/* <PayPalLogo /> */}
+                        {/* </div> */}
+                        {/* {selectedPaymentMethod === 'paypal' && ( */}
+                          {/* <div className="absolute top-2 right-2 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center"> */}
+                            {/* <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20"> */}
+                              {/* <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/> */}
+                            {/* </svg> */}
+                          {/* </div> */}
+                        {/* )} */}
+                      {/* </div> */}
+                    {/* </button> */}
+                    
                     {/* Flutterwave */}
                     <button
                       onClick={() => handlePaymentMethodSelect('flutterwave')}
@@ -391,7 +391,7 @@ export default function UpgradePage() {
                         />
                       </div>
                     )}
-
+                    
                     {selectedPaymentMethod === 'flutterwave' && (
                       <div key={`flutterwave-${currentAmount}`}>
                         <FlutterwaveCheckout

@@ -223,7 +223,7 @@ export default function DashboardSidebar({  isMobileMenuOpen = false,
               <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
             </div>
             <span className="text-lg sm:text-xl font-bold text-black">
-              AItugo+
+              Lavoo
             </span>
           </div>
             // <h2 className="text-lg font-semibold text-gray-800">Dashboard</h2>

@@ -1,31 +1,7 @@
 [project]
 name = "ai-business-analyst"
 version = "0.1.0"
-description = "AI Business Analyst - Recommends AI tools, detects bottlenecks, provides solutions/roadmaps with ROI estimates"
+description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "argon2-cffi==25.1.0",
-    "cohere>=5.11.0",  # Cohere API for Command R 7B (model: command-r7b-12-2024)
-    "fastapi==0.115.0",
-    "numpy==1.26.4",
-    "pandas==2.2.3",
-    "passlib==1.7.4",
-    "psycopg2-binary==2.9.9",
-    "pydantic-settings==2.0.3",
-    "pytest==8.3.3",
-    "python-dotenv>=1.0.0",  # For .env file loading
-    "python-jose==3.3.0",
-    "python-multipart==0.0.9",
-    "ruff==0.14.3",
-    "scikit-learn==1.5.1",
-    "sentence-transformers==3.1.1",
-    "sqlalchemy==2.0.26",
-    "uvicorn==0.30.6",
-]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.3.3",
-    "ruff>=0.14.3",
-]
+dependencies = []

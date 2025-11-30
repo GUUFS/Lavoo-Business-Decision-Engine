@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Cookies from "js-cookie";
+import { useQueryClient } from "@tanstack/react-query";
 
 import Button from "../base/Button";
 import { useCurrentUser } from "../../api/user";
@@ -13,6 +14,7 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: user, isLoading } = useCurrentUser();
   console.log("USER:", user);
@@ -26,7 +28,10 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
   const isAdmin = location.pathname.includes("/admin");  
 
   const handleLogout = () => {
+    // Clear the cookies and 
     Cookies.remove("access_token");
+    queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+    queryClient.removeQueries({ queryKey: ["currentUser"] });
     navigate("/login", { replace: true });
   };
 
@@ -70,7 +75,7 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
                 <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
               </div>
               <span className="text-lg sm:text-xl font-bold text-black">
-                AItugo+
+                Lavoo
               </span>
             </div>
             )}
@@ -87,14 +92,8 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
       </button>
       <button
         onClick={() => scrollToSection("blog")}
-        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-      >
-        Blog
-      </button>
-      <button
-        onClick={() => scrollToSection("blog")}
         className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap">
-        Momentum Vault
+        <a href="https://aitugo.com/shop" target="_blank">Momentum Vault</a>
       </button>
     </>
   )}
@@ -108,6 +107,13 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
       >
         <i className="ri-play-circle-line mr-2"></i>
         Watch a Demo
+      </button>
+      <button
+        onClick={() => scrollToSection("features")}
+        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
+      >
+        <i className=""></i>
+        Chopsticks
       </button>
     </>
   )}

@@ -33,13 +33,34 @@ class User(Base):
     confirm_password = Column(String(255), nullable=False)  # For validation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Chops system (Clinton's feature)
+    total_chops = Column(Integer, default=0)
+    alert_reading_chops = Column(Integer, default=0)
+    alert_sharing_chops = Column(Integer, default=0)
+    insight_reading_chops = Column(Integer, default=0)
+    insight_sharing_chops = Column(Integer, default=0)
+    referral_chops = Column(Integer, default=0)
+    referral_count = Column(Integer, default=0)
+
+    # Admin and subscription
     is_admin = Column(Boolean, default=False)
     subscription_status = Column(String, default="Free")
     subscription_plan = Column(String, nullable=True)
 
+    # Referral system (Clinton's feature)
+    referral_code = Column(String, unique=True, index=True)
+    referrer_code = Column(String, nullable=True)
+
+    # Relationships
     subscriptions = relationship("Subscriptions", back_populates="user")
     tickets = relationship("Ticket", back_populates="user")
-
+    user_alerts = relationship("UserAlert", back_populates="user")
+    user_insights = relationship("UserInsight", back_populates="user")
+    pinned_insights = relationship("UserPinnedInsight", back_populates="user")
+    pinned_alerts = relationship("UserPinnedAlert", back_populates="user")
+    referrals = relationship("Referral", foreign_keys="Referral.referrer_id", back_populates="referrer")
+    referred_by = relationship("Referral", foreign_keys="Referral.referred_user_id", back_populates="referred_user")
 
 class AITool(Base):
     """
@@ -85,7 +106,6 @@ class BusinessAnalysis(Base):
     Stores complete business analysis results from AI analyzer.
     Each analysis contains goals, capabilities, tool recommendations, and roadmap.
     """
-
     __tablename__ = "business_analyses"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -98,8 +118,8 @@ class BusinessAnalysis(Base):
     intent_analysis = Column(JSON)  # Objective, capabilities, stages, metrics
     tool_combinations = Column(JSON)  # 2-3 recommended tool combos with synergies
     roadmap = Column(JSON)  # Actionable plan with timeline
-    roi_projections = Column(JSON)  # ROI calculations, break-even, revenue impact
-    ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing
+    roi_projections = Column(JSON)  # ROI calculations, break-even, revenue impact (YOUR FIX)
+    ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing (YOUR FIX)
     estimated_cost = Column(Float)  # Monthly cost estimate
     timeline_weeks = Column(Integer)  # Implementation timeline
 
@@ -118,7 +138,6 @@ class ToolCombination(Base):
     Stores recommended tool combinations for a business analysis.
     Each combination represents a set of 2+ tools that work together.
     """
-
     __tablename__ = "tool_combinations"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -149,7 +168,6 @@ class RoadmapStage(Base):
     Individual stages in the implementation roadmap.
     Each analysis has multiple stages (setup, execution, optimization).
     """
-
     __tablename__ = "roadmap_stages"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -192,6 +210,15 @@ class UserResponse(BaseModel):
     id: int
     name: str
     email: str
+    subscription_status: str
+    total_chops: int
+    alert_reading_chops: int
+    alert_sharing_chops: int
+    insight_reading_chops: int
+    insight_sharing_chops: int
+    referral_chops: int
+    referral_count: int
+    referral_code: str
 
 
 class AIToolBase(BaseModel):
@@ -239,13 +266,11 @@ class ToolRecommendation(BaseModel):
 
 class BusinessAnalysisRequest(BaseModel):
     """Request model for business analysis"""
-
     business_goal: str  # User's goal (e.g., "Grow AI newsletter to 10k subs")
 
 
 class IntentAnalysis(BaseModel):
     """Parsed intent from user goal"""
-
     objective: str
     capabilities_needed: list[str]
     stages: list[str]
@@ -254,7 +279,6 @@ class IntentAnalysis(BaseModel):
 
 class ToolComboResponse(BaseModel):
     """Single tool combination recommendation"""
-
     combo_name: str
     tools: list[dict]  # [{id, name, pricing}]
     synergy_score: float
@@ -267,7 +291,6 @@ class ToolComboResponse(BaseModel):
 
 class RoadmapStageResponse(BaseModel):
     """Single roadmap stage"""
-
     stage_number: int
     stage_name: str
     duration_weeks: int
@@ -279,7 +302,6 @@ class RoadmapStageResponse(BaseModel):
 
 class BusinessAnalysisResponse(BaseModel):
     """Complete business analysis response"""
-
     analysis_id: int
     business_goal: str
     intent_analysis: IntentAnalysis
@@ -299,6 +321,8 @@ class AuthResponse(BaseModel):
     role: str
     subscription_status: str | None = None
     subscription_plan: str | None = None
+    referral_code: str | None = None
+
 
 # Paypal payment gateway
 class CreateOrderRequest(BaseModel):
@@ -451,7 +475,7 @@ class Review(Base):
     rating = Column(Integer)
     review_text = Column(Text)
     date_submitted = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="under-review")  # published, under-review, rejected
+    status = Column(String, default="Submitted")  # published, under-review, rejected (Clinton's)
     category = Column(String, default="General")
     helpful = Column(Integer, default=0)
     verified = Column(Boolean, default=False)
@@ -516,3 +540,264 @@ class ConversationResponse(BaseModel):
 class UnreadCountResponse(BaseModel):
     total_unread: int
     reviews_with_unread: int
+
+
+'''Opportunity Alert Tables and Schema'''
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    category = Column(String, nullable=False)
+    priority = Column(String, nullable=False)
+    score = Column(Integer, nullable=False)
+    time_remaining = Column(String, nullable=False)
+    why_act_now = Column(Text, nullable=False)
+    potential_reward = Column(Text, nullable=False)
+    action_required = Column(Text, nullable=False)
+    source = Column(String, nullable=True)
+    date = Column(String, nullable=False)
+    total_views = Column(Integer, default=0)
+    total_shares = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user_alerts = relationship("UserAlert", back_populates="alert")
+
+
+class UserAlert(Base):
+    __tablename__ = "user_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    alert_id = Column(Integer, ForeignKey("alerts.id"))
+    has_viewed = Column(Boolean, default=False)
+    has_shared = Column(Boolean, default=False)
+    is_attended = Column(Boolean, default=False)
+    viewed_at = Column(DateTime, nullable=True)
+    shared_at = Column(DateTime, nullable=True)
+    chops_earned_from_view = Column(Integer, default=0)
+    chops_earned_from_share = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="user_alerts")
+    alert = relationship("Alert", back_populates="user_alerts")
+
+
+'''Referrals Table'''
+class Referral(Base):
+    __tablename__ = "referrals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    referrer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    referred_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    chops_awarded = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
+    referred_user = relationship("User",foreign_keys=[referred_user_id], back_populates="referred_by")
+
+class ReferralResponse(BaseModel):
+    id: int
+    referred_user_id: int
+    referred_user_email: str
+    referred_user_name: str
+    chops_awarded: int
+    created_at: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+class ReferralStats(BaseModel):
+    total_referrals: int
+    total_chops_earned: int
+    referrals_this_month: int
+    recent_referrals: List[dict]
+
+    class Config:
+        from_attributes = True
+
+
+class ReferralCreate(BaseModel):
+    referred_user_id: int
+    chops_awarded: int = 0
+
+    class Config:
+        from_attributes = True
+
+class UserCreate(BaseModel):
+    name: str
+    email: str
+    subscription_status: str = "free"
+    referrer_name: Optional[str] = None
+
+class AlertCreate(BaseModel):
+    title: str
+    category: str
+    priority: str
+    score: int
+    time_remaining: str
+    why_act_now: str
+    potential_reward: str
+    action_required: str
+    source: Optional[str] = None
+    date: str
+
+class AlertResponse(BaseModel):
+    id: int
+    title: str
+    category: str
+    priority: str
+    score: int
+    time_remaining: str
+    why_act_now: str
+    potential_reward: str
+    action_required: str
+    source: Optional[str]
+    date: str
+    total_views: int
+    total_shares: int
+    has_viewed: bool = False
+    has_shared: bool = False
+    is_attended: bool = False
+    is_pinned: bool = False
+
+    class Config:
+        from_attributes = True
+
+class ViewAlertRequest(BaseModel):
+    alert_id: int
+
+class ShareAlertRequest(BaseModel):
+    alert_id: int
+
+
+'''Insights Tables and Schema'''
+class Insight(Base):
+    __tablename__ = "insights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    category = Column(String)
+    read_time = Column(String)
+    date = Column(String, nullable=False)
+    source = Column(String)
+    what_changed = Column(Text)
+    why_it_matters = Column(Text)
+    action_to_take = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+    total_views = Column(Integer, default=0)
+    total_shares = Column(Integer, default=0)
+
+    user_insights = relationship("UserInsight", back_populates="insight")
+
+
+class UserInsight(Base):
+    __tablename__ = "user_insights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    insight_id = Column(Integer, ForeignKey("insights.id"))
+    has_viewed = Column(Boolean, default=False)
+    has_shared = Column(Boolean, default=False)
+    is_attended = Column(Boolean, default=False)
+    viewed_at = Column(DateTime, nullable=True)
+    shared_at = Column(DateTime, nullable=True)
+    chops_earned_from_view = Column(Integer, default=0)
+    chops_earned_from_share = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="user_insights")
+    insight = relationship("Insight", back_populates="user_insights")
+
+
+class UserPinnedInsight(Base):
+    __tablename__ = "user_pinned_insights"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    insight_id = Column(Integer, ForeignKey("insights.id"))
+    pinned_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="pinned_insights")
+
+
+class UserPinnedAlert(Base):
+    __tablename__ = "user_pinned_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    alert_id = Column(Integer, ForeignKey("alerts.id"))
+    pinned_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="pinned_alerts")
+
+class InsightItems(BaseModel):
+    id: int
+    title: str
+    category: str
+    read_time: str
+    time_remaining: str
+    why_changed: str
+    why_it_matters: str
+    action_to_take: str
+    source: Optional[str]
+    date: str
+    total_views: int
+    total_shares: int
+    has_viewed: bool = False
+    has_shared: bool = False
+    is_attended: bool = False
+    is_pinned: bool = False
+    class Config:
+        from_attributes = True
+
+
+class InsightResponse(BaseModel):
+    insights: List[InsightItems]
+    current_page: int
+    total_pages: int
+    total_insights: int
+    is_pro: bool
+
+
+class InsightCreate(BaseModel):
+    title: str
+    category: str
+    read_time: str
+    what_changed: str
+    why_it_matters: str
+    action_to_take: str
+    source: Optional[str] = None
+    date: str
+
+
+class ViewInsightRequest(BaseModel):
+    insight_id: int
+
+
+class ShareInsightRequest(BaseModel):
+    insight_id: int
+
+    class Config:
+        extra = "ignore"
+
+
+class PinInsightRequest(BaseModel):
+    insight_id: int
+
+
+class PinAlertRequest(BaseModel):
+    alert_id: int
+
+
+class ChopsBreakdown(BaseModel):
+    total_chops: int
+    alert_reading_chops: int
+    alert_sharing_chops: int
+    insight_reading_chops: int
+    insight_sharing_chops: int
+    referral_chops: int
+    referral_count: int

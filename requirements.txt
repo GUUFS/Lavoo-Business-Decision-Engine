@@ -18,3 +18,5 @@ xai-sdk>=1.4.0
 python-dotenv>=1.0.0
 stripe>=14.0.0
 email-validator>=2.3.0
+alembic
+dotenv
