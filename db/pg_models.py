@@ -99,6 +99,7 @@ class BusinessAnalysis(Base):
     tool_combinations = Column(JSON)  # 2-3 recommended tool combos with synergies
     roadmap = Column(JSON)  # Actionable plan with timeline
     roi_projections = Column(JSON)  # ROI calculations, break-even, revenue impact
+    ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing
     estimated_cost = Column(Float)  # Monthly cost estimate
     timeline_weeks = Column(Integer)  # Implementation timeline
 
@@ -318,15 +319,15 @@ class Subscriptions(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     subscription_plan = Column(VARCHAR(50) )
-    transaction_id = Column(String(255), nullable=False, unique=True, index=True)  
+    transaction_id = Column(String(255), nullable=False, unique=True, index=True)
     tx_ref = Column(String, unique=True, index=True, nullable=False)
-    amount = Column(DECIMAL(10, 2), nullable=False)  
+    amount = Column(DECIMAL(10, 2), nullable=False)
     currency = Column(VARCHAR(10), nullable=False)
     status = Column(VARCHAR(20), nullable=False)
     payment_provider = Column(VARCHAR(20), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    start_date = Column(DateTime(timezone=True), nullable=False) 
+    start_date = Column(DateTime(timezone=True), nullable=False)
     end_date = Column(DateTime(timezone=True), nullable=False)
 
     user = relationship("User", back_populates="subscriptions")
@@ -390,7 +391,7 @@ class TicketResponse(BaseModel):
     unread_count: int = 0
     last_message: Optional[str] = None
     last_message_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -403,13 +404,13 @@ class MessageResponse(BaseModel):
     message: str
     is_read: bool
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
 class Ticket(Base):
     __tablename__ = "tickets"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     issue = Column(Text, nullable=False)
@@ -417,14 +418,14 @@ class Ticket(Base):
     status = Column(String(50), default="open")  # open, in_progress, resolved, closed
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     user = relationship("User", back_populates="tickets")
     messages = relationship("TicketMessage", back_populates="ticket", cascade="all, delete-orphan")
 
 class TicketMessage(Base):
     __tablename__ = "ticket_messages"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -432,7 +433,7 @@ class TicketMessage(Base):
     message = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     # Relationships
     ticket = relationship("Ticket", back_populates="messages")
     sender = relationship("User")
@@ -442,7 +443,7 @@ class TicketMessage(Base):
 '''
 class Review(Base):
     __tablename__ = "reviews"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, index=True)  # Add user authentication later
     business_name = Column(String, index=True)
@@ -459,14 +460,14 @@ class Review(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     review_id = Column(Integer, ForeignKey("reviews.id"))
     sender_type = Column(String)  # 'admin' or 'user'
     message = Column(Text)
     timestamp = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
-    
+
     # Relationships
     review = relationship("Review", back_populates="conversations")
 

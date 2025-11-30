@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useCurrentUser } from "./../../../api/user";
+import { useCurrentUser } from '../../../api/user';
 import PayPalCheckout from './paypal';
 import FlutterwaveCheckout from './flutterwave';
 import StripeCheckout from './stripe';
@@ -131,7 +131,7 @@ export default function UpgradePage() {
   const handlePaymentSuccess = (response: PaymentResponse) => {
     setIsProcessing(false);
     setShowSuccess(true);
-    
+
     setTimeout(() => {
       alert('Redirecting to dashboard...');
     }, 2000);
@@ -188,14 +188,14 @@ export default function UpgradePage() {
           <p className="text-lg text-gray-600 mb-8">
             Your upgrade was successful. You now have access to all pro features.
           </p>
-          
-          <a 
+
+          <a
             href="/dashboard"
-            className="inline-flex items-center justify-center px-8 py-3 
-                       border border-transparent text-base font-medium rounded-xl 
-                       text-white bg-orange-600 hover:bg-orange-700 
-                       shadow-lg transition duration-150 ease-in-out 
-                       transform hover:scale-105 active:scale-95 
+            className="inline-flex items-center justify-center px-8 py-3
+                       border border-transparent text-base font-medium rounded-xl
+                       text-white bg-orange-600 hover:bg-orange-700
+                       shadow-lg transition duration-150 ease-in-out
+                       transform hover:scale-105 active:scale-95
                        focus:outline-none focus:ring-4 focus:ring-orange-500 focus:ring-opacity-50"
             role="button"
           >
@@ -253,7 +253,7 @@ export default function UpgradePage() {
               <div className="absolute top-0 right-0 bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-1 text-xs font-semibold rounded-bl-lg">
                 MOST POPULAR
               </div>
-              
+
               <div className="text-center mb-6">
                 <h3 className="text-2xl font-bold text-gray-900 mb-2">Pro Plan</h3>
                 <div className="flex items-center justify-center mb-4">
@@ -289,7 +289,7 @@ export default function UpgradePage() {
                   <h3 className="text-lg font-semibold text-gray-900 text-center mb-4">
                     Choose Payment Method
                   </h3>
-                  
+
                   <div className="grid grid-cols-3 gap-3 mb-6">
                     {/* Stripe */}
                     <button
@@ -340,7 +340,7 @@ export default function UpgradePage() {
                         )}
                       </div>
                     </button>
-                    
+
                     {/* Flutterwave */}
                     <button
                       onClick={() => handlePaymentMethodSelect('flutterwave')}
@@ -391,7 +391,7 @@ export default function UpgradePage() {
                         />
                       </div>
                     )}
-                    
+
                     {selectedPaymentMethod === 'flutterwave' && (
                       <div key={`flutterwave-${currentAmount}`}>
                         <FlutterwaveCheckout

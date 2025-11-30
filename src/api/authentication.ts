@@ -32,8 +32,8 @@ export const useAdmin = () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(data),
-      });  
-      
+      });
+
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({}));
         const message =
@@ -43,9 +43,9 @@ export const useAdmin = () => {
       return response.json();
     },
     onSuccess: (data) => {
-      // Save token to cookies (15-minute expiry)
+      // Save token to cookies (30-minute expiry)
       Cookies.set("access_token", data.access_token, {
-        expires: 1 / 96, // 15 minutes = 1/96 of a day
+        expires: 1 / 48, // 30 minutes = 1/48 of a day
         secure: true,
         sameSite: "strict",
       });
@@ -81,9 +81,9 @@ export const useLogin = () => {
     },
 
     onSuccess: (data) => {
-      // Save token to cookies (15-minute expiry)
+      // Save token to cookies (30-minute expiry)
       Cookies.set("access_token", data.access_token, {
-        expires: 1 / 96, // 15 minutes = 1/96 of a day
+        expires: 1 / 48, // 30 minutes = 1/48 of a day
         secure: true,
         sameSite: "strict",
       });

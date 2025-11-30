@@ -8,8 +8,15 @@ from alembic import context
 # access to the values within the .ini file in use.
 config = context.config
 
+# Try .env.local first, then .env
+if os.path.exists('.env.local'):
+    load_dotenv('.env.local')
+else:
+    load_dotenv()
+
 DATABASE_URL = os.getenv("DATABASE_URL")
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+if DATABASE_URL:
+    config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 
 from logging.config import fileConfig

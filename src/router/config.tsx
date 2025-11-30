@@ -37,7 +37,7 @@ import Security from "../pages/admin/security/page";
 import Database from "../pages/admin/database/page";
 import Notifications from "../pages/admin/notifications/page";
 import Settings from "../pages/admin/settings/page";
-import AnalysisHistory from "../pages/admin/ai-analysis/page"; 
+import AnalysisHistory from "../pages/admin/ai-analysis/page";
 import CustomerChats from "../pages/admin/report-conversations/page";
 import Content from "../pages/admin/content-management/page";
 import CustomerReviews from "../pages/admin/conversations/page";
@@ -51,13 +51,20 @@ const routes: RouteObject[] = [
     element: <ProtectedRoute />,
     children: [
       { path: "/analyze", element: <Analyze /> },
-
-      { path: "/results", element: <DashboardLayout />, children: [
-         { path: '', element: <Results /> },
-      ]},
-      { path: "/analysis-history", element: <DashboardLayout/>, children: [
-        { path: '', element: <AnalysisHistoryPage />},
-      ]},
+      {
+        path: "/results",
+        element: <DashboardLayout />,
+        children: [
+          { index: true, element: <Results /> },
+        ]
+      },
+      {
+        path: "/analysis-history",
+        element: <DashboardLayout />,
+        children: [
+          { index: true, element: <AnalysisHistoryPage /> },
+        ]
+      },
 
       // Admin layout wrapper
       { path: "/admin", element: <DashboardLayout />, children: [
@@ -79,7 +86,7 @@ const routes: RouteObject[] = [
         { path: "conversations/:reviewId", element: < CustomerReviews/>},
         ]
       },
-      
+
       // Dashboard layout wrapper
       {
         path: "/dashboard",
@@ -103,7 +110,7 @@ const routes: RouteObject[] = [
       },
 
 
-      
+
     ],
   },
 

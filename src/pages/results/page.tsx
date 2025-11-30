@@ -1,14 +1,15 @@
 
-import { WindArrowDown } from 'lucide-react';
 import Button from '../../components/base/Button';
-import Header from '../../components/feature/Header';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { getUserAnalyses, getAnalysisById, type BusinessAnalysisResult } from '../../api/business-analyzer';
 
 
-export default function Results() {  
+export default function Results() {
 
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState('bottlenecks');
   const [showToast, setShowToast] = useState(false);
   const [implementedSolutions, setImplementedSolutions] = useState<Set<number>>(new Set());
@@ -30,14 +31,77 @@ export default function Results() {
   const [expandedImplementations, setExpandedImplementations] = useState<Set<number>>(new Set());
   const [selectedBottleneckForSolutions, setSelectedBottleneckForSolutions] = useState<number | null>(null);
 
+  // Dynamic data state
+  const [analysisData, setAnalysisData] = useState<BusinessAnalysisResult | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch analysis data on component mount
+  useEffect(() => {
+    const fetchAnalysisData = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        // Priority 1: Check if analysis was passed via navigation state (from new analysis)
+        const stateAnalysis = location.state?.analysis;
+        if (stateAnalysis) {
+          console.log("✅ Using analysis from navigation state");
+          console.log("Analysis data received:", JSON.stringify(stateAnalysis, null, 2));
+          console.log("Bottlenecks:", stateAnalysis.bottlenecks);
+          console.log("Business Strategies:", stateAnalysis.business_strategies);
+          console.log("AI Tools:", stateAnalysis.ai_tools);
+          setAnalysisData(stateAnalysis);
+          setIsLoading(false);
+          return;
+        }
+
+        // Priority 2: Check if specific analysis ID is in query params (from history)
+        const analysisId = searchParams.get('id');
+        if (analysisId) {
+          console.log("Fetching specific analysis with ID:", analysisId);
+          try {
+            const specificAnalysis = await getAnalysisById(parseInt(analysisId));
+            if (specificAnalysis) {
+              setAnalysisData(specificAnalysis);
+            } else {
+              setError("Analysis not found. It may have been deleted.");
+            }
+          } catch (err: any) {
+            console.error("Error fetching analysis by ID:", err);
+            setError("Analysis not found. It may have been deleted.");
+          }
+          setIsLoading(false);
+          return;
+        }
+
+        // Priority 3: Fetch latest analysis if no state or ID
+        console.log("Fetching latest analysis...");
+        const analyses = await getUserAnalyses(1);
+        if (analyses && analyses.length > 0) {
+          setAnalysisData(analyses[0]);
+        } else {
+          setError("No analysis data found. Please run a business analysis first.");
+        }
+      } catch (err: any) {
+        console.error("Error fetching analysis data:", err);
+        setError(err.message || "Failed to load analysis data. Please try again.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchAnalysisData();
+  }, [location.state, searchParams]);
+
   // Company configuration - can be changed to any company name
   const companyConfig = {
     name: 'Guufs Global',
     reportTitle: 'Business Intelligence Report',
-    generatedDate: new Date().toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
+    generatedDate: new Date().toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
     })
   };
 
@@ -94,14 +158,14 @@ export default function Results() {
     try {
       // Dynamic import for better performance
       const jsPDF = (await import('jspdf')).default;
-      
+
       const doc = new jsPDF('p', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      
+
       // Use custom watermark or default company name
       const finalWatermark = watermarkText || companyConfig.name;
-      
+
       // Add watermark function with larger, more visible text
       const addWatermark = (page: number) => {
         doc.setPage(page);
@@ -123,35 +187,35 @@ export default function Results() {
       // Page 1: Cover Page
       doc.setFillColor(249, 115, 22); // Orange background
       doc.rect(0, 0, pageWidth, 80, 'F');
-      
+
       // Company logo area
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(24);
       doc.setFont('helvetica', 'bold');
       doc.text(finalWatermark, pageWidth / 2, 30, { align: 'center' });
-      
+
       // Report title
       doc.setFontSize(32);
       //doc.text(companyConfig.reportTitle, pageWidth / 2, 50, { align: 'center' });
-      
+
       // Generated date
       doc.setFontSize(14);
       doc.setFont('helvetica', 'normal');
       doc.text(`Generated by ${companyConfig.name} on ${companyConfig.generatedDate}`, pageWidth / 2, 65, { align: 'center' });
-      
+
       // Business summary section
       doc.setTextColor(51, 51, 51);
       doc.setFontSize(18);
       doc.setFont('helvetica', 'bold');
       doc.text('Executive Summary', 20, 100);
-      
+
       doc.setFontSize(12);
       doc.setFont('helvetica', 'normal');
       const summaryText = `This comprehensive business intelligence report analyzes your current business operations and provides actionable insights for growth. Our AI-powered analysis has identified 3 key bottlenecks and recommends strategic solutions with projected ROI of $13,900 over 12 months.`;
-      
+
       const summaryLines = doc.splitTextToSize(summaryText, pageWidth - 40);
       doc.text(summaryLines, 20, 115);
-      
+
       // Key metrics boxes
       const metrics = [
         { label: 'Bottlenecks Identified', value: '3', color: [239, 68, 68] },
@@ -159,54 +223,54 @@ export default function Results() {
         { label: 'AI Confidence Score', value: '85%', color: [147, 51, 234] },
         { label: 'Projected ROI', value: '$13,900', color: [249, 115, 22] }
       ];
-      
+
       let yPos = 150;
       metrics.forEach((metric, index) => {
         const xPos = 20 + (index % 2) * 85;
         if (index % 2 === 0 && index > 0) yPos += 40;
-        
+
         const [r, g, b] = metric.color;
         doc.setFillColor(r, g, b );
         doc.roundedRect(xPos, yPos, 80, 30, 3, 3, 'F');
-        
+
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(16);
         doc.setFont('helvetica', 'bold');
         doc.text(metric.value, xPos + 40, yPos + 12, { align: 'center' });
-        
+
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
         doc.text(metric.label, xPos + 40, yPos + 22, { align: 'center' });
       });
-      
+
       addWatermark(1);
 
       // Page 2: Bottlenecks Analysis
       doc.addPage();
-      
+
       doc.setTextColor(51, 51, 51);
       doc.setFontSize(20);
       doc.setFont('helvetica', 'bold');
       doc.text('Identified Bottlenecks', 20, 30);
-      
+
       let currentY = 50;
-      
+
       bottlenecks.forEach((bottleneck, index) => {
         // Bottleneck header
         doc.setFillColor(254, 243, 199);
         doc.rect(20, currentY - 5, pageWidth - 40, 25, 'F');
-        
+
         doc.setTextColor(249, 115, 22);
         doc.setFontSize(14);
         doc.setFont('helvetica', 'bold');
         doc.text(`#${index + 1} ${bottleneck.title}`, 25, currentY + 5);
-        
+
         doc.setTextColor(185, 28, 28);
         doc.setFontSize(10);
         doc.text(`${bottleneck.priority} PRIORITY`, pageWidth - 45, currentY + 5);
-        
+
         currentY += 30;
-        
+
         // Description
         doc.setTextColor(75, 85, 99);
         doc.setFontSize(11);
@@ -214,7 +278,7 @@ export default function Results() {
         const descLines = doc.splitTextToSize(bottleneck.description, pageWidth - 50);
         doc.text(descLines, 25, currentY);
         currentY += descLines.length * 5 + 5;
-        
+
         // Impact
         doc.setFont('helvetica', 'bold');
         doc.text('Impact: ', 25, currentY);
@@ -222,92 +286,88 @@ export default function Results() {
         const impactLines = doc.splitTextToSize(bottleneck.impact, pageWidth - 60);
         doc.text(impactLines, 45, currentY);
         currentY += impactLines.length * 5 + 15;
-        
+
         if (currentY > 250) {
           addWatermark(2);
           doc.addPage();
           currentY = 30;
         }
       });
-      
+
       addWatermark(2);
 
       // Page 3: Solutions & Tools
       doc.addPage();
-      
+
       doc.setTextColor(51, 51, 51);
       doc.setFontSize(20);
       doc.setFont('helvetica', 'bold');
       doc.text('Recommended Solutions', 20, 30);
-      
+
       currentY = 50;
-      
+
       // Business Strategies
       doc.setFontSize(16);
       doc.setTextColor(34, 197, 94);
       doc.text('Business Strategies', 20, currentY);
       currentY += 15;
-      
+
       businessStrategies.slice(0, 2).forEach((strategy) => {
         doc.setFillColor(240, 253, 244);
         doc.rect(20, currentY - 5, pageWidth - 40, 35, 'F');
-        
+
         doc.setTextColor(51, 51, 51);
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.text(strategy.title, 25, currentY + 5);
-        
-        doc.setTextColor(34, 197, 94);
-        doc.setFontSize(10);
-        doc.text(strategy.price, pageWidth - 45, currentY + 5);
-        
+
         doc.setTextColor(75, 85, 99);
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
         const strategyLines = doc.splitTextToSize(strategy.description, pageWidth - 50);
         doc.text(strategyLines, 25, currentY + 15);
-        
+
         currentY += 45;
       });
-      
+
       // AI Tools
       doc.setFontSize(16);
       doc.setTextColor(147, 51, 234);
       doc.text('AI Efficiency Tools', 20, currentY);
       currentY += 15;
-      
+
       aiTools.slice(0, 2).forEach((tool) => {
         doc.setFillColor(250, 245, 255);
         doc.rect(20, currentY - 5, pageWidth - 40, 35, 'F');
-        
+
         doc.setTextColor(51, 51, 51);
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.text(tool.title, 25, currentY + 5);
-        
+
         doc.setTextColor(147, 51, 234);
         doc.setFontSize(10);
         doc.text(tool.price, pageWidth - 45, currentY + 5);
-        
+
         doc.setTextColor(75, 85, 99);
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
         const toolLines = doc.splitTextToSize(tool.description, pageWidth - 50);
         doc.text(toolLines, 25, currentY + 15);
-        
+
         currentY += 45;
       });
-      
+
       addWatermark(3);
 
       // Page 4: ROI Analysis
       doc.addPage();
-      
+
       doc.setTextColor(51, 51, 51);
       doc.setFontSize(20);
       doc.setFont('helvetica', 'bold');
       doc.text('ROI Impact Analysis', 20, 30);
-      
+
       // ROI Summary boxes
       const roiMetrics = [
         { label: 'Monthly Revenue Increase', value: '$1,000', color: [34, 197, 94] },
@@ -315,21 +375,21 @@ export default function Results() {
         { label: 'Implementation Cost', value: '$500', color: [249, 115, 22] },
         { label: '12-Month Projected Gain', value: '$13,900', color: [147, 51, 234] }
       ];
-      
+
       let roiY = 60;
       roiMetrics.forEach((metric, index) => {
         const xPos = 20 + (index % 2) * 85;
         if (index % 2 === 0 && index > 0) roiY += 50;
-        
+
         const [r, g, b] = metric.color;
         doc.setFillColor(r, g, b);
         doc.roundedRect(xPos, roiY, 80, 40, 3, 3, 'F');
-        
+
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(18);
         doc.setFont('helvetica', 'bold');
         doc.text(metric.value, xPos + 40, roiY + 15, { align: 'center' });
-        
+
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
         const labelLines = doc.splitTextToSize(metric.label, 70);
@@ -337,30 +397,30 @@ export default function Results() {
           doc.text(line, xPos + 40, roiY + 25 + (lineIndex * 4), { align: 'center' });
         });
       });
-      
+
       // AI Confidence Score
       doc.setFillColor(147, 51, 234);
       doc.circle(pageWidth / 2, 200, 30, 'F');
-      
+
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(24);
       doc.setFont('helvetica', 'bold');
       doc.text('85%', pageWidth / 2, 205, { align: 'center' });
-      
+
       doc.setTextColor(51, 51, 51);
       doc.setFontSize(14);
       doc.text('AI Confidence Score', pageWidth / 2, 245, { align: 'center' });
-      
+
       addWatermark(4);
 
       // Page 5: Implementation Roadmap
       doc.addPage();
-      
+
       doc.setTextColor(51, 51, 51);
       doc.setFontSize(20);
       doc.setFont('helvetica', 'bold');
       doc.text('Implementation Roadmap', 20, 30);
-      
+
       const roadmapSteps = [
         { step: 1, title: 'Content Marketing Strategy', timeline: '2-3 weeks', difficulty: 'Medium' },
         { step: 2, title: 'SEMrush Deployment', timeline: '1 week', difficulty: 'Easy' },
@@ -369,46 +429,46 @@ export default function Results() {
         { step: 5, title: 'Intercom Implementation', timeline: '2 weeks', difficulty: 'Medium' },
         { step: 6, title: 'Payment Optimization', timeline: '2-3 weeks', difficulty: 'Medium' }
       ];
-      
+
       let roadmapY = 50;
       roadmapSteps.forEach((step) => {
         // Step number circle
         doc.setFillColor(249, 115, 22);
         doc.circle(30, roadmapY + 5, 8, 'F');
-        
+
         doc.setTextColor(255, 255, 255);
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.text(step.step.toString(), 30, roadmapY + 8, { align: 'center' });
-        
+
         // Step details
         doc.setTextColor(51, 51, 51);
         doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
         doc.text(step.title, 45, roadmapY + 5);
-        
+
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(75, 85, 99);
         doc.text(`Timeline: ${step.timeline}`, 45, roadmapY + 15);
         doc.text(`Difficulty: ${step.difficulty}`, 120, roadmapY + 15);
-        
+
         roadmapY += 25;
       });
-      
+
       addWatermark(5);
 
       // Save the PDF
-      const filename = watermarkText 
+      const filename = watermarkText
         ? `${watermarkText.replace(/\s+/g, '_')}_Business_Intelligence_Report_${new Date().toISOString().split('T')[0]}.pdf`
         : `${companyConfig.name.replace(/\s+/g, '_')}_Business_Intelligence_Report_${new Date().toISOString().split('T')[0]}.pdf`;
-      
+
       doc.save(filename);
-      
+
       // Show success toast
       setShowToast(true);
       setTimeout(() => setShowToast(false), 3000);
-      
+
     } catch (error) {
       console.error('Error generating PDF:', error);
       alert('Error generating PDF report. Please try again.');
@@ -425,7 +485,8 @@ export default function Results() {
     }
   };
 
-  const bottlenecks = [
+  // Use dynamic data from API or fallback to hardcoded data
+  const bottlenecks = analysisData?.bottlenecks || [
     {
       id: 1,
       title: 'Low online visibility',
@@ -452,7 +513,7 @@ export default function Results() {
     },
   ];
 
-  const businessStrategies = [
+  const businessStrategies = analysisData?.business_strategies || [
     {
       id: 1,
       bottleneckId: 1,
@@ -516,7 +577,7 @@ export default function Results() {
     },
   ];
 
-  const aiTools = [
+  const aiTools = analysisData?.ai_tools || [
     {
       id: 1,
       bottleneckId: 1,
@@ -731,6 +792,10 @@ export default function Results() {
     },
   ];
 
+  const roadmapSteps = analysisData?.roadmap || [];
+  const roiMetrics = analysisData?.roi_metrics;
+  const aiConfidenceScore = analysisData?.ai_confidence_score || 85;
+
   const getCurrentStrategies = () => {
     if (activeTab === 'solutions') {
       if (selectedBottleneckForSolutions) {
@@ -752,7 +817,7 @@ export default function Results() {
     // default to showing tools for the first bottleneck when on the bottlenecks tab
     return aiTools.filter((tool) => tool.bottleneckId === 1);
   };
-  
+
   const getSelectedToolsForBottleneck = (bottleneckId: number) => {
     const selectedIds = selectedTools[bottleneckId] || [];
     return aiTools.filter((tool) => selectedIds.includes(tool.id));
@@ -806,7 +871,7 @@ export default function Results() {
                     key={tool.id}
                     className="py-3 px-4 text-gray-600"
                   >
-                    {tool.comparison.pricing}
+                    {tool.comparison?.pricing || tool.price}
                   </td>
                 ))}
               </tr>
@@ -817,29 +882,25 @@ export default function Results() {
                     key={tool.id}
                     className="py-3 px-4 text-gray-600"
                   >
-                    {tool.comparison.easeOfUse}
+                    {tool.comparison?.easeOfUse || 'N/A'}
                   </td>
                 ))}
               </tr>
               <tr className="border-b border-orange-100">
-                <td className="py-3 px-4 font-medium text-gray-700">Features</td>
+                <td className="py-3 px-4 font-medium text-gray-700">Learning Curve</td>
                 {tools.map((tool) => (
                   <td
                     key={tool.id}
                     className="py-3 px-4 text-gray-600"
                   >
-                    {tool.comparison.features}
-                  </td>
-                ))}
-              </tr>
-              <tr className="border-b border-orange-100">
-                <td className="py-3 px-4 font-medium text-gray-700">Support</td>
-                {tools.map((tool) => (
-                  <td
-                    key={tool.id}
-                    className="py-3 px-4 text-gray-600"
-                  >
-                    {tool.comparison.support}
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                      tool.comparison?.learningCurve === 'Easy' ? 'bg-green-100 text-green-800' :
+                      tool.comparison?.learningCurve === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
+                      tool.comparison?.learningCurve === 'Hard' ? 'bg-red-100 text-red-800' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {tool.comparison?.learningCurve || 'N/A'}
+                    </span>
                   </td>
                 ))}
               </tr>
@@ -850,18 +911,53 @@ export default function Results() {
                     key={tool.id}
                     className="py-3 px-4 text-gray-600"
                   >
-                    {tool.comparison.integration}
+                    {tool.comparison?.integration || 'N/A'}
                   </td>
                 ))}
               </tr>
-              <tr>
-                <td className="py-3 px-4 font-medium text-gray-700">Learning Curve</td>
+              <tr className="border-b border-orange-100 bg-green-50">
+                <td className="py-3 px-4 font-medium text-gray-700">
+                  <div className="flex items-center space-x-2">
+                    <i className="ri-thumb-up-line text-green-600"></i>
+                    <span>Pros</span>
+                  </div>
+                </td>
                 {tools.map((tool) => (
                   <td
                     key={tool.id}
                     className="py-3 px-4 text-gray-600"
                   >
-                    {tool.comparison.learningCurve}
+                    <ul className="space-y-1 text-xs">
+                      {tool.pros?.slice(0, 3).map((pro: string, idx: number) => (
+                        <li key={idx} className="flex items-start space-x-1">
+                          <i className="ri-checkbox-circle-fill text-green-500 text-sm mt-0.5 flex-shrink-0"></i>
+                          <span className="leading-tight">{pro}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                ))}
+              </tr>
+              <tr className="bg-red-50">
+                <td className="py-3 px-4 font-medium text-gray-700">
+                  <div className="flex items-center space-x-2">
+                    <i className="ri-thumb-down-line text-red-600"></i>
+                    <span>Cons</span>
+                  </div>
+                </td>
+                {tools.map((tool) => (
+                  <td
+                    key={tool.id}
+                    className="py-3 px-4 text-gray-600"
+                  >
+                    <ul className="space-y-1 text-xs">
+                      {tool.cons?.slice(0, 2).map((con: string, idx: number) => (
+                        <li key={idx} className="flex items-start space-x-1">
+                          <i className="ri-alert-fill text-red-500 text-sm mt-0.5 flex-shrink-0"></i>
+                          <span className="leading-tight">{con}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </td>
                 ))}
               </tr>
@@ -871,6 +967,50 @@ export default function Results() {
       </div>
     );
   };
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-orange-500 mx-auto mb-4"></div>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Loading Analysis...</h2>
+          <p className="text-gray-600">Please wait while we fetch your business analysis</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <i className="ri-error-warning-line text-3xl text-red-600"></i>
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Error Loading Analysis</h2>
+          <p className="text-gray-600 mb-6">{error}</p>
+          <div className="flex gap-3 justify-center">
+            <Button
+              variant="primary"
+              onClick={() => navigate('/dashboard/analyze')}
+            >
+              <i className="ri-add-line mr-2"></i>
+              Create New Analysis
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => window.location.reload()}
+            >
+              <i className="ri-refresh-line mr-2"></i>
+              Retry
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 relative">
@@ -883,7 +1023,7 @@ export default function Results() {
           </span>
         </div>
       )}
-    
+
 
       <div className="bg-gradient-to-br from-orange-50 to-white">
 
@@ -895,7 +1035,7 @@ export default function Results() {
       </div>
       <div className="flex space-x-3 justify-end items-start relative">
         <div className='relative'>
-        <button 
+        <button
               onClick={() => generatePDFReport()}
               onMouseEnter={() => setShowWatermarkForm(true)}
               onMouseLeave={() => !customWatermark && setShowWatermarkForm(false)}
@@ -916,7 +1056,7 @@ export default function Results() {
 
         {/* Watermark Customization Dropdown */}
               {showWatermarkForm && (
-                <div 
+                <div
                   className="absolute top-full left-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-50"
                   onMouseEnter={() => setShowWatermarkForm(true)}
                   onMouseLeave={() => setShowWatermarkForm(false)}
@@ -966,7 +1106,7 @@ export default function Results() {
         </button>
       </div>
               </div>
-      
+
         {/* Hero Section */}
         <section className="bg-gradient-to-br from-orange-50 to-white pt-10 sm:pt-12 md:pt-8">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -978,7 +1118,7 @@ export default function Results() {
                 Your AI Strategy is Ready!
               </h1>
               <p className="text-base sm:text-lg md:text-xl text-gray-600 max-w-3xl mx-auto px-4">
-                Based on your business profile, we've identified various AI solutions 
+                Based on your business profile, we've identified various AI solutions
                 that can transform your operations and drive growth.
               </p>
             </div>
@@ -986,7 +1126,7 @@ export default function Results() {
           </div>
         </section>
 
-        
+
        {/* Navigation Tabs */}
         <div className="bg-white rounded-lg shadow-sm mb-8">
           <div className="border-b border-gray-200">
@@ -1094,7 +1234,7 @@ export default function Results() {
                 if (selectedBottleneckForSolutions && b.id !== selectedBottleneckForSolutions) {
                   return null;
                 }
-                
+
                 return (
                   <div key={b.id} className="mb-12">
                     {!selectedBottleneckForSolutions && (
@@ -1110,20 +1250,12 @@ export default function Results() {
                             key={strategy.id}
                             className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 bg-white"
                           >
-                            <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-start mb-4">
                               <div className="flex items-center space-x-2">
                                 <i className="ri-strategy-line text-orange-500 text-xl"></i>
                                 <h4 className="text-lg font-semibold text-gray-900">
                                   {strategy.title}
                                 </h4>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-lg font-bold text-orange-600">
-                                  {strategy.price}
-                                </div>
-                                <div className="text-sm text-orange-600 bg-orange-100 px-2 py-1 rounded mt-1">
-                                  {strategy.rating}
-                                </div>
                               </div>
                             </div>
 
@@ -1134,7 +1266,7 @@ export default function Results() {
                                 Features:
                               </h5>
                               <ul className="space-y-1">
-                                {strategy.features.map((feature, idx) => (
+                                {strategy.features?.map((feature, idx) => (
                                   <li
                                     key={idx}
                                     className="flex items-center space-x-2 text-sm text-gray-600"
@@ -1146,35 +1278,8 @@ export default function Results() {
                               </ul>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                              <div>
-                                <h5 className="font-medium text-gray-900 mb-2 text-sm">
-                                  Pros:
-                                </h5>
-                                <ul className="space-y-1">
-                                  {strategy.pros.map((pro, idx) => (
-                                    <li key={idx} className="text-xs text-gray-600">
-                                      • {pro}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                              <div>
-                                <h5 className="font-medium text-gray-900 mb-2 text-sm">
-                                  Cons:
-                                </h5>
-                                <ul className="space-y-1">
-                                  {strategy.cons.map((con, idx) => (
-                                    <li key={idx} className="text-xs text-gray-600">
-                                      • {con}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </div>
-
                             <div className="flex space-x-3">
-                              <button 
+                              <button
                                 onClick={() => handleLearnMoreFromSolution(b.id)}
                                 className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition-colors duration-200 text-sm font-medium whitespace-nowrap"
                               >
@@ -1222,7 +1327,7 @@ export default function Results() {
                 if (selectedBottleneckForSolutions && b.id !== selectedBottleneckForSolutions) {
                   return null;
                 }
-                
+
                 return (
                   <div key={b.id} className="mb-12">
                     {!selectedBottleneckForSolutions && (
@@ -1230,12 +1335,12 @@ export default function Results() {
                         AI Tools for: {b.title}
                       </h3>
                     )}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                       {getCurrentTools()
                         .filter((tool) => tool.bottleneckId === b.id)
                         .map((tool) => (
-                          <div key={tool.id} className="space-y-4">
-                            <div className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 bg-white">
+                          <div key={tool.id} className="space-y-4 flex flex-col">
+                            <div className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow duration-200 bg-white flex flex-col h-full">
                               <div className="flex items-start justify-between mb-4">
                                 <div className="flex items-center space-x-2">
                                   <input
@@ -1259,54 +1364,27 @@ export default function Results() {
                                 </div>
                               </div>
 
-                              <p className="text-gray-600 mb-4">{tool.description}</p>
+                              <p className="text-gray-600 mb-4 leading-relaxed">{tool.description}</p>
 
-                              <div className="mb-4">
+                              <div className="mb-4 flex-grow">
                                 <h5 className="font-medium text-gray-900 mb-2">
-                                  Features:
+                                  Key Features:
                                 </h5>
-                                <ul className="space-y-1">
-                                  {tool.features.map((feature, idx) => (
+                                <ul className="space-y-2">
+                                  {tool.features?.map((feature, idx) => (
                                     <li
                                       key={idx}
-                                      className="flex items-center space-x-2 text-sm text-gray-600"
+                                      className="flex items-start space-x-2 text-sm text-gray-600"
                                     >
-                                      <i className="ri-check-line text-orange-500 text-xs"></i>
-                                      <span>{feature}</span>
+                                      <i className="ri-check-line text-orange-500 text-sm mt-0.5 flex-shrink-0"></i>
+                                      <span className="leading-relaxed">{feature}</span>
                                     </li>
                                   ))}
                                 </ul>
                               </div>
 
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                                <div>
-                                  <h5 className="font-medium text-gray-900 mb-2 text-sm">
-                                    Pros:
-                                  </h5>
-                                  <ul className="space-y-1">
-                                    {tool.pros.map((pro, idx) => (
-                                      <li key={idx} className="text-xs text-gray-600">
-                                        • {pro}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                                <div>
-                                  <h5 className="font-medium text-gray-900 mb-2 text-sm">
-                                    Cons:
-                                  </h5>
-                                  <ul className="space-y-1">
-                                    {tool.cons.map((con, idx) => (
-                                      <li key={idx} className="text-xs text-gray-600">
-                                        • {con}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              </div>
-
-                              <div className="flex space-x-3">
-                                <button 
+                              <div className="flex space-x-3 mt-auto">
+                                <button
                                   onClick={() => tool.website && window.open(tool.website, '_blank')}
                                   className="flex-1 bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition-colors duration-200 text-sm font-medium whitespace-nowrap"
                                 >
@@ -1335,77 +1413,86 @@ export default function Results() {
 
                             {/* Implementation Dropdown */}
                             {expandedImplementations.has(tool.id) && (
-                              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-                                <div className="flex items-center justify-between mb-4">
-                                  <h5 className="text-lg font-semibold text-blue-900 flex items-center space-x-2">
-                                    <i className="ri-settings-line"></i>
-                                    <span>How to Implement {tool.title}</span>
-                                  </h5>
-                                  <button
-                                    onClick={() => toggleImplementationDropdown(tool.id)}
-                                    className="text-blue-600 hover:text-blue-700 p-1 rounded-full hover:bg-blue-100 transition-colors"
-                                  >
-                                    <i className="ri-close-line text-xl"></i>
-                                  </button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                                  <div className="bg-white p-3 rounded-lg border border-blue-200">
-                                    <div className="text-sm font-medium text-blue-800 mb-1">Timeframe</div>
-                                    <div className="text-blue-600">{tool.implementation.timeframe}</div>
+                              <div className="space-y-4">
+                                {/* Implementation Guide Section */}
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                                  <div className="flex items-center justify-between mb-4">
+                                    <h5 className="text-lg font-semibold text-blue-900 flex items-center space-x-2">
+                                      <i className="ri-settings-line"></i>
+                                      <span>Implementation Guide for {tool.title}</span>
+                                    </h5>
+                                    <button
+                                      onClick={() => toggleImplementationDropdown(tool.id)}
+                                      className="text-blue-600 hover:text-blue-700 p-1 rounded-full hover:bg-blue-100 transition-colors"
+                                    >
+                                      <i className="ri-close-line text-xl"></i>
+                                    </button>
                                   </div>
-                                  <div className="bg-white p-3 rounded-lg border border-blue-200">
-                                    <div className="text-sm font-medium text-blue-800 mb-1">Difficulty</div>
-                                    <div className={`font-medium ${
-                                      tool.implementation.difficulty === 'Easy' ? 'text-green-600' :
-                                      tool.implementation.difficulty === 'Medium' ? 'text-yellow-600' :
-                                      'text-red-600'
-                                    }`}>
-                                      {tool.implementation.difficulty}
+
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                                    <div className="bg-white p-3 rounded-lg border border-blue-200">
+                                      <div className="text-sm font-medium text-blue-800 mb-1">Timeframe</div>
+                                      <div className="text-blue-600 font-semibold">{tool.implementation?.timeframe || 'N/A'}</div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-lg border border-blue-200">
+                                      <div className="text-sm font-medium text-blue-800 mb-1">Difficulty</div>
+                                      <div className={`font-semibold ${
+                                        tool.implementation?.difficulty === 'Easy' ? 'text-green-600' :
+                                        tool.implementation?.difficulty === 'Medium' ? 'text-yellow-600' :
+                                        'text-red-600'
+                                      }`}>
+                                        {tool.implementation?.difficulty || 'N/A'}
+                                      </div>
+                                    </div>
+                                    <div className="bg-white p-3 rounded-lg border border-blue-200">
+                                      <div className="text-sm font-medium text-blue-800 mb-1">Steps</div>
+                                      <div className="text-blue-600 font-semibold">{tool.implementation?.steps?.length || 0} steps</div>
                                     </div>
                                   </div>
-                                  <div className="bg-white p-3 rounded-lg border border-blue-200">
-                                    <div className="text-sm font-medium text-blue-800 mb-1">Steps</div>
-                                    <div className="text-blue-600">{tool.implementation.steps.length} steps</div>
-                                  </div>
-                                </div>
 
-                                <div className="mb-4">
-                                  <h6 className="font-medium text-blue-900 mb-3">Requirements:</h6>
-                                  <div className="flex flex-wrap gap-2">
-                                    {tool.implementation.requirements.map((req, idx) => (
-                                      <span key={idx} className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full">
-                                        {req}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                <div>
-                                  <h6 className="font-medium text-blue-900 mb-3">Implementation Steps:</h6>
-                                  <ol className="space-y-2">
-                                    {tool.implementation.steps.map((step, idx) => (
-                                      <li key={idx} className="flex items-start space-x-3">
-                                        <span className="flex-shrink-0 w-6 h-6 bg-blue-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
-                                          {idx + 1}
+                                  <div className="mb-6">
+                                    <h6 className="font-semibold text-blue-900 mb-3 flex items-center space-x-2">
+                                      <i className="ri-file-list-line"></i>
+                                      <span>Requirements:</span>
+                                    </h6>
+                                    <div className="flex flex-wrap gap-2">
+                                      {tool.implementation?.requirements?.map((req, idx) => (
+                                        <span key={idx} className="bg-blue-100 text-blue-800 text-sm px-3 py-1 rounded-full font-medium">
+                                          {req}
                                         </span>
-                                        <span className="text-sm text-gray-700">{step}</span>
-                                      </li>
-                                    ))}
-                                  </ol>
-                                </div>
+                                      ))}
+                                    </div>
+                                  </div>
 
-                                <div className="mt-6 pt-4 border-t border-blue-200">
-                                  <button
-                                    onClick={() => {
-                                      handleImplemented(tool.id + 100);
-                                      toggleImplementationDropdown(tool.id);
-                                    }}
-                                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium whitespace-nowrap"
-                                  >
-                                    <i className="ri-check-line mr-1"></i>
-                                    Mark as Implemented
-                                  </button>
+                                  <div>
+                                    <h6 className="font-semibold text-blue-900 mb-3 flex items-center space-x-2">
+                                      <i className="ri-list-ordered"></i>
+                                      <span>Implementation Steps:</span>
+                                    </h6>
+                                    <div className="space-y-3">
+                                      {tool.implementation?.steps?.map((step, idx) => (
+                                        <div key={idx} className="flex items-start space-x-3 bg-white p-3 rounded-lg border border-blue-100">
+                                          <span className="flex-shrink-0 w-7 h-7 bg-blue-500 text-white text-sm rounded-full flex items-center justify-center font-semibold">
+                                            {idx + 1}
+                                          </span>
+                                          <span className="text-sm text-gray-700 leading-relaxed pt-0.5">{step}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="mt-6 pt-4 border-t border-blue-200">
+                                    <button
+                                      onClick={() => {
+                                        handleImplemented(tool.id + 100);
+                                        toggleImplementationDropdown(tool.id);
+                                      }}
+                                      className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors text-sm font-semibold flex items-center space-x-2"
+                                    >
+                                      <i className="ri-check-line text-lg"></i>
+                                      <span>Mark as Implemented</span>
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
                             )}
@@ -1435,229 +1522,58 @@ export default function Results() {
               </p>
 
               <div className="space-y-6">
-                {/* Step 1 - Content Marketing Strategy */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      1
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Implement Content Marketing Strategy
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          medium
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          2-3 weeks
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Set up blog content creation, social media campaigns, and SEO optimization to improve online visibility.
-                    </p>
-                  </div>
-                </div>
+                {roadmapSteps.length > 0 ? (
+                  roadmapSteps.map((step) => {
+                    // Determine badge colors based on difficulty
+                    const getDifficultyColor = (difficulty: string) => {
+                      switch (difficulty?.toLowerCase()) {
+                        case 'easy':
+                          return 'bg-green-100 text-green-800';
+                        case 'medium':
+                          return 'bg-yellow-100 text-yellow-800';
+                        case 'hard':
+                          return 'bg-red-100 text-red-800';
+                        default:
+                          return 'bg-gray-100 text-gray-800';
+                      }
+                    };
 
-                {/* Step 2 - SEMrush Setup */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      2
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Deploy SEMrush for SEO Optimization
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          easy
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          1 week
+                    return (
+                      <div key={step.step} className="flex items-start space-x-4">
+                        <div className="flex-shrink-0">
+                          <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
+                            {step.step}
+                          </div>
+                        </div>
+                        <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-lg font-semibold text-gray-900">
+                              {step.title}
+                            </h3>
+                            <div className="flex items-center space-x-3">
+                              <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${getDifficultyColor(step.difficulty)}`}>
+                                {step.difficulty}
+                              </span>
+                              <div className="flex items-center text-sm text-gray-500">
+                                <i className="ri-time-line mr-1"></i>
+                                {step.timeline}
+                              </div>
+                            </div>
+                          </div>
+                          <p className="text-gray-600 mb-4">
+                            {step.description}
+                          </p>
                         </div>
                       </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Set up SEMrush account, conduct keyword research, and implement automated site audit recommendations.
-                    </p>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-12 bg-white border border-gray-200 rounded-lg">
+                    <i className="ri-road-map-line text-4xl text-gray-400 mb-3"></i>
+                    <p className="text-gray-600">No roadmap steps available yet.</p>
+                    <p className="text-sm text-gray-500 mt-2">Run a new analysis to generate your implementation roadmap.</p>
                   </div>
-                </div>
-
-                {/* Step 3 - Jasper AI Content Creation */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      3
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Integrate Jasper AI for Content Creation
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          easy
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          1 week
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Set up Jasper AI, train brand voice, and create content calendar for consistent marketing output.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 4 - Customer Journey Mapping */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      4
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Redesign Customer Onboarding Journey
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          hard
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          3-4 weeks
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Conduct user experience audit, map customer touchpoints, and streamline onboarding process.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 5 - Intercom Implementation */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      5
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Deploy Intercom for Customer Support
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          medium
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          2 weeks
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Set up AI chatbot, create automated onboarding flows, and implement smart user segmentation.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 6 - Payment Optimization */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      6
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Optimize Payment Experience
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          medium
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          2-3 weeks
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Redesign checkout flow, integrate multiple payment methods, and enhance mobile optimization.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 7 - Stripe Radar & PayPal Setup */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      7
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Implement AI Payment Security
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          easy
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          1 week
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Deploy Stripe Radar for fraud detection and PayPal Advanced for payment optimization.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 8 - Monitor and Optimize */}
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 bg-orange-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
-                      8
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-white border border-gray-200 rounded-lg p-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        Monitor Performance & Optimize
-                      </h3>
-                      <div className="flex items-center space-x-3">
-                        <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded">
-                          easy
-                        </span>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <i className="ri-time-line mr-1"></i>
-                          ongoing
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-gray-600 mb-4">
-                      Track KPIs, analyze performance data, and continuously optimize based on AI tool insights.
-                    </p>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           )}
@@ -1672,95 +1588,148 @@ export default function Results() {
                 Projected financial impact of implementing the recommended solutions and efficiency tools
               </p>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                {/* Revenue Impact Card */}
-                <div className="bg-white border border-gray-200 rounded-lg p-6">
-                  <div className="flex items-center mb-4">
-                    <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
-                      <i className="ri-line-chart-line text-green-600"></i>
+              {roiMetrics ? (
+                <>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                    {/* Revenue Impact Card */}
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                      <div className="flex items-center mb-4">
+                        <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mr-3">
+                          <i className="ri-line-chart-line text-green-600"></i>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900">Revenue Impact</h3>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-sm text-gray-600 mb-1">Monthly Cost Savings</p>
+                          <p className="text-2xl font-bold text-green-600">
+                            ${roiMetrics.monthly_cost_savings?.toLocaleString() || '0'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600 mb-1">Monthly Revenue Increase</p>
+                          <p className="text-2xl font-bold text-green-600">
+                            ${roiMetrics.monthly_revenue_increase?.toLocaleString() || '0'}
+                          </p>
+                        </div>
+                        <div className="border-t border-gray-200 pt-4">
+                          <p className="text-sm text-gray-600 mb-1">Total Monthly Impact</p>
+                          <p className="text-3xl font-bold text-green-600">
+                            ${((roiMetrics.monthly_cost_savings || 0) + (roiMetrics.monthly_revenue_increase || 0)).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-900">Revenue Impact</h3>
+
+                    {/* Investment & ROI Card */}
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                      <div className="flex items-center mb-4">
+                        <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center mr-3">
+                          <i className="ri-money-dollar-circle-line text-orange-600"></i>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900">Investment & ROI</h3>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-sm text-gray-600 mb-1">Implementation Cost</p>
+                          <p className="text-2xl font-bold text-orange-600">
+                            ${roiMetrics.implementation_cost?.toLocaleString() || '0'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600 mb-1">Break-even Timeline</p>
+                          <p className="text-2xl font-bold text-orange-600">
+                            {roiMetrics.break_even_months || 0} month{roiMetrics.break_even_months !== 1 ? 's' : ''}
+                          </p>
+                        </div>
+                        <div className="border-t border-gray-200 pt-4">
+                          <p className="text-sm text-gray-600 mb-1">12-Month Projected Gain</p>
+                          <p className="text-3xl font-bold text-orange-600">
+                            ${roiMetrics.twelve_month_projected_gain?.toLocaleString() || '0'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-sm text-gray-600 mb-1">Monthly Cost Savings</p>
-                      <p className="text-2xl font-bold text-green-600">$200</p>
+                  {/* Additional Metrics */}
+                  {(roiMetrics.time_savings_per_week || roiMetrics.efficiency_gain_percent) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                      {roiMetrics.time_savings_per_week && (
+                        <div className="bg-white border border-gray-200 rounded-lg p-6">
+                          <div className="flex items-center mb-2">
+                            <i className="ri-time-line text-blue-600 text-xl mr-2"></i>
+                            <h4 className="font-semibold text-gray-900">Time Savings</h4>
+                          </div>
+                          <p className="text-3xl font-bold text-blue-600">
+                            {roiMetrics.time_savings_per_week} hrs/week
+                          </p>
+                          <p className="text-sm text-gray-600 mt-1">Freed up for strategic work</p>
+                        </div>
+                      )}
+                      {roiMetrics.efficiency_gain_percent && (
+                        <div className="bg-white border border-gray-200 rounded-lg p-6">
+                          <div className="flex items-center mb-2">
+                            <i className="ri-speed-up-line text-purple-600 text-xl mr-2"></i>
+                            <h4 className="font-semibold text-gray-900">Efficiency Gain</h4>
+                          </div>
+                          <p className="text-3xl font-bold text-purple-600">
+                            {roiMetrics.efficiency_gain_percent}%
+                          </p>
+                          <p className="text-sm text-gray-600 mt-1">Process improvement</p>
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <p className="text-sm text-gray-600 mb-1">Monthly Revenue Increase</p>
-                      <p className="text-2xl font-bold text-green-600">$1,000</p>
+                  )}
+
+                  {/* AI Confidence Score */}
+                  <div className="bg-white border border-gray-200 rounded-lg p-8 text-center mb-8">
+                    <div className="w-24 h-24 bg-purple-500 text-white rounded-full flex items-center justify-center mx-auto mb-4">
+                      <span className="text-2xl font-bold">{aiConfidenceScore}%</span>
                     </div>
-                    <div className="border-t border-gray-200 pt-4">
-                      <p className="text-sm text-gray-600 mb-1">Total Monthly Impact</p>
-                      <p className="text-3xl font-bold text-green-600">$1,200</p>
-                    </div>
+                    <h3 className="text-xl font-semibold text-gray-900 mb-2">AI Confidence Score</h3>
+                    <p className="text-gray-600 max-w-2xl mx-auto">
+                      Based on market data, competitor analysis, and implementation complexity, our AI is {aiConfidenceScore}% confident these recommendations will deliver results.
+                    </p>
                   </div>
+
+                  {/* Detailed Breakdown */}
+                  {businessStrategies.length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                      <h4 className="text-lg font-semibold text-gray-900 mb-4">Projected Strategy Impact</h4>
+                      <div className="space-y-4">
+                        {businessStrategies.slice(0, 4).map((strategy) => {
+                          // Calculate estimated monthly impact per strategy
+                          const estimatedImpact = Math.round((roiMetrics.monthly_revenue_increase || 1000) / businessStrategies.length);
+
+                          return (
+                            <div key={strategy.id} className="flex justify-between items-center py-2 border-b border-gray-100">
+                              <span className="text-gray-600">{strategy.title}</span>
+                              <span className="font-semibold text-green-600">
+                                +${estimatedImpact.toLocaleString()}/month
+                              </span>
+                            </div>
+                          );
+                        })}
+                        <div className="flex justify-between items-center py-2 pt-4 border-t-2 border-gray-200">
+                          <span className="font-semibold text-gray-900">Total Monthly Impact</span>
+                          <span className="font-bold text-green-600 text-lg">
+                            +${((roiMetrics.monthly_cost_savings || 0) + (roiMetrics.monthly_revenue_increase || 0)).toLocaleString()}/month
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-12 bg-white border border-gray-200 rounded-lg">
+                  <i className="ri-money-dollar-circle-line text-4xl text-gray-400 mb-3"></i>
+                  <p className="text-gray-600">No ROI data available yet.</p>
+                  <p className="text-sm text-gray-500 mt-2">Run a new analysis to generate ROI projections.</p>
                 </div>
-
-                {/* Investment & ROI Card */}
-                <div className="bg-white border border-gray-200 rounded-lg p-6">
-                  <div className="flex items-center mb-4">
-                    <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center mr-3">
-                      <i className="ri-money-dollar-circle-line text-orange-600"></i>
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900">Investment & ROI</h3>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-sm text-gray-600 mb-1">Implementation Cost</p>
-                      <p className="text-2xl font-bold text-orange-600">$500</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600 mb-1">ROI Timeline</p>
-                      <p className="text-2xl font-bold text-orange-600">3-6 months</p>
-                    </div>
-                    <div className="border-t border-gray-200 pt-4">
-                      <p className="text-sm text-gray-600 mb-1">12-Month Projected Gain</p>
-                      <p className="text-3xl font-bold text-orange-600">$13,900</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* AI Confidence Score */}
-              <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-                <div className="w-24 h-24 bg-purple-500 text-white rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-2xl font-bold">85%</span>
-                </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">AI Confidence Score</h3>
-                <p className="text-gray-600 max-w-2xl mx-auto">
-                  Based on market data, competitor analysis, and implementation complexity, our AI is 85% confident these recommendations will deliver results.
-                </p>
-              </div>
-
-              {/* Detailed Breakdown */}
-              <div className="mt-8 bg-white border border-gray-200 rounded-lg p-6">
-                <h4 className="text-lg font-semibold text-gray-900 mb-4">Detailed ROI Breakdown</h4>
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                    <span className="text-gray-600">Content Marketing Strategy</span>
-                    <span className="font-semibold text-green-600">+$400/month</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                    <span className="text-gray-600">SEMrush Implementation</span>
-                    <span className="font-semibold text-green-600">+$300/month</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                    <span className="text-gray-600">Customer Journey Optimization</span>
-                    <span className="font-semibold text-green-600">+$350/month</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                    <span className="text-gray-600">Payment Experience Enhancement</span>
-                    <span className="font-semibold text-green-600">+$150/month</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 pt-4 border-t-2 border-gray-200">
-                    <span className="font-semibold text-gray-900">Total Monthly Impact</span>
-                    <span className="font-bold text-green-600 text-lg">+$1,200/month</span>
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -1782,7 +1751,7 @@ export default function Results() {
               Contact us
             </Button>
             <Button onClick={generatePDFReport}
-              disabled={isGeneratingPDF} 
+              disabled={isGeneratingPDF}
               variant="outline" size="lg" className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8">
               <i className="ri-download-line mr-2"></i>
               Download Report
@@ -1792,14 +1761,6 @@ export default function Results() {
       </section>
         </div>
 
-    // </div>
+    </div>
   );
-
-
-          
-
-       
-
-
-  
 }
