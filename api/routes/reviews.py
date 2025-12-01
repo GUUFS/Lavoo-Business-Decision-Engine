@@ -12,23 +12,6 @@ from typing import Optional, List
 router = APIRouter(tags=["reviews"])
 
 
-def extract_user_id(current_user):
-    """Helper function to extract user_id from current_user"""
-    if isinstance(current_user, dict):
-        if "user" in current_user:
-            user_data = current_user["user"]
-            if isinstance(user_data, dict):
-                return user_data.get("id") or user_data.get("user_id")
-            elif hasattr(user_data, 'id'):
-                return user_data.id
-            else:
-                return user_data
-        else:
-            return current_user.get("id") or current_user.get("user_id") or current_user.get("sub")
-    else:
-        return current_user.id
-    
-
 # Helper function
 def format_review_response(review: Review, db: Session) -> dict:
     """Format review with conversation metadata"""
@@ -75,12 +58,11 @@ async def root():
 
 
 @router.post("/api/reviews", response_model=ReviewResponse)
-async def create_review(review: ReviewCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def create_review(review: ReviewCreate, db: Session = Depends(get_db)):
     """Submit a new review"""
     try:
-        user_id = extract_user_id(current_user)
         db_review = Review(
-            user_id=user_id,
+            user_id=1,
             business_name=review.business_name,
             review_title=review.review_title,
             rating=review.rating,
@@ -98,10 +80,10 @@ async def create_review(review: ReviewCreate, current_user: User = Depends(get_c
 
 
 @router.get("/api/reviews", response_model=List[ReviewResponse])
-async def get_reviews(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_reviews(db: Session = Depends(get_db)):
     """Get all reviews for the current user"""
     try:
-        user_id = extract_user_id(current_user)
+        user_id = 1
         reviews = db.query(Review).filter(Review.user_id == user_id).order_by(Review.date_submitted.desc()).all()
         
         return [format_review_response(review, db) for review in reviews]
@@ -110,10 +92,10 @@ async def get_reviews(current_user: User = Depends(get_current_user), db: Sessio
 
 
 @router.get("/api/reviews/conversations", response_model=List[ReviewResponse])
-async def get_reviews_with_conversations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_reviews_with_conversations(db: Session = Depends(get_db)):
     """Get only reviews that have conversations"""
     try:
-        user_id = extract_user_id(current_user)
+        user_id = 1
         reviews = db.query(Review).filter(Review.user_id == user_id).all()
         
         reviews_with_conversations = []
@@ -127,11 +109,79 @@ async def get_reviews_with_conversations(current_user: User = Depends(get_curren
         raise HTTPException(status_code=500, detail=f"Error fetching conversations: {str(e)}")
 
 
+@router.get("/api/reviews/{review_id}", response_model=ReviewResponse)
+async def get_review(review_id: int, db: Session = Depends(get_db)):
+    """Get a specific review"""
+    try:
+        review = db.query(Review).filter(Review.id == review_id).first()
+        if not review:
+            raise HTTPException(status_code=404, detail="Review not found")
+        
+        return format_review_response(review, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching review: {str(e)}")
+
+
+@router.get("/api/reviews/{review_id}/conversations", response_model=List[ConversationResponse])
+async def get_conversations(review_id: int, db: Session = Depends(get_db)):
+    """Get all conversations for a review"""
+    try:
+        conversations = db.query(Conversation).filter(
+            Conversation.review_id == review_id
+        ).order_by(Conversation.timestamp.asc()).all()
+        
+        return conversations
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching conversations: {str(e)}")
+
+
+@router.post("/api/conversations", response_model=ConversationResponse)
+async def create_conversation(conversation: ConversationCreate, db: Session = Depends(get_db)):
+    """Add a message to a conversation"""
+    try:
+        db_conversation = Conversation(
+            review_id=conversation.review_id,
+            sender_type=conversation.sender_type,
+            message=conversation.message
+        )
+        db.add(db_conversation)
+        db.commit()
+        db.refresh(db_conversation)
+        
+        return db_conversation
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating conversation: {str(e)}")
+
+
+@router.put("/api/conversations/{review_id}/mark-read")
+async def mark_conversations_read(review_id: int, db: Session = Depends(get_db)):
+    """Mark all admin messages in a review as read"""
+    try:
+        conversations = db.query(Conversation).filter(
+            Conversation.review_id == review_id,
+            Conversation.sender_type == "admin",
+            Conversation.is_read == False
+        ).all()
+        
+        for conversation in conversations:
+            conversation.is_read = True
+        
+        db.commit()
+        
+        return {"message": "Conversations marked as read", "count": len(conversations)}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error marking conversations: {str(e)}")
+
+
 @router.get("/api/reviews/unread-count", response_model=UnreadCountResponse)
-async def get_unread_count(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_unread_count(db: Session = Depends(get_db)):
     """Get total unread message count"""
     try:
-        user_id = extract_user_id(current_user)
+        user_id = 1
         reviews = db.query(Review).filter(Review.user_id == user_id).all()
         
         total_unread = 0
@@ -154,75 +204,6 @@ async def get_unread_count(current_user: User = Depends(get_current_user), db: S
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching unread count: {str(e)}")
-
-
-@router.get("/api/reviews/{review_id}", response_model=ReviewResponse)
-async def get_review(review_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Get a specific review"""
-    try:
-        review = db.query(Review).filter(Review.id == review_id).first()
-        if not review:
-            raise HTTPException(status_code=404, detail="Review not found")
-        
-        return format_review_response(review, db)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching review: {str(e)}")
-
-
-@router.get("/api/reviews/{review_id}/conversations", response_model=List[ConversationResponse])
-async def get_conversations(review_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Get all conversations for a review"""
-    try:
-        conversations = db.query(Conversation).filter(
-            Conversation.review_id == review_id
-        ).order_by(Conversation.timestamp.asc()).all()
-        
-        return conversations
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching conversations: {str(e)}")
-
-
-@router.post("/api/conversations", response_model=ConversationResponse)
-async def create_conversation(conversation: ConversationCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Add a message to a conversation"""
-    try:
-        db_conversation = Conversation(
-            review_id=conversation.review_id,
-            sender_type=conversation.sender_type,
-            message=conversation.message
-        )
-        db.add(db_conversation)
-        db.commit()
-        db.refresh(db_conversation)
-        
-        return db_conversation
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error creating conversation: {str(e)}")
-
-
-@router.put("/api/conversations/{review_id}/mark-read")
-async def mark_conversations_read(review_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Mark all admin messages in a review as read"""
-    try:
-        conversations = db.query(Conversation).filter(
-            Conversation.review_id == review_id,
-            Conversation.sender_type == "admin",
-            Conversation.is_read == False
-        ).all()
-        
-        for conversation in conversations:
-            conversation.is_read = True
-        
-        db.commit()
-        
-        return {"message": "Conversations marked as read", "count": len(conversations)}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error marking conversations: {str(e)}")
-
 
 # Health check endpoint
 @router.get("/health")

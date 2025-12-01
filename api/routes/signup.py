@@ -53,7 +53,7 @@ def signup(
     # 🔍 DEBUG: Print what we received
     print(f"DEBUG - Received referrer_code: '{referrer_code}'")
     print(f"DEBUG - Type: {type(referrer_code)}")
-    
+
     # Check if email exists
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
@@ -69,45 +69,45 @@ def signup(
         # 🔍 DEBUG: Show what we're searching for
         search_code = referrer_code.upper().strip()
         print(f"DEBUG - Searching for referral_code: '{search_code}'")
-        
+
         # 🔍 DEBUG: Show all referral codes in database
         all_codes = db.query(User.referral_code).all()
         print(f"DEBUG - All referral codes in DB: {[code[0] for code in all_codes]}")
-        
+
         referrer = db.query(User).filter(
             User.referral_code == search_code
         ).first()
-        
+
         if not referrer:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Invalid referral code: '{referrer_code}'. No matching user found."
             )
-        
+
         print(f"DEBUG - Found referrer: {referrer.name} (ID: {referrer.id})")
-    
+
     # Generate unique referral code for new user
     user_refcode = generate_referral_code()
-    
+
     # Ensure referral code is unique
     while db.query(User).filter(User.referral_code == user_refcode).first():
         user_refcode = generate_referral_code()
-    
+
     # Create user
     hashed = pwd_context.hash(password)
     passcode = pwd_context.hash(confirm_password)
     new_user = User(
-        name=name, 
-        email=email, 
-        password=hashed, 
+        name=name,
+        email=email,
+        password=hashed,
         confirm_password=passcode,
-        referral_code=user_refcode, 
+        referral_code=user_refcode,
         referrer_code=referrer.referral_code if referrer else None,
     )
 
     db.add(new_user)
     db.flush()
-    
+
     # Process referral rewards
     if referrer:
         # Determine chops based on subscription status
@@ -126,13 +126,13 @@ def signup(
             created_at=datetime.utcnow()
         )
         db.add(referral)
-    
+
     db.commit()
     db.refresh(new_user)
-    
+
     return {
-        "message": "User created successfully", 
-        "user_id": new_user.id, 
+        "message": "User created successfully",
+        "user_id": new_user.id,
         "referral_code": new_user.referral_code,
         "referral_applied": referrer is not None
     }

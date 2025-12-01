@@ -33,41 +33,34 @@ class User(Base):
     confirm_password = Column(String(255), nullable=False)  # For validation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    total_chops = total_chops = Column(Integer, default=0)
+
+    # Chops system (Clinton's feature)
+    total_chops = Column(Integer, default=0)
     alert_reading_chops = Column(Integer, default=0)
     alert_sharing_chops = Column(Integer, default=0)
     insight_reading_chops = Column(Integer, default=0)
     insight_sharing_chops = Column(Integer, default=0)
     referral_chops = Column(Integer, default=0)
     referral_count = Column(Integer, default=0)
+
+    # Admin and subscription
     is_admin = Column(Boolean, default=False)
     subscription_status = Column(String, default="Free")
     subscription_plan = Column(String, nullable=True)
+
+    # Referral system (Clinton's feature)
     referral_code = Column(String, unique=True, index=True)
     referrer_code = Column(String, nullable=True)
 
-    '''Interaction with the subscriptions table'''
+    # Relationships
     subscriptions = relationship("Subscriptions", back_populates="user")
-
-    '''Interaction with the reports table'''
     tickets = relationship("Ticket", back_populates="user")
-
-    '''Interaction with the alerts table'''
     user_alerts = relationship("UserAlert", back_populates="user")
-
-    '''Interaction with the insights table'''
     user_insights = relationship("UserInsight", back_populates="user")
-
-    '''Interaction to check pinned insights'''
-    pinned_insights = relationship("UserPinnedInsight", back_populates = "user")
-
-    '''Interaction to check pinned alerts'''
+    pinned_insights = relationship("UserPinnedInsight", back_populates="user")
     pinned_alerts = relationship("UserPinnedAlert", back_populates="user")
-    
-    '''Interaction with the referrals table'''
     referrals = relationship("Referral", foreign_keys="Referral.referrer_id", back_populates="referrer")
     referred_by = relationship("Referral", foreign_keys="Referral.referred_user_id", back_populates="referred_user")
-
 
 class AITool(Base):
     """
@@ -114,26 +107,28 @@ class BusinessAnalysis(Base):
     Each analysis contains goals, capabilities, tool recommendations, and roadmap.
     """
     __tablename__ = "business_analyses"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
+
     # Original user input
     business_goal = Column(Text, nullable=False)  # Original user query
-    
+
     # AI Analysis Results (JSON fields)
     intent_analysis = Column(JSON)  # Objective, capabilities, stages, metrics
     tool_combinations = Column(JSON)  # 2-3 recommended tool combos with synergies
     roadmap = Column(JSON)  # Actionable plan with timeline
+    roi_projections = Column(JSON)  # ROI calculations, break-even, revenue impact (YOUR FIX)
+    ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing (YOUR FIX)
     estimated_cost = Column(Float)  # Monthly cost estimate
     timeline_weeks = Column(Integer)  # Implementation timeline
-    
+
     # Metadata
     status = Column(String(50), default="completed")  # pending, completed, failed
     ai_model_used = Column(String(100), default="gpt-4o-mini")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     # Relationships
     user = relationship("User", backref="business_analyses")
 
@@ -144,26 +139,26 @@ class ToolCombination(Base):
     Each combination represents a set of 2+ tools that work together.
     """
     __tablename__ = "tool_combinations"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     analysis_id = Column(Integer, ForeignKey("business_analyses.id"), nullable=False)
-    
+
     # Combination details
     combo_name = Column(String(255))  # e.g., "Email Growth Stack"
     tools = Column(JSON)  # List of tool IDs and names
     synergy_score = Column(Float)  # AI-calculated synergy (0-100)
-    
+
     # Integration details
     integration_flow = Column(JSON)  # How tools connect (data flow)
     setup_difficulty = Column(String(50))  # Easy, Medium, Hard
     total_monthly_cost = Column(Float)
-    
+
     # AI reasoning
     why_this_combo = Column(Text)  # AI explanation
     expected_outcome = Column(Text)  # What user can achieve
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # Relationships
     analysis = relationship("BusinessAnalysis", backref="combinations")
 
@@ -174,25 +169,25 @@ class RoadmapStage(Base):
     Each analysis has multiple stages (setup, execution, optimization).
     """
     __tablename__ = "roadmap_stages"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     analysis_id = Column(Integer, ForeignKey("business_analyses.id"), nullable=False)
-    
+
     # Stage details
     stage_number = Column(Integer, nullable=False)  # 1, 2, 3...
     stage_name = Column(String(255))  # Setup, Execute, Optimize
     duration_weeks = Column(Integer)
-    
+
     # Tasks and deliverables
     tasks = Column(JSON)  # List of action items
     deliverables = Column(JSON)  # Expected outputs
     metrics = Column(JSON)  # KPIs to track
-    
+
     # Cost breakdown
     cost_this_stage = Column(Float)
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # Relationships
     analysis = relationship("BusinessAnalysis", backref="roadmap_stages")
 
@@ -327,6 +322,7 @@ class AuthResponse(BaseModel):
     subscription_status: str | None = None
     subscription_plan: str | None = None
     referral_code: Optional[str] = None
+    referral_code: str | None = None
 
 
 # Paypal payment gateway
@@ -348,15 +344,15 @@ class Subscriptions(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     subscription_plan = Column(VARCHAR(50) )
-    transaction_id = Column(String(255), nullable=False, unique=True, index=True)  
+    transaction_id = Column(String(255), nullable=False, unique=True, index=True)
     tx_ref = Column(String, unique=True, index=True, nullable=False)
-    amount = Column(DECIMAL(10, 2), nullable=False)  
+    amount = Column(DECIMAL(10, 2), nullable=False)
     currency = Column(VARCHAR(10), nullable=False)
     status = Column(VARCHAR(20), nullable=False)
     payment_provider = Column(VARCHAR(20), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    start_date = Column(DateTime(timezone=True), nullable=False) 
+    start_date = Column(DateTime(timezone=True), nullable=False)
     end_date = Column(DateTime(timezone=True), nullable=False)
 
     user = relationship("User", back_populates="subscriptions")
@@ -420,7 +416,7 @@ class TicketResponse(BaseModel):
     unread_count: int = 0
     last_message: Optional[str] = None
     last_message_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -433,13 +429,13 @@ class MessageResponse(BaseModel):
     message: str
     is_read: bool
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
 class Ticket(Base):
     __tablename__ = "tickets"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     issue = Column(Text, nullable=False)
@@ -447,14 +443,14 @@ class Ticket(Base):
     status = Column(String(50), default="open")  # open, in_progress, resolved, closed
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     user = relationship("User", back_populates="tickets")
     messages = relationship("TicketMessage", back_populates="ticket", cascade="all, delete-orphan")
 
 class TicketMessage(Base):
     __tablename__ = "ticket_messages"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -462,7 +458,7 @@ class TicketMessage(Base):
     message = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     # Relationships
     ticket = relationship("Ticket", back_populates="messages")
     sender = relationship("User")
@@ -472,7 +468,7 @@ class TicketMessage(Base):
 '''
 class Review(Base):
     __tablename__ = "reviews"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, index=True)  # Add user authentication later
     business_name = Column(String, index=True)
@@ -480,7 +476,7 @@ class Review(Base):
     rating = Column(Integer)
     review_text = Column(Text)
     date_submitted = Column(DateTime, default=datetime.utcnow)
-    status = Column(String, default="Submitted")  # published, under-review, rejected
+    status = Column(String, default="Submitted")  # published, under-review, rejected (Clinton's)
     category = Column(String, default="General")
     helpful = Column(Integer, default=0)
     verified = Column(Boolean, default=False)
@@ -489,14 +485,14 @@ class Review(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     review_id = Column(Integer, ForeignKey("reviews.id"))
     sender_type = Column(String)  # 'admin' or 'user'
     message = Column(Text)
     timestamp = Column(DateTime, default=datetime.utcnow)
     is_read = Column(Boolean, default=False)
-    
+
     # Relationships
     review = relationship("Review", back_populates="conversations")
 
@@ -550,7 +546,7 @@ class UnreadCountResponse(BaseModel):
 '''Opportunity Alert Tables and Schema'''
 class Alert(Base):
     __tablename__ = "alerts"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
     category = Column(String, nullable=False)
@@ -566,13 +562,13 @@ class Alert(Base):
     total_shares = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     user_alerts = relationship("UserAlert", back_populates="alert")
 
 
 class UserAlert(Base):
     __tablename__ = "user_alerts"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     alert_id = Column(Integer, ForeignKey("alerts.id"))
@@ -584,7 +580,7 @@ class UserAlert(Base):
     chops_earned_from_view = Column(Integer, default=0)
     chops_earned_from_share = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     user = relationship("User", back_populates="user_alerts")
     alert = relationship("Alert", back_populates="user_alerts")
 
@@ -592,13 +588,13 @@ class UserAlert(Base):
 '''Referrals Table'''
 class Referral(Base):
     __tablename__ = "referrals"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     referrer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     referred_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     chops_awarded = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
     referred_user = relationship("User",foreign_keys=[referred_user_id], back_populates="referred_by")
 
@@ -610,16 +606,16 @@ class ReferralResponse(BaseModel):
     chops_awarded: int
     created_at: str
     is_active: bool
-    
+
     class Config:
         from_attributes = True
-        
+
 class ReferralStats(BaseModel):
     total_referrals: int
     total_chops_earned: int
     referrals_this_month: int
     recent_referrals: List[dict]
-    
+
     class Config:
         from_attributes = True
 
@@ -627,7 +623,7 @@ class ReferralStats(BaseModel):
 class ReferralCreate(BaseModel):
     referred_user_id: int
     chops_awarded: int = 0
-    
+
     class Config:
         from_attributes = True
 
@@ -667,7 +663,7 @@ class AlertResponse(BaseModel):
     has_shared: bool = False
     is_attended: bool = False
     is_pinned: bool = False
-    
+
     class Config:
         from_attributes = True
 
@@ -701,7 +697,7 @@ class Insight(Base):
 
 class UserInsight(Base):
     __tablename__ = "user_insights"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     insight_id = Column(Integer, ForeignKey("insights.id"))
@@ -713,14 +709,14 @@ class UserInsight(Base):
     chops_earned_from_view = Column(Integer, default=0)
     chops_earned_from_share = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     user = relationship("User", back_populates="user_insights")
     insight = relationship("Insight", back_populates="user_insights")
 
 
 class UserPinnedInsight(Base):
     __tablename__ = "user_pinned_insights"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     insight_id = Column(Integer, ForeignKey("insights.id"))
@@ -785,7 +781,7 @@ class ViewInsightRequest(BaseModel):
 
 class ShareInsightRequest(BaseModel):
     insight_id: int
-    
+
     class Config:
         extra = "ignore"
 
