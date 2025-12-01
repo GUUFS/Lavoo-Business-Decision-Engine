@@ -338,7 +338,7 @@ export default function Dashboard() {
                             </div>
                         </div>
                         <div className="mt-3 flex items-center">
-                            <i className="ri-arrow-up-line text-green-500 text-sm"></i>
+                            {/* <i className="ri-arrow-up-line text-green-500 text-sm"></i> */}
                             {/* <span className="text-green-500 text-sm font-medium ml-1">+12.5%</span> */}
                             {/* <span className="text-gray-500 text-sm ml-2">vs last month</span> */}
                         </div>
@@ -349,16 +349,16 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm text-gray-600 mb-1">Active Alerts</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats.active_alerts}</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats.unattended_alerts}</p>
                             </div>
                             <div className="w-10 h-10 md:w-12 md:h-12 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-alert-line text-orange-600 text-lg md:text-xl"></i>
+                                <i className="ri-alert-line text-orange-600 text-lg md:text-xl"></i> 
                             </div>
                         </div>
                         <div className="mt-3 flex items-center">
-                            <i className="ri-arrow-up-line text-orange-500 text-sm"></i>
-                            <span className="text-orange-500 text-sm font-medium ml-1">{stats.unattended_alerts} new</span>
-                            <span className="text-gray-500 text-sm ml-2">unattended</span>
+                            {/* <i className="ri-arrow-up-line text-orange-500 text-sm"></i> */}
+                            {/* <span className="text-orange-500 text-sm font-medium ml-1">{stats.unattended_alerts} new</span> */}
+                            {/* <span className="text-gray-500 text-sm ml-2">unattended</span> */}
                         </div>
                     </div>
 
@@ -374,9 +374,9 @@ export default function Dashboard() {
                             </div>
                         </div>
                         <div className="mt-3 flex items-center">
-                            <i className="ri-arrow-up-line text-purple-500 text-sm"></i>
-                            <span className="text-purple-500 text-sm font-medium ml-1">+{stats.new_insights_today} today</span>
-                            <span className="text-gray-500 text-sm ml-2">this week</span>
+                            {/* <i className="ri-arrow-up-line text-purple-500 text-sm"></i> */}
+                            {/* <span className="text-purple-500 text-sm font-medium ml-1">+{stats.new_insights_today} today</span> */}
+                            {/* <span className="text-gray-500 text-sm ml-2">this week</span> */}
                         </div>
                     </div>
 
@@ -392,9 +392,9 @@ export default function Dashboard() {
                             </div>
                         </div>
                         <div className="mt-3 flex items-center">
-                            <i className="ri-arrow-up-line text-yellow-500 text-sm"></i>
-                            <span className="text-yellow-500 text-sm font-medium ml-1">+{stats.rating_change}</span>
-                            <span className="text-gray-500 text-sm ml-2">this month</span>
+                            {/* <i className="ri-arrow-up-line text-yellow-500 text-sm"></i> */}
+                            {/* <span className="text-yellow-500 text-sm font-medium ml-1">+{stats.rating_change}</span> */}
+                            {/* <span className="text-gray-500 text-sm ml-2">this month</span> */}
                         </div>
                     </div>
                 </div>
@@ -443,7 +443,7 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    {/* Urgent Opportunities */}
+                    {/* Opportunity Alerts */}
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
                         <div className="p-4 md:p-6 border-b border-gray-200">
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
@@ -451,7 +451,7 @@ export default function Dashboard() {
                                     <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                         <i className="ri-alert-line text-orange-600"></i>
                                     </div>
-                                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Urgent Opportunities</h3>
+                                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Opportunity Alerts</h3>
                                 </div>
                                 <Button
                                     onClick={() => navigate('/dashboard/alerts')}
@@ -529,7 +529,17 @@ export default function Dashboard() {
                                 {/* Referral Chops */}
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
-                                        <h4 className="font-medium text-gray-900 text-sm md:text-base">Referral Chops</h4>
+                                        <h4 className="font-medium text-gray-900 text-sm md:text-base">Affiliate Commissions</h4>
+                                        <i className="ri-user-add-line text-purple-600 text-xl"></i>
+                                    </div>
+                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">$0</div>
+                                    <div className="text-sm text-gray-500"></div>
+                                </div>
+
+                                {/* Referral Chops */}
+                                <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h4 className="font-medium text-gray-900 text-sm md:text-base">Chops Earned</h4>
                                         <i className="ri-user-add-line text-purple-600 text-xl"></i>
                                     </div>
                                     <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{stats.referral_chops}</div>

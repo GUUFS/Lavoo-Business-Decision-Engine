@@ -55,12 +55,12 @@ export default function SignUp() {
 
     if (referralCode) {
       payload.append("referrer_code", referralCode);
-      console.log("DEBUG - Sending referral code:", referralCode);
+      // console.log("DEBUG - Sending referral code:", referralCode);
     }
 
-    console.log("🔍 DEBUG - FormData contents:");
+    // console.log("🔍 DEBUG - FormData contents:");
   for (let [key, value] of payload.entries()) {
-    console.log(`  ${key}:`, value);
+    // console.log(`  ${key}:`, value);
   }
     mutate(payload, {
       onSuccess: () => {

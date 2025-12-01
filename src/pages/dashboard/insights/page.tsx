@@ -35,7 +35,7 @@ const FREE_USER_LIMIT = 3;
 
 export default function DashboardInsights() {
   const { data: user } = useCurrentUser();
-  const referral_code = user?.referral_code || null;
+  const referral_code = user?.referral_code || ' ';
  
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -68,7 +68,6 @@ export default function DashboardInsights() {
   // Fetch insights from backend
   const fetchInsights = async (page: number = 1) => {
     try {
-      setLoading(true);
       const response = await axios.get(`${API_BASE_URL}/insights`, {
         params: { page, limit: 5 },
         headers: {
@@ -142,7 +141,14 @@ export default function DashboardInsights() {
     );
 
     if (response.data.chops_earned > 0) {
+      // Update both insights and displayInsights
       setInsights(prev => 
+        prev.map(insight => 
+          insight.id === insightId ? { ...insight, is_read: true } : insight
+        )
+      );
+      
+      setDisplayInsights(prev => 
         prev.map(insight => 
           insight.id === insightId ? { ...insight, is_read: true } : insight
         )
@@ -158,6 +164,19 @@ export default function DashboardInsights() {
 
       showToastMessage(
         `You earned ${response.data.chops_earned} chop${response.data.chops_earned > 1 ? 's' : ''} for reading this insight!`
+      );
+    } else {
+      // Even if no chops earned (already read), update the UI state
+      setInsights(prev => 
+        prev.map(insight => 
+          insight.id === insightId ? { ...insight, is_read: true } : insight
+        )
+      );
+      
+      setDisplayInsights(prev => 
+        prev.map(insight => 
+          insight.id === insightId ? { ...insight, is_read: true } : insight
+        )
       );
     }
   } catch (error: any) {
@@ -181,11 +200,21 @@ export default function DashboardInsights() {
 
       if (response.data.chops_earned > 0) {
         // Update local state
+        const updatedInsight = {
+        ...insights.find(insight => insight.id === insightId),
+        is_shared: true
+      } as Insight;
+      
         setInsights(prev => 
           prev.map(insight => 
             insight.id === insightId ? { ...insight, is_shared: true } : insight
           )
         );
+
+        setDisplayInsights(prev => 
+          prev.map(insight =>
+            insight.id === insightId ? { ...insight, is_shared: true} : insight )
+          );
         
         setUserStats(prev => ({
           ...prev,
@@ -236,6 +265,7 @@ export default function DashboardInsights() {
 
 
   useEffect(() => {
+    if (loading || displayInsights.length === 0) return;
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -403,9 +433,9 @@ export default function DashboardInsights() {
     
     switch (status) {
       case 'read':
-        return { ...baseStyle, backgroundColor: '#10b981', color: '#ffffff' };
-      case 'reading':
         return { ...baseStyle, backgroundColor: '#f97316', color: '#ffffff' };
+      case 'reading':
+        return { ...baseStyle, backgroundColor: '#d68306ff', color: '#ffffff' };
       case 'unread':
         return { ...baseStyle, backgroundColor: '#e5e7eb', color: '#9ca3af', cursor: 'default' };
     }
@@ -548,21 +578,8 @@ export default function DashboardInsights() {
                 >
                   {/* Pinned Badge */}
                   {insight.is_pinned && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '16px',
-                      right: '16px',
-                      backgroundColor: '#f59e0b',
-                      color: '#ffffff',
-                      padding: '6px 12px',
-                      borderRadius: '20px',
-                      fontSize: '12px',
-                      fontWeight: '600',
-                      zIndex: 10,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}>
+                    <div style={{ position: 'absolute', top: '16px', right: '16px', backgroundColor: '#f59e0b', color: '#ffffff', padding: '6px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', zIndex: 10, display: 'flex', alignItems: 'center', gap: '4px'
+                 }}>
                       <i className="ri-pushpin-fill"></i>
                       Pinned
                     </div>
@@ -571,12 +588,21 @@ export default function DashboardInsights() {
                   
                   <div style={{ padding: '32px' }}>
                     {/* Header */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', }}>
                       <span style={{ backgroundColor: '#f3f4f6', color: '#374151', padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '500' }}>
                         {insight.category}
                       </span>
                       <span style={{ fontSize: '14px', color: '#6b7280' }}>{insight.read_time}</span>
                       <span style={{ fontSize: '14px', color: '#6b7280' }}>{insight.date}</span>
+                      <span>
+                        {/* Pin Button */}
+                      <button onClick={() => togglePin(insight.id)}
+                        style={{ height: '40px', minWidth: '100px', backgroundColor: insight.is_pinned ? '#fef3c7' : '#f3f4f6', color: insight.is_pinned ? '#92400e' : '#374151', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.3s ease', padding: '0 16px'}}
+                      >
+                        <i className={insight.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'}></i>
+                        {insight.is_pinned ? 'Unpin' : 'Pin'}
+                      </button>
+                      </span>
                     </div>
                     
                     <h2 style={{  fontSize: window.innerWidth >= 768 ? '24px' : '20px', fontWeight: 'bold',  color: '#111827', marginBottom: '24px',lineHeight: '1.3' }}>
@@ -621,7 +647,7 @@ export default function DashboardInsights() {
                       {/* Read Status Button */}
                       <button
                         style={{
-                          ...getButtonStyle(insight), height: '52px', minWidth: '0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          ...getButtonStyle(insight), height: '52px', display: 'flex', alignItems: 'center', minWidth: '0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', justifyContent: 'center' }}
                         title={getButtonText(insight)} // Tooltip on long text
                       >
                         {getReadingStatus(insight) === 'read' && (
@@ -635,23 +661,15 @@ export default function DashboardInsights() {
 
                       {/* Share Button */}
                       <button onClick={() => handleShare(insight)}
-                        style={{ height: '52px', backgroundColor: insight.is_shared ? '#10b981' : '#3b82f6', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', whiteSpace: 'nowrap', transition: 'all 0.3s ease'}}
+                        style={{ height: '52px', backgroundColor: insight.is_shared ? '#f97316' : '#3b82f6', color: '#ffffff', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', whiteSpace: 'nowrap', transition: 'all 0.3s ease'}}
                       >
                         <i className={insight.is_shared ? 'ri-check-line' : 'ri-share-line'}></i>
                         {insight.is_shared ? 'Shared' : `Share (+${userStats.is_pro ? 10 : 5} chops)`}
                       </button>
 
-                      {/* Pin Button */}
-                      <button onClick={() => togglePin(insight.id)}
-                        style={{ height: '52px', backgroundColor: insight.is_pinned ? '#fef3c7' : '#f3f4f6', color: insight.is_pinned ? '#92400e' : '#374151', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.3s ease'}}
-                      >
-                        <i className={insight.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'}></i>
-                        {insight.is_pinned ? 'Unpin' : 'Pin'}
-                      </button>
-
                       {/* View Source Button */}
                       <button onClick={() => window.open(insight.source, '_blank')}
-                        style={{ height: '52px', backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.3s ease'}}
+                        style={{ height: '52px', backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'background-color 0.3s ease', marginLeft: '20px'}}
                       >
                         <i className="ri-external-link-line"></i>
                         View Details
@@ -661,15 +679,8 @@ export default function DashboardInsights() {
                 </div>
                   ))}
                   {!userStats.is_pro && insights.length > FREE_USER_LIMIT && (
-          <div style={{ 
-            textAlign: 'center', 
-            padding: '40px 24px', 
-            backgroundColor: '#fff7ed', 
-            borderRadius: '16px', 
-            border: '2px dashed #fb923c',
-            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
-            marginTop: '32px'
-          }}>
+          <div style={{ textAlign: 'center', padding: '40px 24px', backgroundColor: '#fff7ed', borderRadius: '16px', border: '2px dashed #fb923c', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', marginTop: '32px'
+       }}>
             <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#c2410c', marginBottom: '12px' }}>
               Unlock More Insights!
             </h3>
@@ -677,7 +688,7 @@ export default function DashboardInsights() {
               You've viewed your first {FREE_USER_LIMIT} insights. Upgrade to Pro to access the full AI Insights Feed and earn up to 5x more Chops!
             </p>
             <button
-              onClick={() => showToastMessage('Upgrade functionality would go here!')} // Replace with actual upgrade link/modal logic
+              onClick={() =>window.location.href = '/upgrade'} // Replace with actual upgrade link/modal logic
               style={{
                 backgroundColor: '#f97316',
                 color: '#ffffff',
@@ -700,7 +711,7 @@ export default function DashboardInsights() {
           )}
 
           {/* Pagination */}
-          {totalPages > 1 && (
+          {userStats.is_pro && totalPages > 1 && (
             <div style={{ 
               display: 'flex', 
               justifyContent: 'center', 
