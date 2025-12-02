@@ -218,7 +218,7 @@ class UserResponse(BaseModel):
     insight_sharing_chops: int
     referral_chops: int
     referral_count: int
-    referral_code: str
+    referral_code: Optional[str] = None
 
 
 class AIToolBase(BaseModel):
@@ -321,6 +321,7 @@ class AuthResponse(BaseModel):
     role: str
     subscription_status: str | None = None
     subscription_plan: str | None = None
+    referral_code: Optional[str] = None
     referral_code: str | None = None
 
 

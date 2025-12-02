@@ -9,6 +9,8 @@ from api.routes.login import get_current_user
 
 from typing import Optional, List
 
+from sqlalchemy import or_
+
 router = APIRouter(tags=["alerts"])
 
 def is_pro_user(subscription_status: str) -> bool:
@@ -120,10 +122,15 @@ def get_alerts(
             UserAlert.alert_id == alert.id
         ).first()
         
-        # Mark as attended if ANY interaction exists
+        # Mark as attended if the is_attended flag is True OR if user has viewed/shared
         is_attended = False
+        has_viewed = False
+        has_shared = False
+        
         if user_alert:
-            is_attended = user_alert.has_viewed or user_alert.has_shared or user_alert.is_attended
+            has_viewed = user_alert.has_viewed
+            has_shared = user_alert.has_shared
+            is_attended = user_alert.is_attended or has_viewed or has_shared
         
         alert_dict = {
             "id": alert.id,
@@ -139,8 +146,8 @@ def get_alerts(
             "date": alert.date,
             "total_views": alert.total_views,
             "total_shares": alert.total_shares,
-            "has_viewed": user_alert.has_viewed if user_alert else False,
-            "has_shared": user_alert.has_shared if user_alert else False,
+            "has_viewed": has_viewed,
+            "has_shared": has_shared,
             "is_attended": is_attended,
             "is_pinned": alert.id in pinned_alert_ids
         }
@@ -211,62 +218,83 @@ def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_use
         UserAlert.alert_id == request.alert_id
     ).first()
     
+    chops_earned = 0
+    
     if not user_alert:
-        # Create new record
+        # Create new record - FIRST TIME VIEWING
+        chops_to_award = 5 if is_pro_user(user.subscription_status) else 1
+        
         user_alert = UserAlert(
             user_id=user.id,
             alert_id=request.alert_id,
             has_viewed=True,
             is_attended=True,
-            viewed_at=datetime.utcnow()
+            viewed_at=datetime.utcnow(),
+            chops_earned_from_view=chops_to_award
         )
         
-        # Award chops based on subscription status (active = 5, free = 1)
-        chops_to_award = 5 if is_pro_user(user.subscription_status) else 1
-        user_alert.chops_earned_from_view = chops_to_award
+        # Award chops
         user.total_chops += chops_to_award
         user.alert_reading_chops += chops_to_award
+        chops_earned = chops_to_award
         
         # Update alert view count
         alert.total_views += 1
         
         db.add(user_alert)
         db.commit()
+        db.refresh(user)  # Refresh to get updated values
         
         return {
             "message": "Alert viewed successfully",
-            "chops_earned": chops_to_award,
-            "total_chops": user.total_chops
+            "chops_earned": chops_earned,
+            "total_chops": user.total_chops,
+            "alert_reading_chops": user.alert_reading_chops,
+            "alert_sharing_chops": user.alert_sharing_chops
         }
-    else:
-        # Already viewed, just mark as attended if not already
-        if not user_alert.has_viewed:
-            user_alert.has_viewed = True
-            user_alert.viewed_at = datetime.utcnow()
-            alert.total_views += 1
-            
-            # Award chops based on subscription status
-            chops_to_award = 5 if is_pro_user(user.subscription_status) else 1
-            user_alert.chops_earned_from_view = chops_to_award
-            user.total_chops += chops_to_award
-            user.alert_reading_chops += chops_to_award
-            
-            db.commit()
-            
-            return {
-                "message": "Alert viewed successfully",
-                "chops_earned": chops_to_award,
-                "total_chops": user.total_chops
-            }
+    
+    elif not user_alert.has_viewed:
+        # Record exists but not viewed yet - FIRST TIME VIEWING
+        chops_to_award = 5 if is_pro_user(user.subscription_status) else 1
         
+        user_alert.has_viewed = True
+        user_alert.is_attended = True
+        user_alert.viewed_at = datetime.utcnow()
+        user_alert.chops_earned_from_view = chops_to_award
+        
+        # Award chops
+        user.total_chops += chops_to_award
+        user.alert_reading_chops += chops_to_award
+        chops_earned = chops_to_award
+        
+        # Update alert view count
+        alert.total_views += 1
+        
+        db.commit()
+        db.refresh(user)  # Refresh to get updated values
+        
+        return {
+            "message": "Alert viewed successfully",
+            "chops_earned": chops_earned,
+            "total_chops": user.total_chops,
+            "alert_reading_chops": user.alert_reading_chops,
+            "alert_sharing_chops": user.alert_sharing_chops
+        }
+    
+    else:
+        # Already viewed - NO CHOPS AWARDED
         if not user_alert.is_attended:
             user_alert.is_attended = True
             db.commit()
         
+        db.refresh(user)  # Refresh to get current values
+        
         return {
             "message": "Alert already viewed",
             "chops_earned": 0,
-            "total_chops": user.total_chops
+            "total_chops": user.total_chops,
+            "alert_reading_chops": user.alert_reading_chops,
+            "alert_sharing_chops": user.alert_sharing_chops
         }
 
 
@@ -288,107 +316,124 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
         UserAlert.alert_id == request.alert_id
     ).first()
     
+    chops_earned = 0
+    
     if not user_alert:
-        # Create new record
+        # Create new record - FIRST TIME SHARING
+        chops_to_award = 10 if is_pro_user(user.subscription_status) else 5
+        
         user_alert = UserAlert(
             user_id=user.id,
             alert_id=request.alert_id,
             has_shared=True,
-            is_attended=True,  # Mark as attended when sharing
-            shared_at=datetime.utcnow()
+            is_attended=True,
+            shared_at=datetime.utcnow(),
+            chops_earned_from_share=chops_to_award
         )
         
-        # Award chops based on subscription status (active = 10, free = 5)
-        chops_to_award = 10 if is_pro_user(user.subscription_status) else 5
-        user_alert.chops_earned_from_share = chops_to_award
+        # Award chops
         user.total_chops += chops_to_award
         user.alert_sharing_chops += chops_to_award
+        chops_earned = chops_to_award
         
         # Update alert share count
         alert.total_shares += 1
         
         db.add(user_alert)
         db.commit()
+        db.refresh(user)  # Refresh to get updated values
         
         return {
             "message": "Alert shared successfully",
-            "chops_earned": chops_to_award,
-            "total_chops": user.total_chops
+            "chops_earned": chops_earned,
+            "total_chops": user.total_chops,
+            "alert_reading_chops": user.alert_reading_chops,
+            "alert_sharing_chops": user.alert_sharing_chops
         }
+    
+    elif not user_alert.has_shared:
+        # Record exists but not shared yet - FIRST TIME SHARING
+        chops_to_award = 10 if is_pro_user(user.subscription_status) else 5
+        
+        user_alert.has_shared = True
+        user_alert.is_attended = True
+        user_alert.shared_at = datetime.utcnow()
+        user_alert.chops_earned_from_share = chops_to_award
+        
+        # Award chops
+        user.total_chops += chops_to_award
+        user.alert_sharing_chops += chops_to_award
+        chops_earned = chops_to_award
+        
+        # Update alert share count
+        alert.total_shares += 1
+        
+        db.commit()
+        db.refresh(user)  # Refresh to get updated values
+        
+        return {
+            "message": "Alert shared successfully",
+            "chops_earned": chops_earned,
+            "total_chops": user.total_chops,
+            "alert_reading_chops": user.alert_reading_chops,
+            "alert_sharing_chops": user.alert_sharing_chops
+        }
+    
     else:
-        # Check if already shared
-        if not user_alert.has_shared:
-            user_alert.has_shared = True
-            user_alert.is_attended = True  # Mark as attended when sharing
-            user_alert.shared_at = datetime.utcnow()
-            
-            # Award chops based on subscription status
-            chops_to_award = 10 if is_pro_user(user.subscription_status) else 5
-            user_alert.chops_earned_from_share = chops_to_award
-            user.total_chops += chops_to_award
-            user.alert_sharing_chops += chops_to_award
-            
-            # Update alert share count
-            alert.total_shares += 1
-            
-            db.commit()
-            
-            return {
-                "message": "Alert shared successfully",
-                "chops_earned": chops_to_award,
-                "total_chops": user.total_chops
-            }
+        # Already shared - NO CHOPS AWARDED
+        db.refresh(user)  # Refresh to get current values
         
         return {
             "message": "Alert already shared",
             "chops_earned": 0,
-            "total_chops": user.total_chops
+            "total_chops": user.total_chops,
+            "alert_reading_chops": user.alert_reading_chops,
+            "alert_sharing_chops": user.alert_sharing_chops
         }
 
 
 @router.get("/api/users/{user_id}/alerts/stats")
-def get_user_alert_stats(user_id: int, db: Session = Depends(get_db)):
-    """Get user's alert interaction statistics"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    total_alerts = db.query(Alert).filter(Alert.is_active == True).count()
+def get_user_alert_stats(user_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
 
-    # All alerts the user has interacted with (viewed OR shared OR attended)
-    attended_alert_ids = db.query(UserAlert.alert_id).filter(
-        UserAlert.user_id == user_id
-    ).filter(
-        (UserAlert.has_viewed == True) |
-        (UserAlert.has_shared == True) |
-        (UserAlert.is_attended == True)
-    ).subquery()
+    user = current_user["user"]
 
-    viewed_count = db.query(UserAlert).filter(
-        UserAlert.user_id == user_id,
-        UserAlert.has_viewed == True
-    ).count()
-    
-    shared_count = db.query(UserAlert).filter(
-        UserAlert.user_id == user_id,
-        UserAlert.has_shared == True
-    ).count()
+    if user.id != user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
 
-    # Count as attended if ANY interaction exists
-    unattended_count = db.query(Alert).filter(
+    # Total number of active alerts
+    total_active_alerts = db.query(Alert).filter(Alert.is_active == True).count()
+
+    # COUNT alerts where user has actually attended (your real metric)
+    attended_count = db.query(UserAlert.alert_id).join(Alert).filter(
+        UserAlert.user_id == user.id,
         Alert.is_active == True,
-        ~Alert.id.in_(attended_alert_ids)  # This is the key!
-    ).count()
+        UserAlert.is_attended == True
+    ).distinct().count()
 
-    attended_count = total_alerts - unattended_count
+    unattended_count = max(0, total_active_alerts - attended_count)
+
+    # Extra: still useful breakdowns if needed
+    viewed_count = db.query(UserAlert.alert_id).join(Alert).filter(
+        UserAlert.user_id == user.id,
+        Alert.is_active == True,
+        UserAlert.has_viewed == True
+    ).distinct().count()
+
+    shared_count = db.query(UserAlert.alert_id).join(Alert).filter(
+        UserAlert.user_id == user.id,
+        Alert.is_active == True,
+        UserAlert.has_shared == True
+    ).distinct().count()
 
     return {
-        "total_alerts": total_alerts,
-        "viewed_count": viewed_count,
-        "shared_count": shared_count,
+        "total_alerts": total_active_alerts,
         "attended_count": attended_count,
-        "unattended_count": unattended_count
+        "unattended_count": unattended_count,
+        "viewed_count": viewed_count,
+        "shared_count": shared_count
     }
+
+
 
 
 @router.post("/api/alerts/pin")
@@ -408,10 +453,10 @@ def pin_alert(
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     
-    # Check if already pinned (fix the column name here)
+    # Check if already pinned
     existing = db.query(UserPinnedAlert).filter(
         UserPinnedAlert.user_id == user.id,
-        UserPinnedAlert.alert_id == request.alert_id  # Fixed: was alert_id_id
+        UserPinnedAlert.alert_id == request.alert_id
     ).first()
     
     if existing:
