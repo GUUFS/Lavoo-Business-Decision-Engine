@@ -37,6 +37,7 @@ from config.logging import get_logger, setup_logging
 from db.pg_connections import get_db_info, init_db, get_db
 from db.pg_models import User, CreateOrderRequest, CaptureRequest
 from db.pg_connections import SessionLocal
+from api.cache import init_cache, close_cache
 
 # Initialize logging system
 setup_logging(level=logging.INFO if os.getenv("DEBUG") != "true" else logging.DEBUG)
@@ -107,7 +108,7 @@ async def create_admin_user(db: Session=Depends(get_db)):
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database tables on application startup"""
+    """Initialize database tables and caching on application startup"""
     try:
         init_db()
         db_info = get_db_info()
@@ -115,9 +116,19 @@ async def startup_event():
 
         # Create admin user
         await create_admin_user(SessionLocal())
+
+        # Initialize Redis/in-memory cache
+        await init_cache()
+
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         raise
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on application shutdown"""
+    await close_cache()
 
 origins = ["http://localhost:3000",
            "http://localhost:5173",
