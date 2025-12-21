@@ -159,7 +159,7 @@ def get_insights(
                 "read_time": insight.read_time,
                 "date": insight.date,
                 "source": insight.source,
-
+                "url": insight.url or "",
                 "what_changed": insight.what_changed,
                 "why_it_matters": insight.why_it_matters,
                 "action_to_take": insight.action_to_take,

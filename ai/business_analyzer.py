@@ -51,7 +51,7 @@ class BusinessAnalyzer:
             db_session: SQLAlchemy database session
         """
         self.db = db_session
-        self.model = "grok-4-1-fast-non-reasoning"  # Grok 4.1 Fast (non-reasoning for quick responses)
+        self.model = "grok-4-1-fast-reasoning"  # Grok 4.1 Fast Reasoning for quality responses
 
         # Initialize OpenAI SDK client for xAI Grok API
         if HAS_XAI:
@@ -61,12 +61,13 @@ class BusinessAnalyzer:
                 self.client = None
             else:
                 # Initialize OpenAI client configured for xAI
+                # Extended timeout for complex reasoning tasks (ROI calculations, etc.)
                 self.client = OpenAI(
                     api_key=api_key,
                     base_url="https://api.x.ai/v1",
-                    timeout=120.0  # 2 minutes to prevent timeouts while still being reasonable
+                    timeout=300.0  # 5 minutes for complex reasoning tasks
                 )
-                logger.info("xAI Grok 4.1 Fast (non-reasoning) client initialized successfully via OpenAI SDK")
+                logger.info("xAI Grok 4.1 Fast Reasoning client initialized successfully via OpenAI SDK")
         else:
             self.client = None
             logger.warning("OpenAI SDK not installed, using fallback methods")
@@ -83,6 +84,7 @@ class BusinessAnalyzer:
             Complete analysis with intent, tool combos, and roadmap
         """
         logger.info(f"Starting analysis for user {user_id}: {user_goal[:100]}")
+        start_time = datetime.now()  # Track analysis start time
 
         try:
             # STEP 1: Intent Analysis (AI)
@@ -134,6 +136,7 @@ class BusinessAnalyzer:
                 roadmap=roadmap,
                 roi_projections=roi_projections,
                 ai_tools_data=ai_tools,
+                start_time=start_time,
             )
 
             # STEP 8: Transform to UI Format & Return
@@ -1151,14 +1154,16 @@ Use CONSERVATIVE estimates. Show your economic reasoning. Return ONLY valid JSON
 
         if HAS_XAI and self.client:
             try:
-                # Grok 4.1 Fast API call via OpenAI SDK
+                # Grok 4.1 Fast Reasoning API call - optimized for ROI calculations
+                # Using higher max_tokens and reasoning-friendly parameters
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    temperature=0.3,  # Low temperature for consistent numbers
+                    temperature=0.2,  # Lower temperature for precise financial calculations
+                    max_tokens=4096,  # Ensure enough tokens for detailed ROI analysis
                 )
 
                 response_text = response.choices[0].message.content.strip()
@@ -1249,12 +1254,14 @@ Use CONSERVATIVE estimates. Show your economic reasoning. Return ONLY valid JSON
         roadmap: List[Dict],
         roi_projections: Dict = None,
         ai_tools_data: List[Dict] = None,
+        start_time: datetime = None,
     ) -> int:
         """
         Save complete analysis to database.
 
         Args:
             ai_tools_data: Generated AI efficiency tools with LLM processing
+            start_time: Analysis start time for duration calculation
 
         Returns:
             analysis_id
@@ -1277,6 +1284,35 @@ Use CONSERVATIVE estimates. Show your economic reasoning. Return ONLY valid JSON
             for stage in roadmap
         )
 
+        # Calculate admin monitoring fields
+        # 1. Duration (time taken for analysis)
+        duration_str = "N/A"
+        if start_time:
+            end_time = datetime.now()
+            duration_delta = end_time - start_time
+            minutes = int(duration_delta.total_seconds() / 60)
+            seconds = int(duration_delta.total_seconds() % 60)
+            if minutes > 0:
+                duration_str = f"{minutes}m {seconds}s"
+            else:
+                duration_str = f"{seconds}s"
+
+        # 2. Confidence score from ROI projections
+        confidence_score = None
+        if roi_projections:
+            confidence_score = roi_projections.get("confidence_score")
+
+        # 3. Analysis type (infer from intent analysis or user goal)
+        analysis_type = self._infer_analysis_type(user_goal, intent_analysis)
+
+        # 4. Insights count (from intent analysis bottlenecks + capabilities)
+        bottlenecks = intent_analysis.get("bottlenecks", [])
+        capabilities = intent_analysis.get("capabilities_needed", [])
+        insights_count = len(bottlenecks) + len(capabilities)
+
+        # 5. Recommendations count (from tool combinations)
+        recommendations_count = len(tool_combinations)
+
         # Create main analysis record
         analysis = BusinessAnalysis(
             user_id=user_id,
@@ -1290,6 +1326,12 @@ Use CONSERVATIVE estimates. Show your economic reasoning. Return ONLY valid JSON
             timeline_weeks=total_weeks,
             status="completed",
             ai_model_used=self.model,
+            # Admin monitoring fields
+            confidence_score=confidence_score,
+            duration=duration_str,
+            analysis_type=analysis_type,
+            insights_count=insights_count,
+            recommendations_count=recommendations_count,
         )
 
         self.db.add(analysis)
@@ -1346,6 +1388,40 @@ Use CONSERVATIVE estimates. Show your economic reasoning. Return ONLY valid JSON
 
         logger.info(f"Analysis saved with ID: {analysis.id}")
         return analysis.id
+
+    def _infer_analysis_type(self, user_goal: str, intent_analysis: Dict) -> str:
+        """
+        Infer analysis type from user goal and intent analysis.
+
+        Returns:
+            Analysis type string (e.g., "Sales Analysis", "Customer Analysis")
+        """
+        goal_lower = user_goal.lower()
+        objective = intent_analysis.get("objective", "").lower()
+        combined_text = f"{goal_lower} {objective}"
+
+        # Keyword mapping for analysis types
+        type_keywords = {
+            "Sales Analysis": ["sales", "revenue", "selling", "conversion", "close rate", "deal", "pipeline"],
+            "Customer Analysis": ["customer", "retention", "churn", "satisfaction", "support", "service", "experience"],
+            "Market Analysis": ["market", "competitor", "industry", "positioning", "segment", "target audience"],
+            "Financial Analysis": ["financial", "budget", "cost", "roi", "profit", "pricing", "expense"],
+            "Operations Analysis": ["operations", "process", "efficiency", "workflow", "productivity", "automation"],
+            "Product Analysis": ["product", "feature", "development", "roadmap", "launch", "innovation"],
+            "Marketing Analysis": ["marketing", "campaign", "advertising", "brand", "awareness", "lead generation", "newsletter", "email", "social media", "seo", "content"],
+        }
+
+        # Score each type based on keyword matches
+        scores = {}
+        for analysis_type, keywords in type_keywords.items():
+            score = sum(1 for keyword in keywords if keyword in combined_text)
+            if score > 0:
+                scores[analysis_type] = score
+
+        # Return the type with highest score, or default to General Analysis
+        if scores:
+            return max(scores.items(), key=lambda x: x[1])[0]
+        return "General Analysis"
 
     def _transform_bottlenecks(self, intent_analysis: Dict) -> List[Dict]:
         """Helper method to transform bottlenecks for reuse"""

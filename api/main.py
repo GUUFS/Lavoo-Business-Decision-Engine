@@ -38,6 +38,7 @@ from config.logging import get_logger, setup_logging
 from db.pg_connections import get_db_info, init_db, get_db
 from db.pg_models import User, CreateOrderRequest, CaptureRequest
 from db.pg_connections import SessionLocal
+from api.cache import init_cache, close_cache
 
 # Initialize logging system
 setup_logging(level=logging.INFO if os.getenv("DEBUG") != "true" else logging.DEBUG)
@@ -125,7 +126,7 @@ async def create_admin_user(db: Session=Depends(get_db)):
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database tables on application startup"""
+    """Initialize database tables and caching on application startup"""
     try:
         init_db()
         db_info = get_db_info()
@@ -167,10 +168,32 @@ async def startup_event():
 
         # Create admin user
         await create_admin_user(SessionLocal())
+
+        # Initialize Redis/in-memory cache
+        await init_cache()
+
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         raise
 
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on application shutdown"""
+    await close_cache()
+
+origins = ["http://localhost:3000",
+           "http://localhost:5173",
+    "http://localhost:8080"]
+
+# Enable CORS for (React form requests)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 # Path to the React build
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -199,11 +222,8 @@ app.include_router(insights.router)  # Clinton's feature
 app.include_router(referrals.router)  # Clinton's feature
 app.include_router(earnings.router)
 app.include_router(commissions.router)
-app.include_router(revenue.router, prefix="/api/control/revenue")
-app.include_router(users.router, prefix="/api/control/users")
-app.include_router(dashboard.router, prefix="/api/control/dashboard")
-app.include_router(settings.router) # Register settings router
 app.include_router(revenue.router)
+app.include_router(settings.router) # Register settings router
 app.include_router(stripe_connect.router)
 app.include_router(security.router, prefix="/api")
 app.include_router(users.router)
