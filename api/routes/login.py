@@ -8,6 +8,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic_settings import BaseSettings
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from db.pg_connections import get_db
 from typing import Optional
@@ -15,6 +16,10 @@ from db.pg_models import ShowUser, User, AuthResponse
 
 bearer_scheme = HTTPBearer()
 router = APIRouter(prefix="", tags=["authenticate"])
+
+def log_debug(message):
+    with open("auth_debug.log", "a") as f:
+        f.write(f"{datetime.utcnow()}: {message}\n")
 
 """Generating and storing the secret key"""
 
@@ -34,80 +39,6 @@ IS_PRODUCTION = os.getenv("ENVIRONMENT", "development") == "production"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
-
-@router.get("/me", response_model=AuthResponse)
-def me(access_token: str = Cookie(None), db: Session = Depends(get_db)):
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    try:
-        payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        role: str = payload.get("role")
-        user_id: int = payload.get("id")
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = db.query(User).filter(User.email == email).first()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-
-    return {
-        "id": user.id,
-        "name": user.name,
-        "email": user.email,
-        "subscription_status": user.subscription_status,
-        "subscription_plan": user.subscription_plan,
-        "role": role,
-        "referral_code": user.referral_code,
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
-
-
-def get_admin_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme), db: Session = Depends(get_db)):
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    user = db.query(User).filter(User.email == email).first()
-    if user is None or not user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return user
-
-
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def get_current_user(authorization: Optional[str] = Header(None), access_token_cookie: Optional[str] = Cookie(None), db: Session = Depends(get_db)):
@@ -155,10 +86,7 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
     
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        role: str = payload.get("role")
         email: str = payload.get("sub")
-        user_id: int = payload.get("id")
-        referral_code: str = payload.get("referral_code")
         
         if email is None:
             raise credentials_exception
@@ -170,15 +98,209 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
             headers={"WWW-Authenticate": "Bearer"},
         )
     except JWTError as e:
-        print(f"JWT decode error: {str(e)}")
+        log_debug(f"DEBUG AUTH: (get_current_user) JWT decode error: {str(e)}")
         raise credentials_exception
 
     # Get user from database
     user = db.query(User).filter(User.email == email).first()
     if user is None:
+        log_debug(f"DEBUG AUTH: (get_current_user) User not found: {email}")
         raise credentials_exception
 
-    return {"user": user, "role": role, "referral_code":referral_code}
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive account",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user
+
+@router.get("/me", response_model=AuthResponse)
+def me(
+    current_user: User = Depends(get_current_user), 
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
+    access_token_cookie: Optional[str] = Cookie(None)
+):
+    """
+    Get current user details.
+    """
+    # Helper to get user role
+    role = "user"
+    if current_user.is_admin:
+        role = "admin"
+    
+    # Get token from header or cookie for return
+    token = authorization.split()[1] if authorization else access_token_cookie
+    
+    # Return matched fields
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "subscription_status": current_user.subscription_status,
+        "subscription_plan": current_user.subscription_plan,
+        "role": role,
+        "referral_code": current_user.referral_code,
+        "department": current_user.department,
+        "location": current_user.location,
+        "bio": current_user.bio,
+        "two_factor_enabled": current_user.two_factor_enabled,
+        "email_notifications": current_user.email_notifications,
+        "created_at": current_user.created_at,
+        "access_token": token or "", 
+        "token_type": "bearer"
+    }
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    department: Optional[str] = None
+    location: Optional[str] = None
+    bio: Optional[str] = None
+    two_factor_enabled: Optional[bool] = None
+    email_notifications: Optional[bool] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.patch("/me", response_model=AuthResponse)
+def update_profile(
+    update_data: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update user profile.
+    """
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    user = current_user
+    role = "admin" if user.is_admin else "user"
+
+    if update_data.email and update_data.email != user.email:
+        # Check if email is already taken
+        existing_user = db.query(User).filter(User.email == update_data.email).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email is already in use")
+        user.email = update_data.email
+
+    if update_data.name:
+        user.name = update_data.name
+    if update_data.department:
+        user.department = update_data.department
+    if update_data.location:
+        user.location = update_data.location
+    if update_data.bio:
+        user.bio = update_data.bio
+    if update_data.two_factor_enabled is not None:
+        user.two_factor_enabled = update_data.two_factor_enabled
+    if update_data.email_notifications is not None:
+        user.email_notifications = update_data.email_notifications
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": role,
+        "subscription_status": user.subscription_status,
+        "subscription_plan": user.subscription_plan,
+        "referral_code": user.referral_code,
+        "department": user.department,
+        "location": user.location,
+        "bio": user.bio,
+        "two_factor_enabled": user.two_factor_enabled,
+        "email_notifications": user.email_notifications,
+        "created_at": user.created_at,
+        "access_token": "", # Frontend already has it, or we could pass update_data's if needed
+        "token_type": "bearer"
+    }
+
+
+@router.post("/change-password")
+def change_password(
+    password_data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    user = current_user
+
+    if not pwd_context.verify(password_data.current_password, user.password):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+
+    user.password = pwd_context.hash(password_data.new_password)
+    db.commit()
+    
+    return {"message": "Password updated successfully"}
+
+
+def get_admin_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme), db: Session = Depends(get_db)):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except JWTError as e:
+        log_debug(f"DEBUG AUTH: JWT decode error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        log_debug(f"DEBUG AUTH: User not found for email: {email}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.is_admin:
+        log_debug(f"DEBUG AUTH: User {email} is NOT an admin")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    log_debug(f"DEBUG AUTH: Successfully authenticated admin: {email}")
+    return user
+
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -192,11 +314,20 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND, detail="Email has not been registered!"
         )
 
-    # Verify password
+    # Verify password policy: Check password BEFORE is_active
     if not pwd_context.verify(request.password, user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Password is incorrect!"
         )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Your account has been deactivated. Please contact support with lavoo@gmail.com to verify your account."
+        )
+
+    # Update Last Active
+    user.updated_at = datetime.utcnow()
+    db.commit()
 
     role = "admin" if user.is_admin else "user"
 
@@ -228,6 +359,8 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
         max_age=60 * 60 * 24 * 30  # 30 days
     )
 
+    print(f"DEBUG: User logged in: {user.email}, role: {role}, token: {access_token[:20]}...")
+    
     return {
         "access_token": access_token,
         "token_type": "bearer",

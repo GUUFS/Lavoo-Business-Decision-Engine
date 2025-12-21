@@ -9,10 +9,10 @@ interface HeaderProps {
   onMobileMenuClick?: () => void;
 }
 
-export default function Header({onMobileMenuClick}:HeaderProps) {
+export default function Header({ onMobileMenuClick }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [, setIsMobileMenuOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const queryClient = useQueryClient();
 
@@ -24,15 +24,24 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
   const isLoginPage = location.pathname === "/login";
   const isSignUpPage = location.pathname === "/signup";
   const isDashboard = location.pathname.includes("dashboard");
-  const isResult = location.pathname === "/results";
-  const isAdmin = location.pathname.includes("/admin");  
+  const isAdmin = location.pathname.includes("/admin");
 
   const handleLogout = () => {
-    // Clear the cookies and 
+    // Clear the cookies
     Cookies.remove("access_token");
+    Cookies.remove("auth_token");
+    Cookies.remove("user_token");
+
+    // Clear local storage
+    localStorage.clear();
+
+    // Invalidate queries
     queryClient.invalidateQueries({ queryKey: ["currentUser"] });
     queryClient.removeQueries({ queryKey: ["currentUser"] });
+
+    // Navigate and force state reset
     navigate("/login", { replace: true });
+    window.location.reload(); // Force full reload to clear all in-memory states
   };
 
   const scrollToSection = (sectionId: string) => {
@@ -47,7 +56,7 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
     setIsMobileMenuOpen(false);
   };
 
-  if(!isAdmin) 
+  if (!isAdmin)
 
     return (
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -63,127 +72,133 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
                 <i className="ri-menu-line text-2xl"></i>
               </button>
             ) : (
-            /* Logo for non-dashboard pages */
-            <div
-              className="flex items-center cursor-pointer"
-              onClick={() => {
-                if(isDashboard || isLoginPage || isSignUpPage) return;
-                navigate("/");
-              }}
-            >
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-500 rounded-lg flex items-center justify-center mr-2 sm:mr-3">
-                <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
+              /* Logo for non-dashboard pages */
+              <div
+                className="flex items-center cursor-pointer"
+                onClick={() => {
+                  if (isDashboard || isLoginPage || isSignUpPage) return;
+                  navigate("/");
+                }}
+              >
+                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-500 rounded-lg flex items-center justify-center mr-2 sm:mr-3">
+                  <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
+                </div>
+                <span className="text-lg sm:text-xl font-bold text-black">
+                  Lavoo
+                </span>
               </div>
-              <span className="text-lg sm:text-xl font-bold text-black">
-                Lavoo
-              </span>
-            </div>
             )}
 
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center space-x-6 lg:space-x-8">
-   {!isLoggedIn && !isDashboard && (
-    <>
-      <button
-        onClick={() => navigate("/")}
-        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-      >
-        Home
-      </button>
-      <button
-        onClick={() => scrollToSection("blog")}
-        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap">
-        <a href="https://aitugo.com/shop" target="_blank">Momentum Vault</a>
-      </button>
-    </>
-  )}
+            {/* Desktop Navigation */}
+            <nav className="hidden md:flex items-center space-x-6 lg:space-x-8">
+              {!isLoggedIn && !isDashboard && (
+                <>
+                  <button
+                    onClick={() => navigate("/")}
+                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
+                  >
+                    Home
+                  </button>
+                  <button
+                    onClick={() => scrollToSection("blog")}
+                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap">
+                    Chopsticks
+                  </button>
+                  <a
+                    href="https://aitugo.com/shop"
+                    target="_blank"
+                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap flex items-center"
+                  >
+                    Momentum Vault
+                  </a>
+                </>
+              )}
 
-  {/* Dashboard navigation for logged-in users */}
-  {isLoggedIn && isDashboard && !isAdmin && (
-    <>
-      <button
-        onClick={() => scrollToSection("features")}
-        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-      >
-        <i className="ri-play-circle-line mr-2"></i>
-        Watch a Demo
-      </button>
-      <button
-        onClick={() => scrollToSection("features")}
-        className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-      >
-        <i className=""></i>
-        Chopsticks
-      </button>
-    </>
-  )}
+              {/* Dashboard navigation for logged-in users */}
+              {isLoggedIn && isDashboard && !isAdmin && (
+                <>
+                  <button
+                    onClick={() => scrollToSection("features")}
+                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
+                  >
+                    <i className="ri-play-circle-line mr-2"></i>
+                    Watch a Demo
+                  </button>
+                  <a
+                    href="https://aitugo.com/shop"
+                    target="_blank"
+                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
+                  >
+                    Momentum Vault
+                  </a>
+                </>
+              )}
 
-         {/* Show login/signup if NOT logged in and NOT on dashboard */}
-{!isAnalyzePage && !isLoggedIn && !isDashboard && (
-  <>
-    {(!isLoginPage || isAdmin) && (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => navigate("/login")}
-        className="whitespace-nowrap"
-      >
-        Log In
-      </Button>
-    )}
-    {(!isSignUpPage || isAdmin) && (
-      <Button
-        variant="primary"
-        size="sm"
-        onClick={() => navigate("/signup")}
-        className="whitespace-nowrap"
-      >
-        Sign Up
-      </Button>
-    )}
-  </>
-)}
-
-            {/* Show user dropdown if logged in */}
-            {isLoggedIn && !isLoading && (
-              <div className="relative">
-                <button
-                  onClick={() => setIsDropdownOpen((prev) => !prev)}
-                  className="flex items-center space-x-2 bg-gray-100 px-3 py-1.5 rounded-lg hover:bg-gray-200 transition"
-                >
-                  <i className="ri-user-line text-gray-700"></i>
-                  <span className="font-medium text-gray-800">
-                    {user?.name || user?.email}
-                  </span>
-                  <i
-                    className={`ri-arrow-down-s-line transition-transform ${
-                      isDropdownOpen ? "rotate-180" : ""
-                    }`}
-                  ></i>
-                </button>
-
-                {isDropdownOpen && (
-                  <div className="absolute right-0 mt-2 w-40 bg-white border rounded-lg shadow-md py-2">
-                    <button
-                      onClick={handleLogout}
-                      className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+              {/* Show login/signup if NOT logged in and NOT on dashboard */}
+              {!isAnalyzePage && !isLoggedIn && !isDashboard && (
+                <>
+                  {(!isLoginPage || isAdmin) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate("/login")}
+                      className="whitespace-nowrap"
                     >
-                      Logout
-                    </button>
-                    <div>
-                      <button className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
-                        onClick={() => navigate('/dashboard/profile')}>
-                        Profile
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </nav>
+                      Log In
+                    </Button>
+                  )}
+                  {(!isSignUpPage || isAdmin) && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => navigate("/signup")}
+                      className="whitespace-nowrap"
+                    >
+                      Sign Up
+                    </Button>
+                  )}
+                </>
+              )}
 
-          {/* Mobile Menu Button */}
-          {/* <button
+              {/* Show user dropdown if logged in */}
+              {isLoggedIn && !isLoading && (
+                <div className="relative">
+                  <button
+                    onClick={() => setIsDropdownOpen((prev) => !prev)}
+                    className="flex items-center space-x-2 bg-gray-100 px-3 py-1.5 rounded-lg hover:bg-gray-200 transition"
+                  >
+                    <i className="ri-user-line text-gray-700"></i>
+                    <span className="font-medium text-gray-800">
+                      {user?.name || user?.email}
+                    </span>
+                    <i
+                      className={`ri-arrow-down-s-line transition-transform ${isDropdownOpen ? "rotate-180" : ""
+                        }`}
+                    ></i>
+                  </button>
+
+                  {isDropdownOpen && (
+                    <div className="absolute right-0 mt-2 w-40 bg-white border rounded-lg shadow-md py-2">
+                      <button
+                        onClick={handleLogout}
+                        className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+                      >
+                        Logout
+                      </button>
+                      <div>
+                        <button className="block w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100"
+                          onClick={() => navigate('/dashboard/profile')}>
+                          Profile
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </nav>
+
+            {/* Mobile Menu Button */}
+            {/* <button
             className="md:hidden p-2 text-gray-700 hover:text-orange-500 transition-colors"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
           >
@@ -193,9 +208,9 @@ export default function Header({onMobileMenuClick}:HeaderProps) {
               } text-2xl`}
             ></i>
           </button> */}
+          </div>
         </div>
-      </div>
-    </header>
-  );
+      </header>
+    );
 }
 

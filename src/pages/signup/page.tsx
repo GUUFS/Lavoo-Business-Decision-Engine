@@ -59,9 +59,9 @@ export default function SignUp() {
     }
 
     // console.log("🔍 DEBUG - FormData contents:");
-  for (let [key, value] of payload.entries()) {
-    // console.log(`  ${key}:`, value);
-  }
+    for (let [_key, _value] of payload.entries()) {
+      // console.log(`  ${key}:`, value);
+    }
     mutate(payload, {
       onSuccess: () => {
         toast.success("Account created successfully!");

@@ -1,0 +1,424 @@
+
+"""
+Payout service for handling commission payouts via Stripe and Flutterwave
+"""
+import os
+import stripe
+import requests
+from decimal import Decimal
+from datetime import datetime
+from typing import Dict, Any, Optional
+import logging
+import json
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from db.pg_models import (
+    User, Commission, Payout, PayoutAccount, 
+    CommissionSummary
+)
+
+from dotenv import load_dotenv
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# Configure Stripe
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
+# Flutterwave config (using VITE_ prefix to match .env)
+FLUTTERWAVE_SECRET_KEY = os.getenv("VITE_FLUTTERWAVE_SECRET_KEY")
+FLUTTERWAVE_BASE_URL = "https://api.flutterwave.com/v3"
+
+
+class PayoutService:
+    """
+    Handles payouts to users via Stripe Connect or Flutterwave Transfers
+    """
+    
+    MIN_PAYOUT_AMOUNT = Decimal("5.00")  # Minimum $10 for payout
+    
+    @staticmethod
+    def create_payout_request(user_id: int, amount: Decimal, payment_method: str,  # 'stripe' or 'flutterwave'   
+        db: Session) -> Payout:
+        """
+        Create a payout request
+        
+        Args:
+            user_id: User requesting payout
+            amount: Amount to payout
+            payment_method: 'stripe' or 'flutterwave'
+            db: Database session
+        
+        Returns:
+            Payout object
+        """
+        # Validate user
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError(f"User {user_id} not found")
+        
+        # Check available balance
+        available = db.query(
+            func.sum(Commission.amount)
+        ).filter(
+            Commission.user_id == user_id,
+            Commission.status == 'approved',
+            Commission.payout_id.is_(None)
+        ).scalar() or Decimal("0.00")
+        
+        if available < amount:
+            raise ValueError(
+                f"Insufficient balance. Available: ${available}, Requested: ${amount}"
+            )
+        
+        if amount < PayoutService.MIN_PAYOUT_AMOUNT:
+            raise ValueError(
+                f"Minimum payout amount is ${PayoutService.MIN_PAYOUT_AMOUNT}"
+            )
+        
+        # Check payout account exists
+        payout_account = db.query(PayoutAccount).filter(
+            PayoutAccount.user_id == user_id
+        ).first()
+        
+        if not payout_account:
+            raise ValueError("No payout account configured. Please set up your payout method.")
+        
+        # Validate payment method
+        if payment_method == 'stripe':
+            if not payout_account.stripe_account_id:
+                raise ValueError("Stripe account not connected")
+        elif payment_method == 'flutterwave':
+            if not payout_account.bank_name or not payout_account.account_number:
+                raise ValueError("Bank details not configured")
+        else:
+            raise ValueError(f"Invalid payment method: {payment_method}")
+        
+        # Create payout record
+        payout = Payout(
+            user_id=user_id,
+            amount=amount,
+            currency='USD',  # Default to USD
+            payment_method=payment_method,
+            status='pending',
+            recipient_email=user.email,
+            recipient_name=user.name,
+            requested_at=datetime.utcnow()
+        )
+        
+        db.add(payout)
+        db.flush()
+        
+        # Link commissions to this payout
+        commissions = db.query(Commission).filter(
+            Commission.user_id == user_id,
+            Commission.status == 'approved',
+            Commission.payout_id.is_(None)
+        ).order_by(Commission.created_at).all()
+        
+        total_linked = Decimal("0.00")
+        for commission in commissions:
+            if total_linked + commission.amount <= amount:
+                commission.payout_id = payout.id
+                total_linked += commission.amount
+            if total_linked >= amount:
+                break
+        
+        db.commit()
+        db.refresh(payout)
+        
+        logger.info(f"Payout request created: {payout.id} for user {user_id}")
+        return payout
+    
+
+    @staticmethod
+    def process_stripe_payout(payout: Payout, db: Session) -> Dict[str, Any]:
+        """
+        Process payout via Stripe Connect
+        
+        NOTE: This requires Stripe Connect to be set up.
+        For testing, you can use Stripe's test mode.
+        """
+        try:
+            payout_account = db.query(PayoutAccount).filter(
+                PayoutAccount.user_id == payout.user_id
+            ).first()
+            
+            if not payout_account or not payout_account.stripe_account_id:
+                raise ValueError("Stripe account not configured")
+            
+            # Convert amount to cents
+            amount_cents = int(payout.amount * 100)
+            
+            # Create Stripe transfer
+            # Note: This requires the connected account to be set up
+            transfer = stripe.Transfer.create(
+                amount=amount_cents,
+                currency=payout.currency.lower(),
+                destination=payout_account.stripe_account_id,
+                description=f"Commission payout for {payout.recipient_name}",
+                metadata={
+                    "stripe_connect_payout_id": str(payout.id),
+                    "user_id": str(payout.user_id)
+                }
+            )
+            # Create Stripe payout
+            payment = stripe.Payout.create(
+                        amount=amount_cents,
+                        currency=payout.currency.lower(),
+                        stripe_account=payout_account.stripe_account_id,
+                        metadata={
+                            "stripe_connect_payout_id": str(payout.id),
+                            "user_id": str(payout.user_id)
+                        }
+            )
+
+            # Update payout record
+            payout.status = 'processing'
+            payout.provider_transfer_id = transfer.id
+            payout.provider_payout_id = payment.id
+            payout.provider_response = json.dumps({
+                                        "transfer": transfer.to_dict(),
+                                        "payout": payment.to_dict(),
+            })
+            payout.processed_at = datetime.utcnow()
+
+            db.flush()
+
+            logger.info(
+                f"Stripe payout initiated | payout={payout.id} "
+                f"transfer={transfer.id} payment={payment.id}"
+            )
+            
+            return {
+                "status": "processing",
+                "payout_id": payout.id,
+                "stripe_transfer_id": transfer.id,
+                "stripe_payout_id": payment.id,
+            }
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe payout initiation failed: {str(e)}")
+            payout.status = "failed"
+            payout.failure_reason = str(e)
+            db.flush()
+            raise
+        
+    
+
+    @staticmethod
+    def process_flutterwave_payout(payout: Payout, db: Session) -> Dict[str, Any]:
+        """
+        Process payout via Flutterwave Transfer API
+        """
+        try:
+            payout_account = db.query(PayoutAccount).filter(
+                PayoutAccount.user_id == payout.user_id
+            ).first()
+            
+            if not payout_account:
+                raise ValueError("Payout account not configured")
+            
+            if not payout_account.bank_name or not payout_account.account_number:
+                raise ValueError("Bank details not configured")
+            
+            # Prepare transfer payload
+            payload = {
+                "account_bank": payout_account.bank_code or payout_account.bank_name,
+                "account_number": payout_account.account_number,
+                "amount": float(payout.amount),
+                "currency": payout.currency,
+                "narration": f"Commission payout - {payout.id}",
+                "reference": f"PAYOUT-{payout.id}-{int(datetime.utcnow().timestamp())}",
+                "callback_url": f"{os.getenv('BASE_URL')}/api/payouts/flutterwave/callback",
+                "debit_currency": "USD",
+                "beneficiary_name": payout_account.account_name or payout.recipient_name
+            }
+            
+            headers = {
+                "Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            # Make transfer request
+            response = requests.post(
+                f"{FLUTTERWAVE_BASE_URL}/transfers",
+                json=payload,
+                headers=headers
+            )
+            
+            if response.status_code != 200:
+                raise ValueError(f"Flutterwave API error: {response.text}")
+            
+            data = response.json()
+            
+            if data.get("status") != "success":
+                raise ValueError(f"Transfer failed: {data.get('message')}")
+            
+            transfer_data = data.get("data", {})
+            
+            # Update payout record
+            payout.status = 'processing'  # Flutterwave transfers are async
+            payout.provider_payout_id = str(transfer_data.get("id"))
+            payout.provider_response = json.dumps(data)
+            payout.processed_at = datetime.utcnow()
+            
+            db.commit()
+            db.refresh(payout)
+            
+            logger.info(f"Flutterwave payout initiated: {payout.id}")
+            
+            return {
+                "status": "processing",
+                "payout_id": payout.id,
+                "transfer_id": transfer_data.get("id"),
+                "amount": float(payout.amount),
+                "message": "Payout is being processed"
+            }
+            
+        except requests.RequestException as e:
+            payout.status = 'failed'
+            payout.failure_reason = str(e)
+            payout.failed_at = datetime.utcnow()
+            payout.retry_count += 1
+            db.commit()
+            
+            logger.error(f"Flutterwave payout failed: {str(e)}")
+            raise ValueError(f"Payout failed: {str(e)}")
+    
+
+    @staticmethod
+    def complete_flutterwave_payout( payout_id: int, transfer_status: str, db: Session) -> None:
+        """
+        Complete Flutterwave payout after webhook confirmation
+        """
+        payout = db.query(Payout).filter(Payout.id == payout_id).first()
+        
+        if not payout:
+            logger.error(f"Payout {payout_id} not found")
+            return
+        
+        if transfer_status == "successful":
+            payout.status = 'completed'
+            payout.completed_at = datetime.utcnow()
+            
+            # Update commissions
+            commissions = db.query(Commission).filter(
+                Commission.payout_id == payout.id
+            ).all()
+            
+            for commission in commissions:
+                commission.status = 'paid'
+                commission.paid_at = datetime.utcnow()
+            
+            # Update summary
+            PayoutService._update_summary_on_payout(payout, db)
+            
+        elif transfer_status == "failed":
+            payout.status = 'failed'
+            payout.failed_at = datetime.utcnow()
+            
+            # Revert commissions to 'pending' so they can be paid again
+            commissions = db.query(Commission).filter(
+                Commission.payout_id == payout.id
+            ).all()
+            
+            for commission in commissions:
+                commission.payout_id = None
+                commission.status = 'pending'  # Revert to pending for retry
+                commission.approved_at = None
+        
+        db.commit()
+        logger.info(f"Flutterwave payout {payout_id} marked as {transfer_status}")
+    
+
+    @staticmethod
+    def _update_summary_on_payout(payout: Payout, db: Session) -> None:
+        """
+        Update commission summary when payout is completed
+        """
+        now = datetime.utcnow()
+        
+        # Get all months affected by the commissions in this payout
+        commissions = db.query(Commission).filter(
+            Commission.payout_id == payout.id
+        ).all()
+        
+        # Group by month
+        monthly_amounts = {}
+        for commission in commissions:
+            year = commission.created_at.year
+            month = commission.created_at.month
+            key = (year, month)
+            
+            if key not in monthly_amounts:
+                monthly_amounts[key] = Decimal("0.00")
+            monthly_amounts[key] += commission.amount
+        
+        # Update each affected month
+        for (year, month), amount in monthly_amounts.items():
+            summary = db.query(CommissionSummary).filter(
+                CommissionSummary.user_id == payout.user_id,
+                CommissionSummary.year == year,
+                CommissionSummary.month == month
+            ).first()
+            
+            if summary:
+                summary.paid_commissions += amount
+                summary.pending_commissions -= amount
+                summary.updated_at = now
+
+    @staticmethod
+    def reverse_payout(payout_id: int, failure_reason: str, db: Session) -> None:
+        """
+        Handle a payout that was previously marked as completed but has now failed.
+        """
+        payout = db.query(Payout).filter(Payout.id == payout_id).first()
+        if not payout:
+            return
+
+        if payout.status == "failed":
+            return
+
+        payout.status = "failed"
+        payout.failure_reason = failure_reason or "Funds returned/Reversed"
+        payout.failed_at = datetime.utcnow()
+
+        commissions = db.query(Commission).filter(
+            Commission.payout_id == payout.id
+        ).all()
+
+        for commission in commissions:
+            commission.payout_id = None
+            commission.status = 'pending'
+            commission.paid_at = None
+
+        PayoutService._reverse_summary_on_payout(payout, db)
+        db.commit()
+
+    @staticmethod
+    def _reverse_summary_on_payout(payout: Payout, db: Session) -> None:
+        now = datetime.utcnow()
+        commissions = db.query(Commission).filter(
+            Commission.payout_id == payout.id
+        ).all()
+
+        monthly_amounts = {}
+        for commission in commissions:
+            year = commission.created_at.year
+            month = commission.created_at.month
+            key = (year, month)
+            if key not in monthly_amounts:
+                monthly_amounts[key] = Decimal("0.00")
+            monthly_amounts[key] += commission.amount
+
+        for (year, month), amount in monthly_amounts.items():
+            summary = db.query(CommissionSummary).filter(
+                CommissionSummary.user_id == payout.user_id,
+                CommissionSummary.year == year,
+                CommissionSummary.month == month
+            ).first()
+            if summary:
+                summary.paid_commissions -= amount
+                summary.pending_commissions += amount
+                summary.updated_at = now

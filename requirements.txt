@@ -20,3 +20,8 @@ stripe>=14.0.0
 email-validator>=2.3.0
 alembic
 dotenv
+flutterwave-python-v3
+winston
+logtail
+sentry
+nodemailer

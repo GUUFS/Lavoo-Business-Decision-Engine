@@ -9,7 +9,7 @@ import Dashboard from "../pages/dashboard/page";
 import DashboardAnalyze from "../pages/dashboard/analyze/page";
 import { ProtectedRoute } from "../components/protectedRoute";
 
-import DashboardLayout from "../components/dashboard-layouts";
+import DashboardLayout, { AdminLayout } from "../components/dashboard-layouts";
 // User Dashboard pages
 import OpportunityAlerts from '../pages/dashboard/alerts/page';
 import Earnings from '../pages/dashboard/earnings/page';
@@ -32,12 +32,12 @@ import Analytics from "../pages/admin/analytics/page";
 import ReviewsStore from "../pages/admin/reviews/page";
 import Reports from "../pages/admin/reports/page";
 import Revenue from "../pages/admin/revenue/page";
-import SystemHealth from "../pages/admin/system-health/page";
+//import SystemHealth from "../pages/admin/system-health/page";
 import Security from "../pages/admin/security/page";
 import Database from "../pages/admin/database/page";
 import Notifications from "../pages/admin/notifications/page";
 import Settings from "../pages/admin/settings/page";
-import AnalysisHistory from "../pages/admin/ai-analysis/page"; 
+import AnalysisHistory from "../pages/admin/ai-analysis/page";
 import CustomerChats from "../pages/admin/report-conversations/page";
 import Content from "../pages/admin/content-management/page";
 import CustomerReviews from "../pages/admin/conversations/page";
@@ -52,34 +52,39 @@ const routes: RouteObject[] = [
     children: [
       { path: "/analyze", element: <Analyze /> },
 
-      { path: "/results", element: <DashboardLayout />, children: [
-         { path: '', element: <Results /> },
-      ]},
-      { path: "/analysis-history", element: <DashboardLayout/>, children: [
-        { path: '', element: <AnalysisHistoryPage />},
-      ]},
-
-      // Admin layout wrapper
-      { path: "/admin", element: <DashboardLayout />, children: [
-        { path: "", element: <AdminDashboard /> },
-        { path: "profile", element: <AdminProfile /> },
-        { path: "users", element: <Users /> },
-        { path: "analytics", element: <Analytics /> },
-        { path: "reviews", element: <ReviewsStore /> },
-        { path: "reports", element: <Reports /> },
-        { path: "revenue", element: <Revenue /> },
-        { path: "system-health", element: <SystemHealth /> },
-        { path: "security", element: <Security /> },
-        { path: "database", element: <Database /> },
-        { path: "notifications", element: <Notifications /> },
-        { path: "settings", element: <Settings /> },
-        { path: "ai-analysis", element: <AnalysisHistory /> },
-        { path: "report-conversations/:reportId", element: <CustomerChats />},
-        { path: "content-management", element: <Content />},
-        { path: "conversations/:reviewId", element: < CustomerReviews/>},
+      {
+        path: "/results", element: <DashboardLayout />, children: [
+          { path: '', element: <Results /> },
         ]
       },
-      
+      {
+        path: "/analysis-history", element: <DashboardLayout />, children: [
+          { path: '', element: <AnalysisHistoryPage /> },
+        ]
+      },
+
+      // Admin layout wrapper
+      {
+        path: "/admin", element: <AdminLayout />, children: [
+          { path: "", element: <AdminDashboard /> },
+          { path: "profile", element: <AdminProfile /> },
+          { path: "users", element: <Users /> },
+          { path: "analytics", element: <Analytics /> },
+          { path: "reviews", element: <ReviewsStore /> },
+          { path: "reports", element: <Reports /> },
+          { path: "revenue", element: <Revenue /> },
+          //{ path: "system-health", element: <SystemHealth /> },
+          { path: "security", element: <Security /> },
+          { path: "database", element: <Database /> },
+          { path: "notifications", element: <Notifications /> },
+          { path: "settings", element: <Settings /> },
+          { path: "ai-analysis", element: <AnalysisHistory /> },
+          { path: "report-conversations/:reportId", element: <CustomerChats /> },
+          { path: "content-management", element: <Content /> },
+          { path: "conversations/:reviewId", element: < CustomerReviews /> },
+        ]
+      },
+
       // Dashboard layout wrapper
       {
         path: "/dashboard",
@@ -95,15 +100,15 @@ const routes: RouteObject[] = [
           { path: "reviews", element: <Reviews /> },
           { path: "ai_trends", element: <AITrends /> },
           { path: "analyze", element: <DashboardAnalyze /> },
-          { path: "upgrade", element: <Upgrade />},
+          { path: "upgrade", element: <Upgrade /> },
           { path: '/dashboard/admin-reviews', element: <AdminReviews /> },
-          { path: "conversations/:reviewId", element: <ReviewChats/>},
-          { path: "customer-service/conversation/:id", element: <ReportChats />},
+          { path: "conversations/:reviewId", element: <ReviewChats /> },
+          { path: "customer-service/conversation/:id", element: <ReportChats /> },
         ],
       },
 
 
-      
+
     ],
   },
 

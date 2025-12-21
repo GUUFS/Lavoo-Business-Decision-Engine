@@ -6,9 +6,9 @@ import DashboardSidebar from '../../../components/feature/DashboardSidebar';
 export default function DashboardConversations() {
   const { reviewId } = useParams();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+  // const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [responseText, setResponseText] = useState('');
-  const [conversations, setConversations] = useState<Array<{id: number, message: string, sender: 'admin' | 'user', timestamp: string, isRead: boolean}>>([]);
+  const [conversations, setConversations] = useState<Array<{ id: number, message: string, sender: 'admin' | 'user', timestamp: string, isRead: boolean }>>([]);
   const [reviewData, setReviewData] = useState<any>(null);
 
   // Mock data - in real app this would come from API
@@ -36,7 +36,7 @@ export default function DashboardConversations() {
     }
   ];
 
-  const mockConversations: {[key: number]: Array<{id: number, message: string, sender: 'admin' | 'user', timestamp: string, isRead: boolean}>} = {
+  const mockConversations: { [key: number]: Array<{ id: number, message: string, sender: 'admin' | 'user', timestamp: string, isRead: boolean }> } = {
     1: [
       {
         id: 1,
@@ -103,33 +103,33 @@ export default function DashboardConversations() {
     if (reviewId) {
       const review = mockReviews.find(r => r.id === parseInt(reviewId));
       setReviewData(review);
-      
+
       const reviewConversations = mockConversations[parseInt(reviewId)] || [];
-      
+
       // Count unread admin messages before marking as read
-      const unreadAdminMessages = reviewConversations.filter(msg => 
+      const unreadAdminMessages = reviewConversations.filter(msg =>
         msg.sender === 'admin' && !msg.isRead
       ).length;
-      
+
       // Mark messages as read when viewing conversation
       const updatedConversations = reviewConversations.map(msg => ({
         ...msg,
         isRead: true
       }));
       setConversations(updatedConversations);
-      
+
       // Dispatch event to update sidebar badge counts and mark as read in reviews page
       if (unreadAdminMessages > 0) {
         // Update sidebar badge
         window.dispatchEvent(new CustomEvent('reviewMessageRead', {
           detail: { reviewId: parseInt(reviewId), count: unreadAdminMessages }
         }));
-        
+
         // Mark as read in reviews page state
         window.dispatchEvent(new CustomEvent('conversationRead', {
           detail: { reviewId: parseInt(reviewId) }
         }));
-        
+
         // Update localStorage immediately
         const savedReadStatus = localStorage.getItem('reviewReadStatus');
         const currentReadStatus = savedReadStatus ? JSON.parse(savedReadStatus) : {};
@@ -164,8 +164,8 @@ export default function DashboardConversations() {
 
   const renderStars = (rating: number) => {
     return Array.from({ length: 5 }, (_, i) => (
-      <i 
-        key={i} 
+      <i
+        key={i}
         className={`ri-star-${i < rating ? 'fill' : 'line'} text-yellow-400`}
       ></i>
     ));
@@ -174,11 +174,11 @@ export default function DashboardConversations() {
   if (!reviewData) {
     return (
       <div className="min-h-screen bg-gray-50 flex">
-        <DashboardSidebar 
-          isMobileMenuOpen={isMobileMenuOpen} 
-          setIsMobileMenuOpen={setIsMobileMenuOpen} 
+        <DashboardSidebar
+          isMobileMenuOpen={isMobileMenuOpen}
+          setIsMobileMenuOpen={setIsMobileMenuOpen}
         />
-        
+
         <div className="flex-1 ml-0 md:ml-64 flex flex-col">
           <div className="flex-1 p-4 md:p-6 lg:p-8">
             <div className="max-w-4xl mx-auto">
@@ -186,7 +186,7 @@ export default function DashboardConversations() {
                 <i className="ri-chat-3-line text-6xl text-gray-300 mb-4"></i>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">Conversation Not Found</h2>
                 <p className="text-gray-600 mb-6">The conversation you're looking for doesn't exist.</p>
-                <Link 
+                <Link
                   to="/dashboard/reviews"
                   className="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
                 >
@@ -203,11 +203,11 @@ export default function DashboardConversations() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <DashboardSidebar 
-        isMobileMenuOpen={isMobileMenuOpen} 
-        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      <DashboardSidebar
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
       />
-      
+
       <div className="flex-1 ml-0 flex flex-col">
 
         <div className="flex-1 p-4 md:p-6 lg:p-8">
@@ -215,7 +215,7 @@ export default function DashboardConversations() {
             {/* Header */}
             <div className="mb-6">
               <div className="flex items-center gap-4 mb-4">
-                <Link 
+                <Link
                   to="/dashboard/reviews"
                   className="flex items-center gap-2 text-gray-600 hover:text-red-600 transition-colors"
                 >
@@ -259,7 +259,7 @@ export default function DashboardConversations() {
                   Conversation History
                 </h2>
               </div>
-              
+
               <div className="p-6">
                 <div className="space-y-4 max-h-96 overflow-y-auto mb-6">
                   {conversations.map((message) => (
@@ -268,16 +268,14 @@ export default function DashboardConversations() {
                       className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                       <div
-                        className={`max-w-xs lg:max-w-md px-4 py-3 rounded-lg ${
-                          message.sender === 'user'
+                        className={`max-w-xs lg:max-w-md px-4 py-3 rounded-lg ${message.sender === 'user'
                             ? 'bg-red-600 text-white'
                             : 'bg-gray-100 text-gray-900 border border-gray-200'
-                        }`}
+                          }`}
                       >
                         <p className="text-sm">{message.message}</p>
-                        <p className={`text-xs mt-2 ${
-                          message.sender === 'user' ? 'text-red-100' : 'text-gray-500'
-                        }`}>
+                        <p className={`text-xs mt-2 ${message.sender === 'user' ? 'text-red-100' : 'text-gray-500'
+                          }`}>
                           {message.sender === 'user' ? 'You' : 'Admin'} • {formatTimestamp(message.timestamp)}
                         </p>
                       </div>
@@ -323,7 +321,7 @@ export default function DashboardConversations() {
             </div>
           </div>
         </div>
-        
+
       </div>
     </div>
   );

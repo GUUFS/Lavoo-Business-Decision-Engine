@@ -510,1649 +510,391 @@ export default function InsightsPage() {
 
 
 
-
-/// Default alerts page
-import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-export default function AlertsPage() {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [selectedPriority, setSelectedPriority] = useState('all');
-  const [showToast, setShowToast] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
-  const [userPoints, setUserPoints] = useState(0);
-  const [sharedAlerts, setSharedAlerts] = useState(new Set());
-  const [showShareModal, setShowShareModal] = useState(false);
-  const [selectedAlert, setSelectedAlert] = useState(null);
-  const [isPremium] = useState(false); // This would come from user's subscription statuss
-  const navigate = useNavigate()
+import Button from '../../components/base/Button';
 
-  const [viewedAlerts, setViewedAlerts] = useState<Set<string>>(new Set());
-  const [viewportWidth, setViewportWidth] = useState(0);
-  
-  // Load saved data from localStorage
-  useEffect(() => {
-    setViewportWidth(window.innerWidth);
+export default function Dashboard() {
+  const navigate = useNavigate();
 
-    const savedViewedAlerts = localStorage.getItem('viewedAlerts');
-    const savedSharedAlerts = localStorage.getItem('sharedAlerts');
-    const savedUserPoints = localStorage.getItem('userPoints');
-    
-    if (savedViewedAlerts) {
-      setViewedAlerts(new Set(JSON.parse(savedViewedAlerts)));
-    }
-    if (savedSharedAlerts) {
-      setSharedAlerts(new Set(JSON.parse(savedSharedAlerts)));
-    }
-    if (savedUserPoints) {
-      setUserPoints(parseInt(savedUserPoints));
-    }
 
-    const handleResize = () => setViewportWidth(window.innerWidth);
-    window.addEventListener("resize", handleResize);
-
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
-  // Save data to localStorage
-  const saveToLocalStorage = (viewed: Set<string>, shared: Set<string>, points: number) => {
-    localStorage.setItem('viewedAlerts', JSON.stringify([...viewed]));
-    localStorage.setItem('sharedAlerts', JSON.stringify([...shared]));
-    localStorage.setItem('userPoints', points.toString());
-    
-    // Update earnings page progress
-    const currentEarningsPoints = parseInt(localStorage.getItem('earnedPoints') || '0');
-    const totalPoints = currentEarningsPoints + points;
-    localStorage.setItem('earnedPoints', totalPoints.toString());
-    
-    // Dispatch event to update earnings page
-    window.dispatchEvent(new CustomEvent('pointsUpdated', { 
-      detail: { points: totalPoints } 
-    }));
-  };
-
-  const alerts = [
-    
+  const urgentOpportunities = [
     {
-      id: 5,
-      title: "Competitor Pricing Strategy Shift",
-      category: "Competitive",
-      priority: "High",
-      score: 90,
-      timeRemaining: "4 days",
-      whyActNow: "Main competitor increased prices by 35% effective next week. Market research shows 40% of their customers are actively seeking alternatives. Perfect timing to capture market share.",
-      potentialReward: "Acquire 200-300 new customers within 60 days. Increase market share by 12%. Generate additional $180,000 in quarterly revenue.",
-      actionRequired: "Launch competitive pricing campaign highlighting value proposition. Create comparison chart showing cost savings. Offer limited-time migration incentive with 3 months free service.",
-      date: new Date().toISOString().split('T')[0]
+      title: 'LinkedIn Algorithm Favoring Long Posts - 72 Hour Window',
+      description: 'LinkedIn just pushed an algorithm update favoring posts 1200+ characters. Early testers seeing 10-15x normal reach. This won\'t last - capitalize NOW.',
+      score: 96,
+      timeLeft: 'Until Feb 4',
+      critical: true
+    },
+    {
+      title: 'OpenAI DevDay Announcements Creating Tool Opportunity',
+      description: 'OpenAI just announced new GPT-4 features that enable voice and vision capabilities. First movers who build tools leveraging these will dominate.',
+      score: 96,
+      timeLeft: 'Until Feb 14',
+      critical: true
+    },
+    {
+      title: 'Meta AI Studio Early Access - Build Your AI Twin Before Competition',
+      description: 'Meta AI Studio is in early access (launched Oct 14, 2025). First 10,000 creators get priority features and promotional boost from Meta. Applications close October 31st.',
+      score: 95,
+      timeLeft: 'Until Oct 30',
+      critical: true
     }
   ];
 
-  const MyComponent = () => {
-  // Declare state for attended alerts
-  const [attendedAlerts, setAttendedAlerts] = useState<Set<number>>(new Set());
-
-  // Function to mark an alert as attended
-  const markAsAttended = (alertId: number) => {
-    setAttendedAlerts(prev => new Set([...prev, alertId]));
-  };
-
-
-  const handleShare = (alert: any) => {
-    setSelectedAlert(alert);
-    setShowShareModal(true);
-  };
-
-  
-  const [sharedAlerts, setSharedAlerts] = useState<Set<string>>(new Set());
-  const [userPoints, setUserPoints] = useState<number>(0);
-
-  interface Alert {
-    id: number | string;
-    title: string;
-    category: string;
-    priority: string;
-    score: number;
-    timeRemaining: string;
-    whyActNow: string;
-    potentialReward: string;
-    actionRequired: string;
-    date: string;
-  }
-
-  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
-
-    // Award points only if not already viewed
-  const handleViewDetails = (alert: any) => {
-    markAsAttended(alert.id.toString());
-    if (!viewedAlerts.has(alert.id)) {
-      const pointsToAdd = isPremium ? 10 : 5;
-      const newUserPoints = userPoints + pointsToAdd;
-      const newViewedAlerts = new Set([...viewedAlerts, alert.id]);
-      
-      
-      setUserPoints(newUserPoints);
-      setViewedAlerts(newViewedAlerts);
-      saveToLocalStorage(newViewedAlerts, sharedAlerts, newUserPoints);
-      
-      setToastMessage(`You earned ${pointsToAdd} Chops for viewing this alert!`);
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
+  const aiInsights = [
+    {
+      title: 'Content Performance Analysis',
+      description: 'Your video content performs 340% better than text posts. Recommend increasing video production by 60%.',
+      impact: 'High',
+      category: 'Content Strategy'
+    },
+    {
+      title: 'Audience Engagement Patterns',
+      description: 'Peak engagement occurs Tuesday-Thursday 2-4 PM EST. Scheduling posts during this window increases reach by 180%.',
+      impact: 'Medium',
+      category: 'Timing Optimization'
+    },
+    {
+      title: 'Competitor Gap Analysis',
+      description: 'Identified 3 content gaps in your niche with low competition but high search volume. Potential for 50K+ monthly views.',
+      impact: 'High',
+      category: 'Market Opportunity'
     }
-    
-    if (alert.source && alert.source !== '#') {
-      window.open(alert.source, '_blank');
-    } else {
-      window.open('https://www.google.com/search?q=business+opportunities', '_blank');
+  ];
+
+  const recentEarnings = [
+    {
+      source: 'Chops',
+      amount: '450',
+    },
+    {
+      source: 'Affiliate Commissions',
+      amount: '$8,920',
+    },
+    {
+      source: 'Total Referrals',
+      amount: '30',
     }
-  };
+  ];
 
-  type Platform = 'twitter' | 'facebook' | 'linkedin' | 'whatsapp';
-
-  const shareToSocialMedia = (platform: Platform) => {
-    if (!selectedAlert) return;
-
-    const userName = 'John Doe'; // This should come from user data
-    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
-    const alertUrl = `${referralLink}&alert=${selectedAlert!.id}`;
-    const text = `Check out this business opportunity: ${selectedAlert.title}`;
-    
-    let shareUrl = '';
-    
-    switch (platform) {
-      case 'twitter':
-        shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(alertUrl)}`;
-        break;
-      case 'facebook':
-        shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(alertUrl)}`;
-        break;
-      case 'linkedin':
-        shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(alertUrl)}`;
-        break;
-      case 'whatsapp':
-        shareUrl = `https://wa.me/?text=${encodeURIComponent(text + ' ' + alertUrl)}`;
-        break;
+  const recentReviews = [
+    {
+      platform: 'Google',
+      rating: 5,
+      author: 'Sarah Johnson',
+      text: 'Exceptional AI consulting services. Helped transform our business strategy completely.',
+      time: '2 hours ago'
+    },
+    {
+      platform: 'LinkedIn',
+      rating: 5,
+      author: 'Michael Chen',
+      text: 'Outstanding insights and practical recommendations. Highly recommend!',
+      time: '1 day ago'
+    },
+    {
+      platform: 'Trustpilot',
+      rating: 4,
+      author: 'Emma Davis',
+      text: 'Great experience overall. Very knowledgeable and professional team.',
+      time: '3 days ago'
     }
-    
-    if (shareUrl) {
-      window.open(shareUrl, '_blank');
-      awardSharingPoints();
+  ];
+
+  const hubIntegrations = [
+    {
+      name: 'AI Avatar',
+      lastSync: '2 minutes ago',
+    },
+    {
+      name: 'Smart Fitness Technology',
+      lastSync: '5 minutes ago',
+    },
+    {
+      name:'Electric Vehicles',
+      lastSync: '1 hour ago',
+    },
+    {
+      name: 'Immersive Learning',
+      lastSync: 'Not synced',
     }
-    
-    setShowShareModal(false);
-  };
-
-  const copyLink = () => {
-    if (!selectedAlert) return;
-    const userName = 'John Doe'; // This should come from user data
-    const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
-    const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
-    navigator.clipboard.writeText(alertUrl);
-    awardSharingPoints();
-    setToastMessage('Link copied to clipboard!');
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
-    setShowShareModal(false);
-  };
-
-  const awardSharingPoints = () => {
-    if (!selectedAlert) return;
-    const alertId = selectedAlert.id.toString();
-    // Award points only if not already shared
-    if (!sharedAlerts.has(alertId)) {
-      const pointsToAdd = isPremium ? 10 : 5;
-      const newUserPoints = userPoints + pointsToAdd;
-      const newSharedAlerts = new Set([...sharedAlerts, alertId]);
-      
-      setUserPoints(newUserPoints);
-      setSharedAlerts(newSharedAlerts);
-      saveToLocalStorage(viewedAlerts, newSharedAlerts, newUserPoints);
-      
-      if (!showToast) {
-        setToastMessage(`You earned ${pointsToAdd} points for sharing this alert!`);
-        setShowToast(true);
-        setTimeout(() => setShowToast(false), 3000);
-      }
-    }
-  };
-
-  const unattendedCount = alerts.length - attendedAlerts.size;
-
-
-  const getScoreBgColor = (score: any) => {
-    if (score >= 90) return '#dcfce7'; // Green bg
-    if (score >= 80) return '#fef3c7'; // Yellow bg
-    if (score >= 70) return '#fed7aa'; // Orange bg
-    return '#fecaca'; // Red bg
-  };
-
-
-  const getPriorityBgColor = (priority: any) => {
-    switch (priority) {
-      case 'High':
-        return '#fef2f2';
-      case 'Medium':
-        return '#fffbeb';
-      case 'Low':
-        return '#f0fdf4';
-      default:
-        return '#f9fafb';
-    }
-  };
-
-  const filteredAlerts = alerts.filter(alert => {
-    const categoryMatch = selectedCategory === 'all' || alert.category.toLowerCase() === selectedCategory;
-    const priorityMatch = selectedPriority === 'all' || alert.priority.toLowerCase() === selectedPriority;
-    return categoryMatch && priorityMatch;
-  });
-
-  // Show only first 2 alerts + premium upgrade alert if not premium
-  const displayedAlerts = isPremium ? filteredAlerts : filteredAlerts.slice(0, 2);
-  const hasMoreAlerts = !isPremium && filteredAlerts.length > 2;
-
-  const getScoreColor = (score: number) => {
-    if (score >= 90) return 'text-green-600 bg-green-50 border-green-200';
-    if (score >= 80) return 'text-blue-600 bg-blue-50 border-blue-200';
-    if (score >= 70) return 'text-yellow-600 bg-yellow-50 border-yellow-200';
-    return 'text-red-600 bg-red-50 border-red-200';
-  };
-
-  
-  const getPriorityColor = (priority: string) => {
-    if (priority === 'High') return 'bg-red-100 text-red-800 border-red-200';
-    if (priority === 'Medium') return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-    return 'bg-green-100 text-green-800 border-green-200';
-  };
-
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'Market': return 'ri-line-chart-line';
-      case 'Content': return 'ri-article-line';
-      case 'Customer': return 'ri-user-heart-line';
-      case 'Technology': return 'ri-robot-line';
-      case 'Competitive': return 'ri-sword-line';
-      default: return 'ri-notification-line';
-    }
-  };
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8 min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Opportunity Alerts</h1>
-          <p className="text-sm sm:text-base text-gray-600">AI-powered opportunities to grow your business</p>
-        </div>
-
-        {/* Stats Overview */}
-        {/* Main Content */}
-        <div style={{  flex: 1, marginLeft: '0', display: 'flex', flexDirection: 'column'}}>
-        
-        {/* Header */}
-        <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <button
-              style={{ 
-                display: window.innerWidth >= 768 ? 'none' : 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '40px',
-                height: '40px',
-                backgroundColor: 'transparent',
-                border: 'none',
-                borderRadius: '6px',
-                color: '#6b7280', cursor: 'pointer', marginRight: '16px' }}    
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            >
-              <i className="ri-menu-line" style={{ fontSize: '20px' }}></i>
-            </button>
-            <h1 style={{ 
-              fontSize: window.innerWidth >= 640 ? '24px' : '20px', fontWeight: 'bold', color: '#111827', margin: 0  
-            }}>Opportunity Alerts</h1>
-          </div>
+    <div className="flex-1  flex flex-col min-h-screen bg-gradient-to-br from-orange-50 to-white px-4">
+        <div className="flex-1 p-4 md:p-6 lg:p-8">
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div style={{ 
-              backgroundColor: '#f3f4f6', 
-              padding: '8px 16px', 
-              borderRadius: '20px',
-              fontSize: '14px',
-              fontWeight: '500', color: '#374151', display: window.innerWidth >= 640 ? 'block' : 'none'
-            }}>
-              Chops: {userPoints}
+          {/* Header */}
+          <div className="mb-6 md:mb-8">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+              <div className="flex-1">
+                <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mb-2">
+                  Welcome to Lavoo
+                </h1>
+                <p className="text-gray-600 text-sm md:text-base">
+                  Get a complete overview of your business performance and access all tools from here.
+                </p>
+              </div>
+          {/* <div className="hidden lg:flex items-center space-x-4">
+            <div className="bg-white rounded-lg px-4 py-2 shadow-sm border border-gray-200">
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span className="text-sm text-gray-600">All systems operational</span>
+              </div>
             </div>
-            <div style={{ backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', fontSize: '14px',
-              fontWeight: '500', color: '#374151', display: window.innerWidth >= 640 ? 'block' : 'none'  
-            }}>
-              {unattendedCount} unattended
+          </div> */}
             </div>
           </div>
-        </header>
 
-        {/* Content */}
-        <div style={{ flex: 1, padding: window.innerWidth >= 768 ? '24px' : '16px' }}>
-          {/* Summary Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr', gap: '16px',
-            marginBottom: '32px'}}>
-            <div style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>Total Alerts</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>{alerts.length}</p>
+          {/* Quick Stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 md:mb-8">
+            <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600 mb-1">Total Revenue</p>
+                  <p className="text-xl md:text-2xl font-bold text-gray-900">$24,580</p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: '#dbeafe', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
-                  <i className="ri-notification-line" style={{ color: '#3b82f6', fontSize: '20px' }}></i>
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <i className="ri-money-dollar-circle-line text-green-600 text-lg md:text-xl"></i>
                 </div>
+              </div>
+              <div className="mt-3 flex items-center">
+                <i className="ri-arrow-up-line text-green-500 text-sm"></i>
+                <span className="text-green-500 text-sm font-medium ml-1">+12.5%</span>
+                <span className="text-gray-500 text-sm ml-2">vs last month</span>
               </div>
             </div>
 
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '20px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>Points Earned</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>{userPoints}</p>
+            <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600 mb-1">Active Alerts</p>
+                  <p className="text-xl md:text-2xl font-bold text-gray-900">8</p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: '#fef3c7', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
-                  <i className="ri-star-line" style={{ color: '#f59e0b', fontSize: '20px' }}></i>
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <i className="ri-alert-line text-orange-600 text-lg md:text-xl"></i>
                 </div>
+              </div>
+              <div className="mt-3 flex items-center">
+                <i className="ri-arrow-up-line text-orange-500 text-sm"></i>
+                <span className="text-orange-500 text-sm font-medium ml-1">3 new</span>
+                <span className="text-gray-500 text-sm ml-2">today</span>
               </div>
             </div>
 
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '20px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>Attended</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>{attendedAlerts.size}</p>
+            <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600 mb-1">AI Insights</p>
+                  <p className="text-xl md:text-2xl font-bold text-gray-900">156</p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: '#dcfce7', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
-                  <i className="ri-check-line" style={{ color: '#16a34a', fontSize: '20px' }}></i>
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <i className="ri-brain-line text-purple-600 text-lg md:text-xl"></i>
                 </div>
+              </div>
+              <div className="mt-3 flex items-center">
+                <i className="ri-arrow-up-line text-purple-500 text-sm"></i>
+                <span className="text-purple-500 text-sm font-medium ml-1">+8 today</span>
+                <span className="text-gray-500 text-sm ml-2">this week</span>
               </div>
             </div>
 
-            <div style={{ 
-              backgroundColor: '#ffffff', 
-              padding: '20px', 
-              borderRadius: '12px', 
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' 
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <p style={{ 
-                    fontSize: '14px', 
-                    color: '#6b7280', 
-                    margin: '0 0 4px 0' 
-                  }}>User Type</p>
-                  <p style={{ 
-                    fontSize: '24px', 
-                    fontWeight: 'bold', 
-                    color: '#111827',
-                    margin: 0
-                  }}>{isPremium ? 'Premium' : 'Free'}</p>
+            <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <p className="text-sm text-gray-600 mb-1">Avg Rating</p>
+                  <p className="text-xl md:text-2xl font-bold text-gray-900">4.8</p>
                 </div>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  backgroundColor: isPremium ? '#f3e8ff' : '#f3f4f6', 
-                  borderRadius: '12px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center' 
-                }}>
-                  <i className={isPremium ? 'ri-vip-crown-line' : 'ri-user-line'} style={{ color: isPremium ? '#8b5cf6' : '#6b7280', fontSize: '20px' }}></i>
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                  <i className="ri-star-line text-yellow-600 text-lg md:text-xl"></i>
                 </div>
+              </div>
+              <div className="mt-3 flex items-center">
+                <i className="ri-arrow-up-line text-yellow-500 text-sm"></i>
+                <span className="text-yellow-500 text-sm font-medium ml-1">+0.2</span>
+                <span className="text-gray-500 text-sm ml-2">this month</span>
               </div>
             </div>
           </div>
 
-          {/* Alerts List */}
-          <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column', gap: '32px' }}>
-            {alerts.map((alert) => (
-              <div key={alert.id} style={{ 
-                backgroundColor: '#ffffff', 
-                borderRadius: '16px', 
-                padding: '32px', 
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                border: attendedAlerts.has(alert.id) ? '2px solid #10b981' : '1px solid #e5e7eb',
-                transition: 'all 0.3s ease'}}>
-                {/* Header Section */}
-                <div style={{ 
-                  display: 'flex', flexDirection: window.innerWidth >= 768 ? 'row' : 'column', alignItems: window.innerWidth >= 768 ? 'flex-start' : 'stretch',
-                  justifyContent: 'space-between', marginBottom: '24px',
-                  gap: '16px'}}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '12px', 
-                      marginBottom: '12px',
-                      flexWrap: 'wrap'}}>
-                      <span style={{ 
-                        backgroundColor: getScoreBgColor(alert.score),
-                        color: getScoreColor(alert.score),
-                        padding: '6px 16px', 
-                        borderRadius: '20px', 
-                        fontSize: '14px', 
-                        fontWeight: '700',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}>
-                        <i className="ri-star-fill" style={{ fontSize: '12px' }}></i>
-                        Score: {alert.score}
-                      </span>
-                      <span style={{ 
-                        backgroundColor: getPriorityBgColor(alert.priority),
-                        color: getPriorityColor(alert.priority),
-                        padding: '6px 16px', 
-                        borderRadius: '20px', 
-                        fontSize: '14px', 
-                        fontWeight: '600' 
-                      }}>
-                        {alert.priority} Priority
-                      </span>
-                      <span style={{ 
-                        backgroundColor: '#f3f4f6', 
-                        color: '#374151', 
-                        padding: '6px 16px', 
-                        borderRadius: '20px', 
-                        fontSize: '14px', 
-                        fontWeight: '500' 
-                      }}>
-                        {alert.category}
-                      </span>
-                      <span style={{ 
-                        fontSize: '14px', 
-                        color: '#6b7280',
-                        fontWeight: '500'
-                      }}>
-                        {alert.date}
-                      </span>
+          {/* Dashboard Sections */}
+          <div className="space-y-6 md:space-y-8">
+
+            {/* AI Insights */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="p-4 md:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-brain-line text-purple-600"></i>
                     </div>
-                    <h2 style={{ 
-                      fontSize: window.innerWidth >= 768 ? '24px' : '20px', 
-                      fontWeight: 'bold', 
-                      color: '#111827', 
-                      marginBottom: '0',
-                      lineHeight: '1.3'
-                    }}>
-                      {alert.title}
-                    </h2>
+                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Insights</h3>
                   </div>
-                  
-                  {attendedAlerts.has(alert.id) && (
-                    <div style={{ 
-                      backgroundColor: '#dcfce7', 
-                      color: '#16a34a', 
-                      padding: '12px 20px', 
-                      borderRadius: '24px', 
-                      fontSize: '14px', 
-                      fontWeight: '600',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      alignSelf: window.innerWidth >= 768 ? 'flex-start' : 'center'}}>
-                      <i className="ri-check-line" style={{ fontSize: '16px' }}></i>
-                      Attended
+                  <Button
+                    onClick={() => navigate('/dashboard/insights')}
+                    variant="outline"
+                    size="sm"
+                    className="whitespace-nowrap self-start sm:self-auto"
+                  >
+                    View All <i className="ri-arrow-right-line ml-1"></i>
+                  </Button>
+                </div>
+              </div>
+              <div className="p-4 md:p-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+                  {aiInsights.map((insight, index) => (
+                    <div key={index} className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0 mb-3">
+                        <span className={`text-xs px-2 py-1 rounded-full font-medium self-start ${
+                          insight.impact === 'High' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'
+                        }`}>
+                          {insight.impact} Impact
+                        </span>
+                        <span className="text-xs text-gray-500">{insight.category}</span>
+                      </div>
+                      <h4 className="font-medium text-gray-900 mb-2 text-sm md:text-base">{insight.title}</h4>
+                      <p className="text-sm text-gray-600 leading-relaxed">{insight.description}</p>
                     </div>
-                  )}
+                  ))}
                 </div>
-
-                {/* Content Sections */}
-                <div style={{ 
-                  display: 'grid', 
-                  gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(3, 1fr)' : '1fr',
-                  gap: '24px', 
-                  marginBottom: '32px' }}>
-                  {/* Why Act Now */}
-                  <div style={{ 
-                    backgroundColor: '#fef7ff', 
-                    padding: '20px', 
-                    borderRadius: '12px',
-                    border: '1px solid #e879f9'}}>
-                    <h3 style={{ 
-                      fontSize: '16px', 
-                      fontWeight: 'bold', 
-                      color: '#a21caf', 
-                      marginBottom: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}>
-                      <i className="ri-time-line" style={{ fontSize: '18px' }}></i>
-                      Why Act Now
-                    </h3>
-                    <p style={{ 
-                      fontSize: '14px', 
-                      color: '#4b5563', 
-                      lineHeight: '1.6',
-                      margin: 0
-                    }}>
-                      {alert.whyActNow}
-                    </p>
-                  </div>
-
-                  {/* Potential Reward */}
-                  <div style={{ 
-                    backgroundColor: '#f0fdf4', 
-                    padding: '20px', 
-                    borderRadius: '12px',
-                    border: '1px solid #22c55e'}}>
-                    <h3 style={{ 
-                      fontSize: '16px', 
-                      fontWeight: 'bold', 
-                      color: '#16a34a', 
-                      marginBottom: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}>
-                      <i className="ri-trophy-line" style={{ fontSize: '18px' }}></i>
-                      Potential Reward
-                    </h3>
-                    <p style={{ 
-                      fontSize: '14px', 
-                      color: '#4b5563', 
-                      lineHeight: '1.6',
-                      margin: 0
-                    }}>
-                      {alert.potentialReward}
-                    </p>
-                  </div>
-
-                  {/* Action Required */}
-                  <div style={{ 
-                    backgroundColor: '#fff7ed', 
-                    padding: '20px', 
-                    borderRadius: '12px',
-                    border: '1px solid #f97316',
-                    gridColumn: window.innerWidth >= 1024 ? 'auto' : '1 / -1'}}>
-                    <h3 style={{ 
-                      fontSize: '16px', 
-                      fontWeight: 'bold', 
-                      color: '#ea580c', 
-                      marginBottom: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px'
-                    }}>
-                      <i className="ri-flashlight-line" style={{ fontSize: '18px' }}></i>
-                      Action Required
-                    </h3>
-                    <p style={{ 
-                      fontSize: '14px', 
-                      color: '#4b5563', 
-                      lineHeight: '1.6',
-                      margin: 0
-                    }}>
-                      {alert.actionRequired}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div style={{ 
-                  display: 'flex', 
-                  flexDirection: window.innerWidth >= 640 ? 'row' : 'column',
-                  gap: '16px', 
-                  paddingTop: '24px', 
-                  borderTop: '1px solid #e5e7eb' }}>
-                  <button 
-                    onClick={() => handleShare(alert)}
-                    style={{ 
-                      flex: 1,
-                      backgroundColor: sharedAlerts.has(alert.id.toString()) ? '#10b981' : '#f97316', 
-                      color: '#ffffff', padding: '14px 20px', borderRadius: '10px',  border: 'none', fontSize: '15px',
-                      fontWeight: '600', cursor: 'pointer', display: 'flex',alignItems: 'center',  justifyContent: 'center', transition: 'background-color 0.3s ease', whiteSpace: 'nowrap' }}        
-                    onMouseOver={(e : React.MouseEvent<HTMLButtonElement>) => 
-                      e.currentTarget.style.backgroundColor = sharedAlerts.has(alert.id.toString()) ? '#059669' : '#ea580c'}
-                    onMouseOut={(e : React.MouseEvent<HTMLButtonElement>) => 
-                      e.currentTarget.style.backgroundColor = sharedAlerts.has(alert.id.toString()) ? '#10b981' : '#f97316'}
-                  >
-                    <i className={sharedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px', fontSize: '16px' }}></i>
-                    {sharedAlerts.has(alert.id.toString()) ? 'Shared' : `Share (+${isPremium ? 10 : 5} points)`}
-                  </button>
-                  <button 
-                    onClick={() => handleViewDetails(alert)}
-                    style={{ 
-                      flex: 1,
-                      backgroundColor: viewedAlerts.has(alert.id.toString()) ? '#10b981' : 'transparent', 
-                      color: viewedAlerts.has(alert.id.toString()) ? '#ffffff' : '#6b7280',  padding: '14px 20px', 
-                      borderRadius: '10px', fontSize: '15px', fontWeight: '600',cursor: 'pointer', alignItems: 'center',
-                      justifyContent: 'center', transition: 'all 0.3s ease', whiteSpace: 'nowrap',
-                      display: 'flex', border: viewedAlerts.has(alert.id.toString()) ? 'none' : '2px solid #d1d5db',}}
-                    onMouseOver={(e) => {
-                      if (!viewedAlerts.has(alert.id.toString())) {
-                        e.currentTarget.style.backgroundColor = '#f9fafb';
-                        e.currentTarget.style.borderColor = '#9ca3af';
-                        e.currentTarget.style.color = '#374151';
-                      }
-                    }}
-                    onMouseOut={(e) => {
-                      if (!viewedAlerts.has(alert.id.toString())) {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                        e.currentTarget.style.borderColor = '#d1d5db';
-                        e.currentTarget.style.color = '#6b7280';
-                      }
-                    }}
-                  >
-                    <i className={viewedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-external-link-line'} style={{ marginRight: '8px', fontSize: '16px' }}></i>
-                    {viewedAlerts.has(alert.id.toString()) ? 'Viewed' : `View Details (+${isPremium ? 10 : 5} points)`}
-                  </button>
-                  <button style={{ 
-                    flex: 1, backgroundColor: 'transparent', color: '#6b7280',padding: '14px 20px', borderRadius: '10px', border: '2px solid #d1d5db', fontSize: '15px', fontWeight: '600',
-                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s ease', whiteSpace: 'nowrap'}}
-                  onMouseOver={(e) => {
-                    e.currentTarget.style.backgroundColor = '#f9fafb';
-                    e.currentTarget.style.borderColor = '#9ca3af';
-                    e.currentTarget.style.color = '#374151';
-                  }}
-                  onMouseOut={(e) => {
-                    e.currentTarget.style.backgroundColor = 'transparent';
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.color = '#6b7280';
-                  }}>
-                    <i className="ri-time-line" style={{ marginRight: '8px', fontSize: '16px' }}></i>
-                    Remind Later
-                  </button>
               </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        </div>
-
-        {/* Toast Notification */}
-        {showToast && (
-        <div style={{ 
-          position: 'fixed', 
-          top: '24px', 
-          right: '24px', 
-          backgroundColor: '#f97316', 
-          color: '#ffffff', 
-          padding: '16px 20px', 
-          borderRadius: '8px', 
-          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', 
-          zIndex: 50,
-          display: 'flex',
-          alignItems: 'center',
-          maxWidth: window.innerWidth >= 640 ? '400px' : '90%',
-          animation: 'slideIn 0.3s ease-out'
-        }}>
-          <i className="ri-star-fill" style={{ marginRight: '8px', fontSize: '16px' }}></i>
-          {toastMessage}
-        </div>
-        )}
-
-        {/* Share Modal */}
-        {showShareModal && (
-        <>
-          <div 
-            style={{ position: 'fixed', inset: 0,backgroundColor: 'rgba(0, 0, 0, 0.5)',  zIndex: 40 }}
-            onClick={() => setShowShareModal(false)}
-          />
-          <div style={{ 
-            position: 'fixed', 
-            top: '50%', 
-            left: '50%', 
-            transform: 'translate(-50%, -50%)', 
-            backgroundColor: '#ffffff', 
-            borderRadius: '12px', 
-            padding: '24px', 
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', 
-            zIndex: 50,
-            width: '90%',
-            maxWidth: '400px'
-          }}>
-            <h3 style={{ 
-              fontSize: '18px', 
-              fontWeight: 'bold', 
-              color: '#111827', 
-              marginBottom: '16px',
-              textAlign: 'center'
-            }}>
-              Share Alert
-            </h3>
-            
-            <div style={{ 
-              display: 'grid', 
-              gridTemplateColumns: 'repeat(2, 1fr)', 
-              gap: '12px', 
-              marginBottom: '16px' 
-            }}>
-              <button
-                onClick={() => shareToSocialMedia('twitter')}
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  padding: '12px', 
-                  backgroundColor: '#1da1f2', 
-                  color: '#ffffff', 
-                  borderRadius: '8px', 
-                  border: 'none', 
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
-              >
-                <i className="ri-twitter-fill" style={{ marginRight: '8px' }}></i>
-                Twitter
-              </button>
-              
-              <button
-                onClick={() => shareToSocialMedia('facebook')}
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  padding: '12px', 
-                  backgroundColor: '#4267b2', 
-                  color: '#ffffff', 
-                  borderRadius: '8px', 
-                  border: 'none', 
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
-              >
-                <i className="ri-facebook-fill" style={{ marginRight: '8px' }}></i>
-                Facebook
-              </button>
-              
-              <button
-                onClick={() => shareToSocialMedia('linkedin')}
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  padding: '12px', 
-                  backgroundColor: '#0077b5', 
-                  color: '#ffffff', 
-                  borderRadius: '8px', 
-                  border: 'none', 
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
-              >
-                <i className="ri-linkedin-fill" style={{ marginRight: '8px' }}></i>
-                LinkedIn
-              </button>
-              
-              <button
-                onClick={() => shareToSocialMedia('whatsapp')}
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  padding: '12px', 
-                  backgroundColor: '#25d366', 
-                  color: '#ffffff', 
-                  borderRadius: '8px', 
-                  border: 'none', 
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500'
-                }}
-              >
-                <i className="ri-whatsapp-fill" style={{ marginRight: '8px' }}></i>
-                WhatsApp
-              </button>
             </div>
+
             
-            <button
-              onClick={copyLink}
-              style={{ 
-                width: '100%', 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                padding: '12px', 
-                backgroundColor: '#f3f4f6', 
-                color: '#374151', 
-                borderRadius: '8px', 
-                border: 'none', 
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-                marginBottom: '16px'
-              }}
-            >
-              <i className="ri-file-copy-line" style={{ marginRight: '8px' }}></i>
-              Copy Link
-            </button>
-            
-            <button
-              onClick={() => setShowShareModal(false)}
-              style={{ 
-                width: '100%', 
-                padding: '12px', 
-                backgroundColor: 'transparent', 
-                color: '#6b7280', 
-                border: '1px solid #d1d5db', 
-                borderRadius: '8px', 
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500'
-              }}
-            >
-              Cancel
-            </button>
+            {/* Urgent Opportunities */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="p-4 md:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-alert-line text-orange-600"></i>
+                    </div>
+                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Urgent Opportunities</h3>
+                  </div>
+                  <Button
+                    onClick={() => navigate('/dashboard/alerts')}
+                    variant="outline"
+                    size="sm"
+                    className="whitespace-nowrap self-start sm:self-auto"
+                  >
+                    View All <i className="ri-arrow-right-line ml-1"></i>
+                  </Button>
+                </div>
+              </div>
+              <div className="p-4 md:p-6">
+                <div className="space-y-4">
+                  {urgentOpportunities.map((opportunity, index) => (
+                    <div key={index} className="border border-gray-200 rounded-lg p-4 md:p-6 hover:border-orange-200 hover:bg-orange-50/30 transition-all duration-200">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between space-y-3 sm:space-y-0 mb-3">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-6 h-6 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                            <i className="ri-fire-line text-red-600 text-sm"></i>
+                          </div>
+                          <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-medium">critical</span>
+                        </div>
+                        <div className="text-left sm:text-right">
+                          <div className="text-sm font-medium text-gray-900">Score: {opportunity.score}</div>
+                          <div className="text-xs text-gray-500">{opportunity.timeLeft}</div>
+                        </div>
+                      </div>
+                      <h4 className="font-medium text-gray-900 mb-2 text-sm md:text-base">{opportunity.title}</h4>
+                      <p className="text-sm text-gray-600 leading-relaxed">{opportunity.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+
+            {/* Earnings */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="p-4 md:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-money-dollar-circle-line text-green-600"></i>
+                    </div>
+                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Earnings</h3>
+                  </div>
+                  <Button
+                    onClick={() => navigate('/dashboard/earnings')}
+                    variant="outline"
+                    size="sm"
+                    className="whitespace-nowrap self-start sm:self-auto"
+                  >
+                    View All <i className="ri-arrow-right-line ml-1"></i>
+                  </Button>
+                </div>
+              </div>
+              <div className="p-4 md:p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                  {recentEarnings.map((earning, index) => (
+                    <div key={index} className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-green-200 hover:bg-green-50/30 transition-all duration-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="font-medium text-gray-900 text-sm md:text-base">{earning.source}</h4>
+                        <span className="text-green-600 text-sm font-medium">{earning.change}</span>
+                      </div>
+                      <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{earning.amount}</div>
+                      <div className="text-sm text-gray-500">{earning.period}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* AI Trends */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+              <div className="p-4 md:p-6 border-b border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <i className="ri-global-line text-indigo-600"></i>
+                    </div>
+                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Trends</h3>
+                  </div>
+                  <Button
+                    onClick={() => navigate('/dashboard/ai_trends')}
+                    variant="outline"
+                    size="sm"
+                    className="whitespace-nowrap self-start sm:self-auto"
+                  >
+                    View All <i className="ri-arrow-right-line ml-1"></i>
+                  </Button>
+                </div>
+              </div>
+              <div className="p-4 md:p-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {hubIntegrations.map((integration, index) => (
+                    <div key={index} className="border border-gray-200 rounded-lg p-4 hover:border-indigo-200 hover:bg-indigo-50/30 transition-all duration-200">
+                      <div className="flex items-center space-x-3 mb-3">
+                        <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                          <i className={`${integration.icon} text-gray-600`}></i>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium text-gray-900 text-sm truncate">{integration.name}</h4>
+                          <div className="flex items-center space-x-1 mt-1">
+                            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                              integration.status === 'Connected' ? 'bg-green-500' : 'bg-yellow-500'
+                            }`}></div>
+                            <span className={`text-xs ${
+                              integration.status === 'Connected' ? 'text-green-600' : 'text-yellow-600'
+                            }`}>
+                              {integration.status}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-500">Last sync: {integration.lastSync}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
-        </>
-        )}
+        </div>
         
-        {/* Premium Upgrade Alert */}
-        {hasMoreAlerts && (
-        <div className="bg-white rounded-lg sm:rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-              {/* Alert Header */}
-              <div className="p-4 sm:p-6 border-b border-gray-200">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="flex items-start gap-3 sm:gap-4">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-orange-400 to-orange-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                      <i className="ri-vip-crown-line text-white text-lg sm:text-xl"></i>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">
-                        {filteredAlerts.length - 2} More Pro Opportunities Available
-                      </h3>
-                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-orange-100 to-orange-200 text-orange-800 border border-orange-300">
-                          Pro Content
-                        </span>
-                        <span className="text-xs sm:text-sm text-gray-500">
-                          <i className="ri-lock-line mr-1"></i>
-                          Unlock with Pro
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <div className="px-3 py-2 rounded-lg border bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200 text-center">
-                      <div className="text-lg sm:text-xl font-bold text-orange-600">★</div>
-                      <div className="text-xs font-medium text-orange-600">Pro</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Premium Content */}
-              <div className="p-4 sm:p-6">
-                <div className="text-center py-8 sm:py-12">
-                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <i className="ri-vip-crown-line text-white text-2xl sm:text-3xl"></i>
-                  </div>
-                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-3">Unlock Pro Opportunities</h3>
-                  <p className="text-sm sm:text-base text-gray-600 mb-2 max-w-md mx-auto">
-                    Get access to high-value opportunities with detailed insights and action plans
-                  </p>
-                  <p className="text-xs sm:text-sm text-orange-600 font-medium mb-8">
-                    Pro members see 10x more opportunities on average
-                  </p>
-                  
-                  {/* Premium Features */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 max-w-2xl mx-auto">
-                    <div className="text-center">
-                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
-                        <i className="ri-eye-line text-orange-600"></i>
-                      </div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-700">Full Alert Details</p>
-                    </div>
-                    <div className="text-center">
-                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
-                        <i className="ri-lightbulb-line text-orange-600"></i>
-                      </div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-700">AI Insights</p>
-                    </div>
-                    <div className="text-center">
-                      <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center mx-auto mb-2 shadow-sm">
-                        <i className="ri-rocket-line text-orange-600"></i>
-                      </div>
-                      <p className="text-xs sm:text-sm font-medium text-gray-700">Action Plans</p>
-                    </div>
-                  </div>
-
-                  <button 
-                    onClick={() => navigate('/dashboard/upgrade')}
-                    className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-8 py-3 rounded-lg hover:from-orange-600 hover:to-orange-700 transition-all font-medium text-sm sm:text-base whitespace-nowrap shadow-lg cursor-pointer transform hover:scale-105"
-                  >
-                    Upgrade to Pro
-                  </button>
-                  <p className="text-xs text-gray-5	00 mt-3">Starting at $29.95/month • Cancel anytime</p>
-                </div>
-              </div>
-        </div>
-        )}
-      </div>
-
-      {/* Show message if no alerts match filters */}
-      {displayedAlerts.length === 0 && !hasMoreAlerts && (
-      <div className="text-center py-12">
-            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <i className="ri-notification-off-line text-gray-400 text-2xl"></i>
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No alerts found</h3>
-            <p className="text-gray-600">Try adjusting your filters to see more opportunities.</p>
-      </div>
-      )}
-    </div>
   
+      </div>
   );
-}
-  
-  return <MyComponent />;
-}
-
-
-
-// Prime debugged alerts pageimport { useState, useEffect } from 'react';
-
-// NOTE: The useNavigate hook from react-router-dom was imported but not used.
-// I will keep it commented out for now.
-// import { useNavigate } from 'react-router-dom'; 
-
-const API_BASE_URL = 'http://localhost:8000/api';
-
-// --- INTERFACES ---
-interface Alert {
-    id: number;
-    title: string;
-    source: string;
-    score: number;
-    priority: 'High' | 'Medium' | 'Low';
-    category: string;
-    time_remaining: string;
-    date: string | Date;
-    why_act_now: string;
-    potential_reward: string;
-    action_required: string;
-    has_viewed: boolean;
-    has_shared: boolean;
-    is_attended: boolean;
-    total_views: number;
-    total_shares: number; 
-}
-
-interface AlertStats {
-    total_alerts: number;
-    unattended_count: number;
-}
-
-type SocialPlatform = 'twitter' | 'facebook' | 'linkedin' | 'whatsapp';
-interface SocialButton {
-    name: string;
-    platform: SocialPlatform;
-    icon: string;
-    color: string;
-}
-
-// --- COMPONENT START ---
-
-export default function AlertsPage() {
-    const [showToast, setShowToast] = useState(false);
-    const [toastMessage, setToastMessage] = useState('');
-    const [userChops, setUserChops] = useState(0);
-    
-    // FIX 1: Explicitly type Sets to avoid 'any'
-    const [sharedAlerts, setSharedAlerts] = useState<Set<string>>(new Set());
-    const [viewedAlerts, setViewedAlerts] = useState<Set<string>>(new Set());
-    const [attendedAlerts, setAttendedAlerts] = useState<Set<number>>(new Set());
-    
-    const [showShareModal, setShowShareModal] = useState(false);
-    // FIX 2: Correctly type selectedAlert to accept Alert object or null
-    const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
-    
-    const [subscriptionStatus, setSubscriptionStatus] = useState('free');
-    const [currentPage, setCurrentPage] = useState(1);
-    const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
-    const [userId, setUserId] = useState<number | null>(null);
-    const [referralCount, setReferralCount] = useState(0);
-    
-    // FIX 3: Correctly type the alerts array state
-    const [alerts, setAlerts] = useState<Alert[]>([]);
-    
-    const [loading, setLoading] = useState(true);
-    const [readingChops, setReadingChops] = useState(0);
-    const [sharingChops, setSharingChops] = useState(0);
-    const [referralChops, setReferralChops] = useState(0);
-    const [alertStats, setAlertStats] = useState<AlertStats>({
-        total_alerts: 0,
-        unattended_count: 0
-    });
-
-    const ALERTS_PER_PAGE = 5;
-    const FREE_USER_ALERT_LIMIT = 3;
-    const isPro = subscriptionStatus === 'active';
-
-    // --- USE EFFECTS ---
-
-    useEffect(() => {
-        initializeData();
-        const handleResize = () => setViewportWidth(window.innerWidth);
-        window.addEventListener("resize", handleResize);
-        return () => window.removeEventListener("resize", handleResize);
-    }, []);
-
-    // --- DATA FETCHING & LOGIC ---
-
-    const initializeData = async () => {
-        try {
-            setLoading(true); // Start loading immediately
-            let storedUserId = localStorage.getItem('userId');
-            
-            if (!storedUserId) {
-                // No ID found locally. Redirect since login is required.
-                window.location.href = '/login';
-                return;
-            }
-            
-            const currentUserId = parseInt(storedUserId);
-            
-            // 1. Fetch user data (including subscription status and chops)
-            await fetchUserData(currentUserId);
-            
-            // 2. Set the userId state (important for other components/logic that might read it)
-            setUserId(currentUserId); 
-            
-            // 3. Fetch alert data and stats
-            await fetchAlerts(currentUserId);
-            await fetchAlertStats(currentUserId);
-
-        } catch (error) {
-            // If fetchUserData or any other critical fetch failed (e.g., 'Invalid user session')
-            console.error('Critical initialization error, redirecting to login:', error);
-            localStorage.removeItem('userId');
-            window.location.href = '/login';
-        } finally {
-            setLoading(false); // Stop loading regardless of success/failure
-        }
-    };
-
-    const fetchUserData = async (id: number) => {
-        try {
-            const response = await fetch(`${API_BASE_URL}/users/${id}`);
-            if (!response.ok) {
-                // If the user's local ID is rejected by the server, handle as broken session
-                throw new Error('Invalid user session');
-            }
-            const userData = await response.json();
-            setUserChops(userData.total_chops);
-            setSubscriptionStatus(userData.subscription_status);
-            setReferralCount(userData.referral_count);
-            setReadingChops(userData.reading_chops);
-            setSharingChops(userData.sharing_chops);
-            setReferralChops(userData.referral_chops);
-        } catch (error) {
-            console.error('Error fetching user data:', error);
-            throw error; // Re-throw to be caught by initializeData
-        }
-    };
-
-    const fetchAlerts = async (id: number) => {
-        try {
-            setLoading(true);
-            const response = await fetch(`${API_BASE_URL}/alerts/?user_id=${id}`);
-            if (response.ok) {
-                const alertsData: Alert[] = await response.json();
-                setAlerts(alertsData);
-                
-                // ... (rest of the logic for setting viewed/shared/attended Sets)
-                const viewed = new Set<string>();
-                const shared = new Set<string>();
-                const attended = new Set<number>();
-                
-                alertsData.forEach((alert: Alert) => {
-                    if (alert.has_viewed) viewed.add(alert.id.toString());
-                    if (alert.has_shared) shared.add(alert.id.toString());
-                    if (alert.is_attended) attended.add(alert.id);
-                });
-                
-                setViewedAlerts(viewed);
-                setSharedAlerts(shared);
-                setAttendedAlerts(attended);
-            }
-            setLoading(false);
-        } catch (error) {
-            console.error('Error fetching alerts:', error);
-            setLoading(false);
-            showToastNotification('Error loading alerts');
-            throw error;
-        }
-    };
-
-    const fetchAlertStats = async (id: number) => {
-        try {
-            const response = await fetch(`${API_BASE_URL}/users/${id}/alerts/stats`);
-            if (response.ok) {
-                const stats: AlertStats = await response.json();
-                setAlertStats(stats);
-            }
-        } catch (error) {
-            console.error('Error fetching alert stats:', error);
-            throw error;
-        }
-    };
-
-    const showToastNotification = (message: string) => {
-        setToastMessage(message);
-        setShowToast(true);
-        setTimeout(() => setShowToast(false), 3000);
-    };
-
-    const handleViewDetails = async (alert:Alert) => {
-        const alertId = alert.id.toString();
-        const newAttendedAlerts = new Set([...attendedAlerts, alert.id]);
-        setAttendedAlerts(newAttendedAlerts);
-        
-        // FIX: Check for null userId and assign to a non-null variable
-        const currentUserId = userId; 
-        if (currentUserId === null) {
-            console.error('User ID is null. Cannot record view or fetch data.');
-            showToastNotification('Error: User session invalid.');
-            return;
-        }
-
-        if (!viewedAlerts.has(alertId)) {
-            try {
-                const response = await fetch(`${API_BASE_URL}/alerts/view`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ user_id: currentUserId, alert_id: alert.id })
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    setUserChops(data.total_chops);
-                    setViewedAlerts(new Set([...viewedAlerts, alertId]));
-                    
-                    if (data.chops_earned > 0) {
-                        showToastNotification(`You earned ${data.chops_earned} Chops for viewing this alert!`);
-                        // FIX: Pass the non-null ID to the fetch functions
-                        await fetchUserData(currentUserId);
-                        await fetchAlertStats(currentUserId);
-                    }
-                }
-            } catch (error) {
-                console.error('Error viewing alert:', error);
-                showToastNotification('Error recording alert view');
-            }
-        }
-        
-        if (alert.source && alert.source !== '#') {
-            window.open(alert.source, '_blank');
-        } else {
-            window.open('https://www.google.com/search?q=business+opportunities', '_blank');
-        }
-    };
-
-    const handleShare = (alert: Alert) => {
-        setSelectedAlert(alert);
-        setShowShareModal(true);
-    };
-
-
-    const shareToSocialMedia = async (platform: SocialPlatform) => {
-        if (!selectedAlert) return;
-
-        // FIX: Check for null userId and assign to a non-null variable
-        const currentUserId = userId; 
-        if (currentUserId === null) {
-            console.error('User ID is null. Cannot share.');
-            showToastNotification('Error: User session invalid.');
-            return;
-        }
-
-        const userResponse = await fetch(`${API_BASE_URL}/users/${currentUserId}`); // Use checked ID
-        const userData = await userResponse.json();
-        const userName = userData.username;
-        
-        const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
-        const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
-        const text = `Check out this business opportunity: ${selectedAlert.title}`;
-        
-        let shareUrl = '';
-        
-        switch (platform) {
-            case 'twitter':
-                shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(alertUrl)}`;
-                break;
-            case 'facebook':
-                shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(alertUrl)}`;
-                break;
-            case 'linkedin':
-                shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(alertUrl)}`;
-                break;
-            case 'whatsapp':
-                shareUrl = `https://wa.me/?text=${encodeURIComponent(text + ' ' + alertUrl)}`;
-                break;
-        }
-        
-        if (shareUrl) {
-            window.open(shareUrl, '_blank');
-            await awardSharingPoints();
-        }
-        
-        setShowShareModal(false);
-    };
-
-    const copyLink = async () => {
-        if (!selectedAlert) return;
-        
-        // FIX: Check for null userId and assign to a non-null variable
-        const currentUserId = userId; 
-        if (currentUserId === null) {
-            console.error('User ID is null. Cannot copy link.');
-            showToastNotification('Error: User session invalid.');
-            return;
-        }
-        
-        const userResponse = await fetch(`${API_BASE_URL}/users/${currentUserId}`); // Use checked ID
-        const userData = await userResponse.json();
-        
-        const referralLink = `${window.location.origin}/signup?ref=$${userData.id}-${userData.referral_code}`;
-        const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
-        navigator.clipboard.writeText(alertUrl);
-        await awardSharingPoints();
-        showToastNotification('Link copied to clipboard!');
-        setShowShareModal(false);
-    };
-
-    const awardSharingPoints = async () => {
-        if (!selectedAlert) return;
-        
-        // FIX: Check for null userId and assign to a non-null variable
-        const currentUserId = userId; 
-        if (currentUserId === null) {
-            console.error('User ID is null. Cannot award sharing points.');
-            showToastNotification('Error: User session invalid.');
-            return;
-        }
-
-        const alertId = selectedAlert.id.toString();
-        
-        if (!sharedAlerts.has(alertId)) {
-            try {
-                const response = await fetch(`${API_BASE_URL}/alerts/share`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    // FIX: Use the non-null currentUserId
-                    body: JSON.stringify({ user_id: currentUserId, alert_id: selectedAlert.id }) 
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    setUserChops(data.total_chops);
-                    setSharedAlerts(new Set([...sharedAlerts, alertId]));
-                    
-                    if (data.chops_earned > 0) {
-                        showToastNotification(`You earned ${data.chops_earned} Chops for sharing this alert!`);
-                        // FIX: Pass the non-null ID to the fetch functions
-                        await fetchUserData(currentUserId); 
-                        await fetchAlertStats(currentUserId);
-                    }
-                }
-            } catch (error) {
-                console.error('Error sharing alert:', error);
-                showToastNotification('Error recording alert share');
-            }
-        }
-    };
-
-    // FIX 4: Use indexed access type for score
-    const getScoreBgColor = (score: Alert['score']) => {
-        if (score >= 90) return '#dcfce7';
-        if (score >= 80) return '#fef3c7';
-        if (score >= 70) return '#fed7aa';
-        return '#fecaca';
-    };
-
-    // FIX 5: Use indexed access type for priority
-    const getPriorityBgColor = (priority: Alert['priority']) => {
-        if (priority === 'High') return '#fef2f2';
-        if (priority === 'Medium') return '#fffbeb';
-        return '#f0fdf4';
-    };
-
-    // FIX 6: Use indexed access type for score
-    const getScoreColor = (score: Alert['score']) => {
-        if (score >= 90) return '#16a34a';
-        if (score >= 80) return '#3b82f6';
-        if (score >= 70) return '#f59e0b';
-        return '#ef4444';
-    };
-
-    // FIX 7: Use indexed access type for priority
-    const getPriorityColor = (priority: Alert['priority']) => {
-        if (priority === 'High') return '#dc2626';
-        if (priority === 'Medium') return '#f59e0b';
-        return '#16a34a';
-    };
-
-    const totalPages = Math.ceil(alerts.length / ALERTS_PER_PAGE);
-    const startIndex = (currentPage - 1) * ALERTS_PER_PAGE;
-    const endIndex = startIndex + ALERTS_PER_PAGE;
-    
-    // FIX 8: Explicitly type displayedAlerts
-    let displayedAlerts: Alert[] = [];
-    let hasMoreAlerts = false;
-    
-    if (isPro) {
-        displayedAlerts = alerts.slice(startIndex, endIndex);
-    } else {
-        displayedAlerts = alerts.slice(0, FREE_USER_ALERT_LIMIT);
-        hasMoreAlerts = alerts.length > FREE_USER_ALERT_LIMIT;
-    }
-
-    // --- RENDERING ---
-
-    if (loading) {
-        return (
-            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(to bottom right, #fff7ed, #ffffff)' }}>
-                <div style={{ textAlign: 'center' }}>
-                    <div style={{ 
-                        width: '48px', height: '48px', border: '4px solid #fed7aa', borderTop: '4px solid #f97316',
-                        borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite'
-                    }}></div>
-                    <p style={{ color: '#6b7280', fontSize: '16px' }}>Loading alerts...</p>
-                </div>
-                <style>{`
-                    @keyframes spin {
-                        to { transform: rotate(360deg); }
-                    }
-                `}</style>
-            </div>
-        );
-    }
-
-    return (
-        <div style={{ background: 'linear-gradient(to bottom right, #fff7ed, #ffffff)', minHeight: '100vh', padding: '16px' }}>
-            <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-                {/* Header */}
-                <header style={{ 
-                    backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '16px 24px',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    borderRadius: '12px', marginBottom: '24px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
-                }}>
-                    <h1 style={{ fontSize: viewportWidth >= 640 ? '24px' : '20px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
-                        Opportunity Alerts
-                    </h1>
-                    
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ 
-                            backgroundColor: '#fff7ed', padding: '8px 16px', borderRadius: '20px',
-                            fontSize: '14px', fontWeight: '600', color: '#ea580c', display: 'flex', alignItems: 'center', gap: '6px'
-                        }}>
-                            <i className="ri-coin-line" style={{ fontSize: '16px' }}></i>
-                            {userChops} Chops
-                        </div>
-                        {viewportWidth >= 640 && (
-                            <div style={{ 
-                                backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px',
-                                fontSize: '14px', fontWeight: '500', color: '#374151'
-                            }}>
-                                {alertStats.unattended_count} unattended
-                            </div>
-                        )}
-                    </div>
-                </header>
-
-                {/* Summary Cards */}
-                <div style={{ 
-                    display: 'grid',
-                    gridTemplateColumns: viewportWidth >= 1024 ? 'repeat(5, 1fr)' : viewportWidth >= 640 ? 'repeat(2, 1fr)' : '1fr',
-                    gap: '16px', marginBottom: '32px'
-                }}>
-                    {[
-                        { label: 'Total Alerts', value: alertStats.total_alerts, icon: 'ri-notification-line', bg: '#dbeafe', color: '#3b82f6' },
-                        { label: 'Total Chops', value: userChops, icon: 'ri-coin-line', bg: '#fef3c7', color: '#f59e0b' },
-                        { label: 'Reading', value: readingChops, icon: 'ri-book-open-line', bg: '#e0e7ff', color: '#6366f1' },
-                        { label: 'Sharing', value: sharingChops, icon: 'ri-share-line', bg: '#dcfce7', color: '#16a34a' },
-                        { label: 'Referrals', value: referralCount, icon: 'ri-user-add-line', bg: subscriptionStatus === 'active' ? '#f3e8ff' : '#f3f4f6', color: subscriptionStatus === 'active' ? '#8b5cf6' : '#6b7280', sub: `+${referralChops} Chops` }
-                    ].map((card, idx) => (
-                        <div key={idx} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <div>
-                                    <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>{card.label}</p>
-                                    <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>{card.value}</p>
-                                    {card.sub && <p style={{ fontSize: '12px', color: '#10b981', margin: '4px 0 0 0', fontWeight: '500' }}>{card.sub}</p>}
-                                </div>
-                                <div style={{ width: '48px', height: '48px', backgroundColor: card.bg, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <i className={card.icon} style={{ color: card.color, fontSize: '20px' }}></i>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-
-                {/* Alerts List */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '32px' }}>
-                    {displayedAlerts.map((alert: Alert) => (
-                        <div key={alert.id} style={{ 
-                            backgroundColor: '#ffffff', borderRadius: '16px', padding: viewportWidth >= 768 ? '32px' : '20px',
-                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                            border: attendedAlerts.has(alert.id) ? '2px solid #10b981' : '1px solid #e5e7eb'
-                        }}>
-                            {/* Header */}
-                            <div style={{ display: 'flex', flexDirection: viewportWidth >= 768 ? 'row' : 'column', justifyContent: 'space-between', marginBottom: '20px', gap: '16px' }}>
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                                        <span style={{ backgroundColor: getScoreBgColor(alert.score), color: getScoreColor(alert.score), padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '700' }}>
-                                            <i className="ri-star-fill" style={{ fontSize: '12px', marginRight: '4px' }}></i>{alert.score}
-                                        </span>
-                                        <span style={{ backgroundColor: getPriorityBgColor(alert.priority), color: getPriorityColor(alert.priority), padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '600' }}>
-                                            {alert.priority}
-                                        </span>
-                                        <span style={{ backgroundColor: '#f3f4f6', color: '#374151', padding: '6px 16px', borderRadius: '20px', fontSize: '14px', fontWeight: '500' }}>
-                                            {alert.category}
-                                        </span>
-                                    </div>
-                                    <h2 style={{ fontSize: viewportWidth >= 768 ? '22px' : '18px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
-                                        {alert.title}
-                                    </h2>
-                                </div>
-                                {attendedAlerts.has(alert.id) && (
-                                    <div style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '10px 18px', borderRadius: '24px', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <i className="ri-check-line"></i>Attended
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Content */}
-                            <div style={{ display: 'grid', gridTemplateColumns: viewportWidth >= 1024 ? 'repeat(3, 1fr)' : '1fr', gap: '20px', marginBottom: '24px' }}>
-                                {[
-                                    { title: 'Why Act Now', content: alert.why_act_now, bg: '#fef7ff', border: '#e879f9', color: '#a21caf', icon: 'ri-time-line' },
-                                    { title: 'Potential Reward', content: alert.potential_reward, bg: '#f0fdf4', border: '#22c55e', color: '#16a34a', icon: 'ri-trophy-line' },
-                                    { title: 'Action Required', content: alert.action_required, bg: '#fff7ed', border: '#f97316', color: '#ea580c', icon: 'ri-flashlight-line' }
-                                ].map((section, idx) => (
-                                    <div key={idx} style={{ backgroundColor: section.bg, padding: '18px', borderRadius: '12px', border: `1px solid ${section.border}`, gridColumn: idx === 2 && viewportWidth >= 1024 ? 'auto' : '1 / -1' }}>
-                                        <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: section.color, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                            <i className={section.icon}></i>{section.title}
-                                        </h3>
-                                        <p style={{ fontSize: '14px', color: '#4b5563', lineHeight: '1.6', margin: 0 }}>{section.content}</p>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {/* Buttons */}
-                            <div style={{ display: 'flex', flexDirection: viewportWidth >= 640 ? 'row' : 'column', gap: '16px', paddingTop: '24px', borderTop: '1px solid #e5e7eb' }}>
-                                <button onClick={() => handleShare(alert)} style={{ flex: 1, backgroundColor: sharedAlerts.has(alert.id.toString()) ? '#10b981' : '#f97316', color: '#fff', padding: '14px 20px', borderRadius: '10px', border: 'none', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <i className={sharedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-share-line'} style={{ marginRight: '8px' }}></i>
-                                    {sharedAlerts.has(alert.id.toString()) ? 'Shared' : `Share (+${isPro ? 10 : 5} Chops)`}
-                                </button>
-                                <button onClick={() => handleViewDetails(alert)} style={{ flex: 1, backgroundColor: viewedAlerts.has(alert.id.toString()) ? '#10b981' : 'transparent', color: viewedAlerts.has(alert.id.toString()) ? '#fff' : '#6b7280', padding: '14px 20px', borderRadius: '10px', border: viewedAlerts.has(alert.id.toString()) ? 'none' : '2px solid #d1d5db', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <i className={viewedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-external-link-line'} style={{ marginRight: '8px' }}></i>
-                                    {viewedAlerts.has(alert.id.toString()) ? 'Viewed' : `View (+${isPro ? 5 : 1} Chops)`}
-                                </button>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-
-                {/* Pagination for Premium Users */}
-                {isPro && totalPages > 1 && (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '32px' }}>
-                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} style={{ padding: '8px 16px', backgroundColor: currentPage === 1 ? '#f3f4f6' : '#fff', color: currentPage === 1 ? '#9ca3af' : '#374151', border: '1px solid #e5e7eb', borderRadius: '8px', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}>
-                            Previous
-                        </button>
-                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                            <button key={page} onClick={() => setCurrentPage(page)} style={{ width: '40px', height: '40px', backgroundColor: currentPage === page ? '#f97316' : '#fff', color: currentPage === page ? '#fff' : '#374151', border: '1px solid #e5e7eb', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
-                                {page}
-                            </button>
-                        ))}
-                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} style={{ padding: '8px 16px', backgroundColor: currentPage === totalPages ? '#f3f4f6' : '#fff', color: currentPage === totalPages ? '#9ca3af' : '#374151', border: '1px solid #e5e7eb', borderRadius: '8px', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}>
-                            Next
-                        </button>
-                    </div>
-                )}
-
-                {/* Upgrade Prompt for Free Users */}
-                {hasMoreAlerts && (
-                    <div style={{ backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)', overflow: 'hidden', marginBottom: '32px' }}>
-                        <div style={{ padding: '24px', borderBottom: '1px solid #e5e7eb' }}>
-                            <div style={{ display: 'flex', gap: '16px' }}>
-                                <div style={{ width: '48px', height: '48px', background: 'linear-gradient(135deg, #fb923c, #ea580c)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <i className="ri-vip-crown-line" style={{ color: '#fff', fontSize: '24px' }}></i>
-                                </div>
-                                <div>
-                                    <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', marginBottom: '8px' }}>
-                                        {alerts.length - FREE_USER_ALERT_LIMIT} More Pro Opportunities
-                                    </h3>
-                                    <p style={{ color: '#6b7280', margin: 0 }}>Upgrade to Pro to unlock all alerts</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div style={{ padding: '32px', textAlign: 'center' }}>
-                            <div style={{ width: '80px', height: '80px', background: 'linear-gradient(135deg, #fb923c, #ea580c)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
-                                <i className="ri-vip-crown-line" style={{ color: '#fff', fontSize: '40px' }}></i>
-                            </div>
-                            <h3 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '12px' }}>Unlock Pro Opportunities</h3>
-                            <p style={{ color: '#6b7280', marginBottom: '32px' }}>Get 10x more opportunities with Pro</p>
-                            <button onClick={() => window.location.href = '/upgrade'} style={{ background: 'linear-gradient(to right, #f97316, #ea580c)', color: '#fff', padding: '14px 32px', borderRadius: '12px', border: 'none', fontSize: '16px', fontWeight: '600', cursor: 'pointer' }}>
-                                Upgrade to Pro
-                            </button>
-                            <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '12px' }}>$29.95/month • Cancel anytime</p>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Toast */}
-            {showToast && (
-                <div style={{ position: 'fixed', top: '24px', right: '24px', backgroundColor: '#f97316', color: '#fff', padding: '16px 20px', borderRadius: '8px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', zIndex: 50, animation: 'slideIn 0.3s ease' }}>
-                    <i className="ri-star-fill" style={{ marginRight: '8px' }}></i>{toastMessage}
-                </div>
-            )}
-
-            {/* Share Modal */}
-            {showShareModal && (
-                <>
-                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 40 }} onClick={() => setShowShareModal(false)} />
-                    <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', backgroundColor: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', zIndex: 50, width: '90%', maxWidth: '400px' }}>
-                        <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'center' }}>
-                            Share & Earn {isPro ? 10 : 5} Chops
-                        </h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginBottom: '16px' }}>
-                            {/* FIX 9: Correctly wrap the array and map in parentheses for type assertion */}
-                            {([
-                                { name: 'Twitter', platform: 'twitter', icon: 'ri-twitter-fill', color: '#1da1f2' },
-                                { name: 'Facebook', platform: 'facebook', icon: 'ri-facebook-fill', color: '#4267b2' },
-                                { name: 'LinkedIn', platform: 'linkedin', icon: 'ri-linkedin-fill', color: '#0077b5' },
-                                { name: 'WhatsApp', platform: 'whatsapp', icon: 'ri-whatsapp-fill', color: '#25d366' }
-                            ] as SocialButton[]).map(social => (
-                                <button key={social.platform} onClick={() => shareToSocialMedia(social.platform)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px', backgroundColor: social.color, color: '#fff', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
-                                    <i className={social.icon} style={{ marginRight: '8px' }}></i>{social.name}
-                                </button>
-                            ))}
-                        </div>
-                        <button onClick={copyLink} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px', backgroundColor: '#f3f4f6', color: '#374151', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: '500', marginBottom: '16px' }}>
-                            <i className="ri-file-copy-line" style={{ marginRight: '8px' }}></i>Copy Link
-                        </button>
-                        <button onClick={() => setShowShareModal(false)} style={{ width: '100%', padding: '12px', backgroundColor: 'transparent', color: '#6b7280', border: '1px solid #d1d5db', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }}>
-                            Cancel
-                        </button>
-                    </div>
-                </>
-            )}
-
-            <style>{`
-                @keyframes slideIn {
-                    from {
-                        transform: translateX(100%);
-                        opacity: 0;
-                    }
-                    to {
-                        transform: translateX(0);
-                        opacity: 1;
-                    }
-                }
-                @keyframes spin {
-                    to { transform: rotate(360deg); }
-                }
-            `}</style>
-        </div>
-    );
 }

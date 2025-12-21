@@ -1,211 +1,187 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import AdminHeader from '../../../components/feature/AdminHeader';
+import { getAuthHeaders } from '../../../utils/auth';
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  plan: string;
+  status: 'active' | 'suspended' | 'inactive';
+  joinDate: string;
+  lastActive: string;
+  analyses: number;
+  avatar: string;
+}
+
+interface UserDetails extends User {
+  subscription_status: string;
+  subscription_plan: string;
+  total_chops: number;
+  referral_chops: number;
+  alert_reading_chops: number;
+  insight_reading_chops: number;
+  referral_count: number;
+  referrals: string[];
+  insight_sharing_chops: number;
+  alert_sharing_chops: number;
+  days_remaining: number;
+  referral_code: string;
+  is_active: boolean;
+}
+
+interface UserStats {
+  total: number;
+  pro: number;
+  free: number;
+  deactivated: number;
+  inactive: number;
+  active?: number;
+}
 
 export default function AdminUsers() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [selectedUser, setSelectedUser] = useState<UserDetails | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
-  const usersPerPage = 10;
-
-  const [users, setUsers] = useState([
-    {
-      id: 1,
-      name: 'Sarah Johnson',
-      email: 'sarah.johnson@email.com',
-      plan: 'Premium',
-      status: 'active',
-      joinDate: '2024-01-15',
-      lastActive: '2 hours ago',
-      analyses: 47,
-      avatar: 'SJ'
-    },
-    {
-      id: 2,
-      name: 'Michael Chen',
-      email: 'michael.chen@company.com',
-      plan: 'Pro',
-      status: 'active',
-      joinDate: '2024-01-20',
-      lastActive: '1 day ago',
-      analyses: 23,
-      avatar: 'MC'
-    },
-    {
-      id: 3,
-      name: 'Emily Rodriguez',
-      email: 'emily.r@startup.io',
-      plan: 'Basic',
-      status: 'inactive',
-      joinDate: '2024-02-01',
-      lastActive: '1 week ago',
-      analyses: 8,
-      avatar: 'ER'
-    },
-    {
-      id: 4,
-      name: 'David Kim',
-      email: 'david.kim@logistics.com',
-      plan: 'Enterprise',
-      status: 'active',
-      joinDate: '2024-01-10',
-      lastActive: '30 minutes ago',
-      analyses: 156,
-      avatar: 'DK'
-    },
-    {
-      id: 5,
-      name: 'Lisa Thompson',
-      email: 'lisa@strategyplus.com',
-      plan: 'Pro',
-      status: 'suspended',
-      joinDate: '2024-01-25',
-      lastActive: '3 days ago',
-      analyses: 34,
-      avatar: 'LT'
-    },
-    {
-      id: 6,
-      name: 'James Wilson',
-      email: 'james.wilson@growthcorp.com',
-      plan: 'Premium',
-      status: 'active',
-      joinDate: '2024-02-05',
-      lastActive: '5 hours ago',
-      analyses: 67,
-      avatar: 'JW'
-    },
-    {
-      id: 7,
-      name: 'Anna Martinez',
-      email: 'anna.martinez@retail.com',
-      plan: 'Basic',
-      status: 'active',
-      joinDate: '2024-02-10',
-      lastActive: '1 hour ago',
-      analyses: 12,
-      avatar: 'AM'
-    },
-    {
-      id: 8,
-      name: 'Robert Taylor',
-      email: 'robert.taylor@finance.org',
-      plan: 'Enterprise',
-      status: 'active',
-      joinDate: '2024-01-05',
-      lastActive: '15 minutes ago',
-      analyses: 203,
-      avatar: 'RT'
-    },
-    {
-      id: 9,
-      name: 'Jennifer Lee',
-      email: 'jennifer.lee@marketing.co',
-      plan: 'Pro',
-      status: 'active',
-      joinDate: '2024-02-12',
-      lastActive: '3 hours ago',
-      analyses: 29,
-      avatar: 'JL'
-    },
-    {
-      id: 10,
-      name: 'Mark Anderson',
-      email: 'mark.anderson@tech.com',
-      plan: 'Premium',
-      status: 'inactive',
-      joinDate: '2024-01-30',
-      lastActive: '2 weeks ago',
-      analyses: 45,
-      avatar: 'MA'
-    },
-    {
-      id: 11,
-      name: 'Sophie Brown',
-      email: 'sophie.brown@consulting.com',
-      plan: 'Basic',
-      status: 'active',
-      joinDate: '2024-02-15',
-      lastActive: '6 hours ago',
-      analyses: 7,
-      avatar: 'SB'
-    },
-    {
-      id: 12,
-      name: 'Alex Turner',
-      email: 'alex.turner@startup.io',
-      plan: 'Pro',
-      status: 'active',
-      joinDate: '2024-02-18',
-      lastActive: '1 hour ago',
-      analyses: 18,
-      avatar: 'AT'
-    },
-    {
-      id: 13,
-      name: 'Rachel Green',
-      email: 'rachel.green@agency.com',
-      plan: 'Premium',
-      status: 'suspended',
-      joinDate: '2024-01-12',
-      lastActive: '1 week ago',
-      analyses: 89,
-      avatar: 'RG'
-    },
-    {
-      id: 14,
-      name: 'Tom Wilson',
-      email: 'tom.wilson@corp.com',
-      plan: 'Enterprise',
-      status: 'active',
-      joinDate: '2024-01-08',
-      lastActive: '2 hours ago',
-      analyses: 178,
-      avatar: 'TW'
-    },
-    {
-      id: 15,
-      name: 'Maria Garcia',
-      email: 'maria.garcia@business.com',
-      plan: 'Basic',
-      status: 'active',
-      joinDate: '2024-02-20',
-      lastActive: '4 hours ago',
-      analyses: 5,
-      avatar: 'MG'
-    }
-  ]);
-
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         user.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === 'all' || user.status === filterStatus;
-    return matchesSearch && matchesStatus;
+  const [stats, setStats] = useState<UserStats>({
+    total: 0,
+    pro: 0,
+    free: 0,
+    deactivated: 0,
+    inactive: 0,
+    active: 0
   });
 
-  // Pagination
-  const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
-  const startIndex = (currentPage - 1) * usersPerPage;
-  const endIndex = startIndex + usersPerPage;
-  const currentUsers = filteredUsers.slice(startIndex, endIndex);
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-  const handleViewUser = (user: any) => {
-    setSelectedUser(user);
-    setIsUserModalOpen(true);
+  useEffect(() => {
+    fetchStats();
+    fetchUsers();
+  }, [currentPage, filterStatus]);
+
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (currentPage === 1) fetchUsers();
+      else setCurrentPage(1);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  const fetchStats = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/control/users/stats`, {
+        headers: getAuthHeaders()
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Add dummy active if missing to satisfy potential types, or just map pro -> active logic
+        setStats({ ...data, active: data.pro });
+      }
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+    }
   };
 
-  const handleDeactivateUser = (userId: number) => {
-    setUsers(users.map(user => 
-      user.id === userId 
-        ? { ...user, status: user.status === 'active' ? 'inactive' : 'active' }
-        : user
-    ));
+  const fetchUsers = async () => {
+    setLoading(true);
+    try {
+      const queryParams = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: '10',
+        search: searchTerm,
+        status: filterStatus
+      });
+
+      const response = await fetch(`${API_BASE_URL}/api/control/users?${queryParams}`, {
+        headers: getAuthHeaders()
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setUsers(data.users);
+        setTotalPages(data.totalPages);
+        setTotalUsers(data.total);
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeactivateUser = async (user: UserDetails) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/control/users/${user.id}/status`, {
+        method: 'PATCH',
+        headers: getAuthHeaders()
+      });
+
+      if (response.ok) {
+        // Update local state in list
+        setUsers(users.map(u =>
+          u.id === user.id
+            ? { ...u, status: u.status === 'active' ? 'suspended' : 'active' }
+            : u
+        ));
+
+        // Update modal internal state
+        if (selectedUser && selectedUser.id === user.id) {
+          setSelectedUser({
+            ...selectedUser,
+            status: selectedUser.status === 'active' ? 'suspended' : 'active',
+            is_active: !selectedUser.is_active
+          });
+        }
+
+        fetchStats();
+      } else {
+        const err = await response.json();
+        alert(`Error: ${err.detail}`);
+      }
+    } catch (error) {
+      console.error('Error updating user status:', error);
+      alert('Failed to update user status');
+    }
+  };
+
+  const handleViewUser = async (user: User) => {
+    setIsUserModalOpen(true);
+    setLoadingDetails(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/control/users/${user.id}`, {
+        headers: getAuthHeaders()
+      });
+      if (response.ok) {
+        const details = await response.json();
+        // Merge list data (avatar, lastActive) with details if needed, 
+        // but details should have most info. Avatar logic might need repeating or passing.
+        const fullDetails: UserDetails = {
+          ...user, // Default fallback
+          ...details,
+          status: details.is_active ? 'active' : 'suspended', // Map bool to string
+          avatar: user.avatar // Keep avatar from list or regenerate
+        };
+        setSelectedUser(fullDetails);
+      } else {
+        alert("Failed to load user details");
+        setIsUserModalOpen(false);
+      }
+    } catch (error) {
+      console.error("Error fetching user details:", error);
+    } finally {
+      setLoadingDetails(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -218,80 +194,32 @@ export default function AdminUsers() {
   };
 
   const getPlanColor = (plan: string) => {
-    switch (plan) {
-      case 'Basic': return 'bg-blue-100 text-blue-600';
-      case 'Pro': return 'bg-purple-100 text-purple-600';
-      case 'Premium': return 'bg-orange-100 text-orange-600';
-      case 'Enterprise': return 'bg-red-100 text-red-600';
-      default: return 'bg-gray-100 text-gray-600';
-    }
-  };
+    if (!plan) return 'bg-gray-100 text-gray-600';
+    const lowerPlan = plan.toLowerCase();
 
-  const userStats = {
-    total: users.length,
-    active: users.filter(u => u.status === 'active').length,
-    inactive: users.filter(u => u.status === 'inactive').length,
-    suspended: users.filter(u => u.status === 'suspended').length
+    // Free -> Normal Gray
+    if (lowerPlan.includes('free') || lowerPlan.includes('basic')) return 'bg-gray-100 text-gray-600';
+
+    // Yearly -> Normal Orange
+    if (lowerPlan.includes('yearly')) return 'bg-orange-100 text-orange-600';
+
+    // Monthly -> Sky Blue
+    if (lowerPlan.includes('monthly') || lowerPlan.includes('pro')) return 'bg-sky-100 text-sky-600';
+
+    // Fallbacks
+    if (lowerPlan.includes('premium')) return 'bg-orange-100 text-orange-600';
+    return 'bg-gray-100 text-gray-600';
   };
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebar 
-        isMobileMenuOpen={isMobileMenuOpen} 
-        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      <AdminSidebar
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
       />
-      
+
       <div className="flex-1 ml-0 flex flex-col">
-        {/* Admin Header */}
-        <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100"
-            >
-              <i className="ri-menu-line text-xl"></i>
-            </button>
-            <div className="flex-1"></div>
-            <div className="relative">
-              <button 
-                onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                  <i className="ri-user-line text-red-600"></i>
-                </div>
-                <span className="font-medium text-gray-900">Admin User</span>
-                <i className="ri-arrow-down-s-line text-gray-400"></i>
-              </button>
-              
-              {/* Backdrop for click outside to close */}
-              {isProfileDropdownOpen && (
-                <div 
-                  className="fixed inset-0 z-40" 
-                  onClick={() => setIsProfileDropdownOpen(false)}
-                ></div>
-              )}
-              
-              {/* Profile Dropdown */}
-              {isProfileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-                  <Link 
-                    to="/admin/profile"
-                    onClick={() => setIsProfileDropdownOpen(false)}
-                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
-                  >
-                    <i className="ri-user-line text-gray-500"></i>
-                    Profile
-                  </Link>
-                  <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3">
-                    <i className="ri-logout-box-line text-gray-500"></i>
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <AdminHeader setIsMobileMenuOpen={setIsMobileMenuOpen} />
 
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
@@ -301,49 +229,56 @@ export default function AdminUsers() {
               <p className="text-gray-600">Manage user accounts, subscriptions, and access permissions</p>
             </div>
 
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 md:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <i className="ri-user-line text-xl text-blue-600"></i>
+            {/* Stats Cards - Updated grid to 5 cols and reduced padding */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4 mb-8">
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <i className="ri-user-line text-lg text-blue-600"></i>
                   </div>
                 </div>
-                <h3 className="text-sm font-medium text-gray-600 mb-1">Total Users</h3>
-                <p className="text-2xl font-bold text-gray-900">{userStats.total}</p>
+                <h3 className="text-xs font-medium text-gray-600 mb-1">Total Users</h3>
+                <p className="text-xl font-bold text-gray-900">{stats.total}</p>
               </div>
 
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 md:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                    <i className="ri-user-check-line text-xl text-green-600"></i>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <i className="ri-vip-crown-line text-lg text-purple-600"></i>
                   </div>
-                  <span className="text-sm font-medium px-2 py-1 rounded-full bg-green-100 text-green-600">
-                    {((userStats.active / userStats.total) * 100).toFixed(1)}%
-                  </span>
                 </div>
-                <h3 className="text-sm font-medium text-gray-600 mb-1">Active Users</h3>
-                <p className="text-2xl font-bold text-gray-900">{userStats.active}</p>
+                <h3 className="text-xs font-medium text-gray-600 mb-1">Pro Users</h3>
+                <p className="text-xl font-bold text-gray-900">{stats.pro}</p>
               </div>
 
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 md:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
-                    <i className="ri-user-unfollow-line text-xl text-gray-600"></i>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                    <i className="ri-user-smile-line text-lg text-gray-600"></i>
                   </div>
                 </div>
-                <h3 className="text-sm font-medium text-gray-600 mb-1">Inactive Users</h3>
-                <p className="text-2xl font-bold text-gray-900">{userStats.inactive}</p>
+                <h3 className="text-xs font-medium text-gray-600 mb-1">Free Users</h3>
+                <p className="text-xl font-bold text-gray-900">{stats.free}</p>
               </div>
 
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 md:p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
-                    <i className="ri-user-forbid-line text-xl text-red-600"></i>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+                    <i className="ri-user-forbid-line text-lg text-red-600"></i>
                   </div>
                 </div>
-                <h3 className="text-sm font-medium text-gray-600 mb-1">Suspended</h3>
-                <p className="text-2xl font-bold text-gray-900">{userStats.suspended}</p>
+                <h3 className="text-xs font-medium text-gray-600 mb-1">Deactivated</h3>
+                <p className="text-xl font-bold text-gray-900">{stats.deactivated}</p>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+                    <i className="ri-zzz-line text-lg text-yellow-600"></i>
+                  </div>
+                </div>
+                <h3 className="text-xs font-medium text-gray-600 mb-1">Inactive Users</h3>
+                <p className="text-xl font-bold text-gray-900">{stats.inactive}</p>
               </div>
             </div>
 
@@ -366,8 +301,9 @@ export default function AdminUsers() {
                 >
                   <option value="all">All Status</option>
                   <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="suspended">Suspended</option>
+                  <option value="suspended">Deactivated (Suspended)</option>
+                  <option value="inactive">Inactive (Dormant &gt; 3 mo)</option>
+                  <option value="free">Free Users</option>
                 </select>
               </div>
             </div>
@@ -387,65 +323,54 @@ export default function AdminUsers() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {currentUsers.map((user) => (
-                      <tr key={user.id} className="hover:bg-gray-50">
-                        <td className="py-4 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-                              <span className="text-sm font-medium text-red-600">{user.avatar}</span>
+                    {loading ? (
+                      <tr><td colSpan={6} className="text-center py-8">Loading users...</td></tr>
+                    ) : users.length === 0 ? (
+                      <tr><td colSpan={6} className="text-center py-8">No users found.</td></tr>
+                    ) : (
+                      users.map((user) => (
+                        <tr key={user.id} className="hover:bg-gray-50">
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                                <span className="text-sm font-medium text-red-600">{user.avatar}</span>
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-900">{user.name}</p>
+                                <p className="text-sm text-gray-500">{user.email}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-medium text-gray-900">{user.name}</p>
-                              <p className="text-sm text-gray-500">{user.email}</p>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPlanColor(user.plan)}`}>
+                              {user.plan}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(user.status)}`}>
+                              {user.status === 'suspended' ? 'Deactivated' : 'Active'}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className="font-medium text-gray-900">{user.analyses}</span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className="text-sm text-gray-600">{user.lastActive}</span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleViewUser(user)}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="View User"
+                              >
+                                <i className="ri-eye-line"></i>
+                              </button>
                             </div>
-                          </div>
-                        </td>
-                        <td className="py-4 px-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPlanColor(user.plan)}`}>
-                            {user.plan}
-                          </span>
-                        </td>
-                        <td className="py-4 px-4">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(user.status)}`}>
-                            {user.status.charAt(0).toUpperCase() + user.status.slice(1)}
-                          </span>
-                        </td>
-                        <td className="py-4 px-4">
-                          <span className="font-medium text-gray-900">{user.analyses}</span>
-                        </td>
-                        <td className="py-4 px-4">
-                          <span className="text-sm text-gray-600">{user.lastActive}</span>
-                        </td>
-                        <td className="py-4 px-4">
-                          <div className="flex items-center gap-2">
-                            <button 
-                              onClick={() => handleViewUser(user)}
-                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                              title="View User"
-                            >
-                              <i className="ri-eye-line"></i>
-                            </button>
-                            <button 
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                              title="Edit User"
-                            >
-                              <i className="ri-edit-line"></i>
-                            </button>
-                            <button 
-                              onClick={() => handleDeactivateUser(user.id)}
-                              className={`p-2 rounded-lg transition-colors ${
-                                user.status === 'active' 
-                                  ? 'text-red-600 hover:bg-red-50' 
-                                  : 'text-green-600 hover:bg-green-50'
-                              }`}
-                              title={user.status === 'active' ? 'Deactivate User' : 'Activate User'}
-                            >
-                              <i className={user.status === 'active' ? 'ri-user-forbid-line' : 'ri-user-check-line'}></i>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -455,7 +380,7 @@ export default function AdminUsers() {
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 md:p-6">
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-sm text-gray-600">
-                  Showing {startIndex + 1} to {Math.min(endIndex, filteredUsers.length)} of {filteredUsers.length} results
+                  Showing {(currentPage - 1) * 10 + 1} to {Math.min(currentPage * 10, totalUsers)} of {totalUsers} results
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -465,21 +390,11 @@ export default function AdminUsers() {
                   >
                     Previous
                   </button>
-                  
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                    <button
-                      key={page}
-                      onClick={() => setCurrentPage(page)}
-                      className={`px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${
-                        currentPage === page
-                          ? 'bg-red-600 text-white'
-                          : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      {page}
-                    </button>
-                  ))}
-                  
+
+                  <span className="px-3 py-2 text-sm text-gray-600">
+                    Page {currentPage} of {totalPages}
+                  </span>
+
                   <button
                     onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                     disabled={currentPage === totalPages}
@@ -492,13 +407,13 @@ export default function AdminUsers() {
             </div>
           </div>
         </div>
-   
+
       </div>
 
       {/* User Details Modal */}
-      {isUserModalOpen && selectedUser && (
+      {isUserModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-lg font-semibold text-gray-900">User Details</h3>
@@ -509,67 +424,135 @@ export default function AdminUsers() {
                   <i className="ri-close-line text-xl"></i>
                 </button>
               </div>
-              
-              <div className="space-y-4">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
-                    <span className="text-xl font-medium text-red-600">{selectedUser.avatar}</span>
+
+              {loadingDetails || !selectedUser ? (
+                <div className="text-center py-10">Loading details...</div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Header Info */}
+                  <div className="flex items-center gap-4 border-b border-gray-100 pb-6">
+                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
+                      <span className="text-xl font-medium text-red-600">{selectedUser.avatar}</span>
+                    </div>
+                    <div>
+                      <h4 className="text-xl font-semibold text-gray-900">{selectedUser.name}</h4>
+                      <p className="text-gray-600">{selectedUser.email}</p>
+                      <p className="text-sm text-gray-400 mt-1">ID: {selectedUser.id}</p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="text-xl font-semibold text-gray-900">{selectedUser.name}</h4>
-                    <p className="text-gray-600">{selectedUser.email}</p>
+
+                  {/* Subscription Section */}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h5 className="font-medium text-gray-900 mb-3 border-b border-gray-200 pb-2">Subscription</h5>
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Status</label>
+                        <div className={`mt-1 inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getStatusColor(selectedUser.status)}`}>
+                          {selectedUser.subscription_plan?.toLowerCase().includes('free') ? 'Free' : (selectedUser.status === 'suspended' ? 'Deactivated' : 'Active')}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Plan</label>
+                        <div className="mt-1 font-medium">{selectedUser.subscription_plan || 'None'}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Pro Days Remaining</label>
+                        <div className="mt-1 font-medium">{selectedUser.days_remaining} Days</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Chops System */}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h5 className="font-medium text-gray-900 mb-3 border-b border-gray-200 pb-2">Chops System</h5>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Total Chops</label>
+                        <div className="font-bold text-gray-900">{selectedUser.total_chops}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Referral Chops</label>
+                        <div>{selectedUser.referral_chops}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Alert Read</label>
+                        <div>{selectedUser.alert_reading_chops}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Alert Share</label>
+                        <div>{selectedUser.alert_sharing_chops}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Insight Read</label>
+                        <div>{selectedUser.insight_reading_chops}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Insight Share</label>
+                        <div>{selectedUser.insight_sharing_chops}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Referrals */}
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <h5 className="font-medium text-gray-900 mb-3 border-b border-gray-200 pb-2">Referrals</h5>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Referral Code</label>
+                        <div className="font-mono bg-white px-2 py-1 rounded border inline-block">{selectedUser.referral_code || 'N/A'}</div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Total Referrals</label>
+                        <div className="font-bold">{selectedUser.referral_count}</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <label className="text-xs text-gray-500 uppercase block mb-2">Referred Users</label>
+                      {selectedUser.referrals && selectedUser.referrals.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {selectedUser.referrals.map((refName, idx) => (
+                            <span key={idx} className="bg-white border border-gray-200 px-2 py-1 rounded text-xs text-gray-700">
+                              {refName}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-400">No referrals yet.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Metadata */}
+                  <div className="text-xs text-gray-400 grid grid-cols-2 gap-4 pt-2">
+                    <div>
+                      Joined: {new Date(selectedUser.joinDate).toLocaleDateString()}
+                    </div>
+                    <div>
+                      Last Active: {selectedUser.lastActive}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 mt-6 pt-6 border-t border-gray-100">
+                    <button
+                      onClick={() => setIsUserModalOpen(false)}
+                      className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                    >
+                      Close
+                    </button>
+
+                    <button
+                      onClick={() => handleDeactivateUser(selectedUser)}
+                      className={`flex-1 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${selectedUser.status === 'active'
+                        ? 'bg-red-100 text-red-600 hover:bg-red-200'
+                        : 'bg-green-100 text-green-600 hover:bg-green-200'
+                        }`}
+                    >
+                      {selectedUser.status === 'active' ? 'Deactivate User' : 'Activate User'}
+                    </button>
                   </div>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600 mb-1">Plan</label>
-                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${getPlanColor(selectedUser.plan)}`}>
-                      {selectedUser.plan}
-                    </span>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
-                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(selectedUser.status)}`}>
-                      {selectedUser.status.charAt(0).toUpperCase() + selectedUser.status.slice(1)}
-                    </span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Join Date</label>
-                  <p className="text-gray-900">{selectedUser.joinDate}</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Last Active</label>
-                  <p className="text-gray-900">{selectedUser.lastActive}</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-1">Total Analyses</label>
-                  <p className="text-gray-900">{selectedUser.analyses}</p>
-                </div>
-              </div>
-
-              <div className="flex gap-3 mt-6">
-                <button className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap">
-                  Edit User
-                </button>
-                <button 
-                  onClick={() => {
-                    handleDeactivateUser(selectedUser.id);
-                    setIsUserModalOpen(false);
-                  }}
-                  className={`flex-1 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${
-                    selectedUser.status === 'active'
-                      ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                      : 'bg-green-100 text-green-600 hover:bg-green-200'
-                  }`}
-                >
-                  {selectedUser.status === 'active' ? 'Deactivate' : 'Activate'}
-                </button>
-              </div>
+              )}
             </div>
           </div>
         </div>

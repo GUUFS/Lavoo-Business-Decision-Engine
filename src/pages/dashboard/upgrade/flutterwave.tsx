@@ -1,6 +1,6 @@
 // FlutterwaveCheckout.tsx
 import { useState } from 'react';
-import { useFlutterwave, closePaymentModal } from 'flutterwave-react-v3';
+import { useFlutterwave } from 'flutterwave-react-v3'; // Remove closePaymentModal from import
 
 interface FlutterwaveCheckoutProps {
   amount: number;
@@ -12,14 +12,14 @@ interface FlutterwaveCheckoutProps {
   onError: (error: string) => void;
 }
 
-export default function FlutterwaveCheckout({ 
-  amount, 
-  email, 
-  name, 
-  planType, 
+export default function FlutterwaveCheckout({
+  amount,
+  email,
+  name,
+  planType,
   userLocation = 'US',
-  onSuccess, 
-  onError 
+  onSuccess,
+  onError
 }: FlutterwaveCheckoutProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,14 +40,14 @@ export default function FlutterwaveCheckout({
     currency: userLocation === 'NG' ? 'NGN' : 'USD',
     payment_options: 'card,mobilemoney,ussd,banktransfer',
     customer: {
-      email: email, // This will use the logged-in user's email
-      phone_number: '0000000000',
+      email: email,
+      phonenumber: '0000000000',
       name: name,
     },
     customizations: {
       title: 'AI Strategy Pro',
       description: `${planType} Subscription`,
-      logo: '', // Add your logo URL here
+      logo: '',
     },
   };
 
@@ -57,17 +57,15 @@ export default function FlutterwaveCheckout({
     try {
       console.log('Verifying payment with transaction ID:', transactionId);
       console.log('User email being sent for verification:', email);
-      
+
       const response = await fetch('http://localhost:8000/api/payments/flutterwave/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // Add authorization header if needed
-          // 'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
         body: JSON.stringify({
           transaction_id: String(transactionId),
-          user_email: email, // Pass the logged-in user's email
+          user_email: email,
         }),
       });
 
@@ -84,7 +82,7 @@ export default function FlutterwaveCheckout({
       }
 
       const data = JSON.parse(responseText);
-      
+
       if (data.status === 'success') {
         console.log('✅ Payment verified successfully:', data);
         return data;
@@ -119,14 +117,13 @@ export default function FlutterwaveCheckout({
     handleFlutterPayment({
       callback: async (response: any) => {
         console.log('📥 Flutterwave payment response:', response);
-        
+
         try {
           if (response.status === 'successful') {
             console.log('✅ Payment successful, verifying on backend...');
-            
-            // Verify payment on backend
+
             const verificationResult = await verifyPayment(response.transaction_id);
-            
+
             if (verificationResult.status === 'success') {
               console.log('✅ Payment verified successfully on backend');
               onSuccess({ transaction_id: response.transaction_id });
@@ -146,7 +143,8 @@ export default function FlutterwaveCheckout({
           onError(err.message || 'Payment processing failed');
         } finally {
           setIsLoading(false);
-          closePaymentModal();
+          // Remove closePaymentModal call - it's not needed
+          // The modal closes automatically
         }
       },
       onClose: () => {
@@ -177,11 +175,10 @@ export default function FlutterwaveCheckout({
       <button
         onClick={handlePayment}
         disabled={isLoading}
-        className={`w-full py-3 px-6 ${
-          isLoading 
-            ? 'bg-gray-400 cursor-not-allowed' 
+        className={`w-full py-3 px-6 ${isLoading
+            ? 'bg-gray-400 cursor-not-allowed'
             : 'bg-orange-500 hover:bg-orange-600'
-        } text-white font-semibold rounded-lg transition-colors duration-200 flex items-center justify-center`}
+          } text-white font-semibold rounded-lg transition-colors duration-200 flex items-center justify-center`}
       >
         {isLoading ? (
           <>
@@ -191,14 +188,13 @@ export default function FlutterwaveCheckout({
         ) : (
           <>
             <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/>
+              <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z" />
             </svg>
             Pay ${amount} with Flutterwave
           </>
         )}
       </button>
-      
-      {/* Information text */}
+
       <div className="mt-3 space-y-1">
         <p className="text-xs text-gray-500 text-center">
           Secure payment powered by Flutterwave

@@ -9,7 +9,7 @@ const API_BASE_URL = 'http://localhost:8000';
 const getAuthToken = (): string | null => {
     // Check for common token key names in order of preference
     const token = localStorage.getItem('access_token') || localStorage.getItem('token') || localStorage.getItem('authToken');
-    
+
     if (token) {
         // Log the token (truncated for security, if you want to see the full token, remove slice)
         console.log(`✅ AUTH_TOKEN: Token found! Starting with: ${token.slice(0, 15)}...`);
@@ -27,14 +27,14 @@ const getAuthToken = (): string | null => {
 const getAuthHeaders = (): Record<string, string> => {
     const token = getAuthToken();
     const result = {
-       ' Content-Type': 'application/json', 
+        ' Content-Type': 'application/json',
         // Note: The backend needs the 'Bearer' prefix for Authorization header
-        'Authorization': token ? `Bearer ${token}` : '' 
-    };console.log(result);
-    return { 
-        'Content-Type': 'application/json', 
+        'Authorization': token ? `Bearer ${token}` : ''
+    }; console.log(result);
+    return {
+        'Content-Type': 'application/json',
         // Note: The backend needs the 'Bearer' prefix for Authorization header
-        'Authorization': token ? `Bearer ${token}` : '' 
+        'Authorization': token ? `Bearer ${token}` : ''
     };
 };
 
@@ -71,7 +71,7 @@ const fetchUserIdFromToken = async (): Promise<number | null> => {
         if (typeof id === 'number') {
             console.log(`✅ AUTH: User ID ${id} retrieved successfully from token.`);
             // Store the ID locally after successful retrieval for future initializations
-            localStorage.setItem('userId', id.toString()); 
+            localStorage.setItem('userId', id.toString());
             return id;
         } else {
             console.error('❌ AUTH: User details endpoint did not return a valid ID.');
@@ -102,7 +102,7 @@ interface Alert {
     has_shared: boolean;
     is_attended: boolean;
     total_views: number;
-    total_shares: number; 
+    total_shares: number;
     is_pinned: boolean;
 }
 
@@ -112,12 +112,7 @@ interface AlertStats {
 }
 
 type SocialPlatform = 'twitter' | 'facebook' | 'linkedin' | 'whatsapp';
-interface SocialButton {
-    name: string;
-    platform: SocialPlatform;
-    icon: string;
-    color: string;
-}
+
 
 // --- COMPONENT START ---
 
@@ -135,12 +130,12 @@ export default function AlertsPage() {
     const [currentPage, setCurrentPage] = useState(1);
     const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
     const [userId, setUserId] = useState<number | null>(null);
-    const [referralCount, setReferralCount] = useState(0);
+    // const [referralCount, setReferralCount] = useState(0);
     const [alerts, setAlerts] = useState<Alert[]>([]);
     const [loading, setLoading] = useState(true);
     const [readingChops, setReadingChops] = useState(0);
     const [sharingChops, setSharingChops] = useState(0);
-    const [referralChops, setReferralChops] = useState(0);
+    // const [referralChops, setReferralChops] = useState(0);
     const [alertStats, setAlertStats] = useState<AlertStats>({
         total_alerts: 0,
         unattended_count: 0
@@ -171,7 +166,7 @@ export default function AlertsPage() {
             currentUserId = parseInt(storedUserId);
             console.log(`ℹ️ INIT: Found local userId: ${currentUserId}. Validating...`);
         }
-        
+
         // 1. If no ID (or we need to validate it), use the token to get the ID
         if (!currentUserId || !getAuthToken()) {
             console.log('⚠️ INIT: No local userId or token found. Attempting to fetch ID via token...');
@@ -181,7 +176,7 @@ export default function AlertsPage() {
         if (currentUserId === null) {
             console.error('❌ INIT: Failed to establish user session. No token or invalid token.');
             // Do not redirect, just clear local state and stop loading.
-            setUserId(null); 
+            setUserId(null);
             setLoading(false);
             showToastNotification('Session expired. Please log in.');
             localStorage.removeItem('userId'); // Remove the old invalid ID
@@ -191,12 +186,12 @@ export default function AlertsPage() {
         }
 
         // 2. Set the userId state (important for other components/logic that might read it)
-        setUserId(currentUserId); 
-        
+        setUserId(currentUserId);
+
         try {
             // 3. Fetch user data (including subscription status and chops)
             await fetchUserData(currentUserId);
-            
+
             // 4. Fetch alert data and stats
             await fetchAlerts(currentUserId);
             await fetchAlertStats(currentUserId);
@@ -213,7 +208,7 @@ export default function AlertsPage() {
     };
 
     const fetchUserData = async (id: number) => {
-       const token = getAuthToken();
+        const token = getAuthToken();
         if (!token) {
             console.error('❌ AUTH: No authentication token found.');
             return null;
@@ -238,14 +233,14 @@ export default function AlertsPage() {
             const userData = await response.json();
             setUserChops(userData.total_chops);
             setSubscriptionStatus(userData.subscription_status);
-            setReferralCount(userData.referral_count);
+            // setReferralCount(userData.referral_count);
             setReadingChops(userData.alert_reading_chops);
             setSharingChops(userData.alert_sharing_chops);
-            setReferralChops(userData.referral_chops);
+            // setReferralChops(userData.referral_chops);
             console.log(`✅ FETCH_USER: Data for user ${id} loaded.`);
         } catch (error) {
             console.error('❌ FETCH_USER: Error fetching user data:', error);
-            throw error; 
+            throw error;
         }
     };
 
@@ -259,7 +254,7 @@ export default function AlertsPage() {
             setLoading(true);
             // Ensure both query param and auth header are used for security
             const response = await fetch(`${API_BASE_URL}/api/alerts`, {
-               method: "GET",
+                method: "GET",
                 headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${token}`,
@@ -268,26 +263,26 @@ export default function AlertsPage() {
             });
 
             if (!response.ok) {
-                 console.error(`❌ FETCH_ALERTS: Server responded with status ${response.status} for user ${id}.`);
-                 throw new Error('Failed to fetch alerts.');
+                console.error(`❌ FETCH_ALERTS: Server responded with status ${response.status} for user ${id}.`);
+                throw new Error('Failed to fetch alerts.');
             }
-            
+
             const alertsData: Alert[] = await response.json();
             setAlerts(alertsData);
-            
+
             // ... (rest of the logic for setting viewed/shared/attended Sets - UNCHANGED)
             const viewed = new Set<string>();
             const shared = new Set<string>();
             const attended = new Set<number>();
             const pinned = new Set<number>();
-            
+
             alertsData.forEach((alert: Alert) => {
                 if (alert.has_viewed) viewed.add(alert.id.toString());
                 if (alert.has_shared) shared.add(alert.id.toString());
                 if (alert.is_attended) attended.add(alert.id);
                 if (alert.is_pinned) pinned.add(alert.id);
             });
-            
+
             setViewedAlerts(viewed);
             setSharedAlerts(shared);
             setAttendedAlerts(attended);
@@ -299,7 +294,7 @@ export default function AlertsPage() {
             showToastNotification('Error loading alerts');
             throw error; // Re-throw to be caught by initializeData if critical
         } finally {
-             setLoading(false);
+            setLoading(false);
         }
     };
 
@@ -324,8 +319,8 @@ export default function AlertsPage() {
                 setAlertStats(stats);
                 console.log(`✅ FETCH_STATS: Stats loaded for user ${id}.`);
             } else {
-                 console.error(`❌ FETCH_STATS: Server responded with status ${response.status} for user ${id}.`);
-                 throw new Error('Failed to fetch stats.');
+                console.error(`❌ FETCH_STATS: Server responded with status ${response.status} for user ${id}.`);
+                throw new Error('Failed to fetch stats.');
             }
         } catch (error) {
             console.error('❌ FETCH_STATS: Error fetching alert stats:', error);
@@ -350,7 +345,7 @@ export default function AlertsPage() {
 
             if (response.ok) {
                 const data = await response.json();
-                
+
                 // Update local state
                 const newPinnedAlerts = new Set(pinnedAlerts);
                 if (data.is_pinned) {
@@ -363,9 +358,9 @@ export default function AlertsPage() {
                 setPinnedAlerts(newPinnedAlerts);
 
                 // Update the alerts list to reflect pinned status
-                setAlerts(prevAlerts => 
-                    prevAlerts.map(alert => 
-                        alert.id === alertId 
+                setAlerts(prevAlerts =>
+                    prevAlerts.map(alert =>
+                        alert.id === alertId
                             ? { ...alert, is_pinned: data.is_pinned }
                             : alert
                     )
@@ -390,10 +385,10 @@ export default function AlertsPage() {
         setTimeout(() => setShowToast(false), 3000);
     };
 
-    const handleViewDetails = async (alert:Alert) => {
+    const handleViewDetails = async (alert: Alert) => {
         const alertId = alert.id.toString();
-        
-        const currentUserId = userId; 
+
+        const currentUserId = userId;
         if (currentUserId === null) {
             console.error('❌ ACTION_VIEW: User ID is null. Cannot record view or fetch data.');
             showToastNotification('Error: User session invalid. Please refresh.');
@@ -407,33 +402,33 @@ export default function AlertsPage() {
                     headers: getAuthHeaders(),
                     body: JSON.stringify({ alert_id: alert.id })
                 });
-                
+
                 if (response.ok) {
                     const data = await response.json();
-                    
+
                     // Update all relevant state immediately
                     setUserChops(data.total_chops);
                     setReadingChops(data.alert_reading_chops);
                     setViewedAlerts(new Set([...viewedAlerts, alertId]));
                     setAttendedAlerts(new Set([...attendedAlerts, alert.id]));
-                    
+
                     // Update alert stats
                     setAlertStats(prev => ({
                         ...prev,
                         unattended_count: Math.max(0, prev.unattended_count - 1)
                     }));
-                    
+
                     // Update the alert in the list to show attended status
-                    setAlerts(prevAlerts => 
-                        prevAlerts.map(a => 
-                            a.id === alert.id 
+                    setAlerts(prevAlerts =>
+                        prevAlerts.map(a =>
+                            a.id === alert.id
                                 ? { ...a, has_viewed: true, is_attended: true }
                                 : a
                         )
                     );
-                    
+
                     if (data.chops_earned > 0) {
-                        showToastNotification(`You earned ${data.chops_earned} Chops for viewing this alert!`);
+                        showToastNotification(`Congratulations! You earned ${data.chops_earned} Chops for viewing this alert!`);
                     }
                     console.log(`✅ ACTION_VIEW: View recorded for alert ${alertId}.`);
                 } else {
@@ -445,7 +440,7 @@ export default function AlertsPage() {
                 showToastNotification('Error recording alert view');
             }
         }
-        
+
         // Open the link
         if (alert.source && alert.source !== '#') {
             window.open(alert.source, '_blank');
@@ -463,7 +458,7 @@ export default function AlertsPage() {
     const shareToSocialMedia = async (platform: SocialPlatform) => {
         if (!selectedAlert) return;
 
-        const currentUserId = userId; 
+        const currentUserId = userId;
         if (currentUserId === null) {
             console.error('❌ ACTION_SHARE: User ID is null. Cannot share.');
             showToastNotification('Error: User session invalid. Please refresh.');
@@ -471,19 +466,20 @@ export default function AlertsPage() {
         }
 
         try {
-             // Use token-based headers for user data fetch
+            // Use token-based headers for user data fetch
             const userResponse = await fetch(`${API_BASE_URL}/users/${currentUserId}`, {
-                 headers: getAuthHeaders() }); 
+                headers: getAuthHeaders()
+            });
             if (!userResponse.ok) throw new Error('Failed to fetch user data for sharing link.');
             const userData = await userResponse.json();
             const userName = userData.username;
-            
+
             const referralLink = `${window.location.origin}/signup?ref=${encodeURIComponent(userName)}`;
             const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
             const text = `Check out this business opportunity: ${selectedAlert.title}`;
-            
+
             let shareUrl = '';
-            
+
             switch (platform) {
                 case 'twitter':
                     shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(alertUrl)}`;
@@ -498,7 +494,7 @@ export default function AlertsPage() {
                     shareUrl = `https://wa.me/?text=${encodeURIComponent(text + ' ' + alertUrl)}`;
                     break;
             }
-            
+
             if (shareUrl) {
                 window.open(shareUrl, '_blank');
                 await awardSharingPoints();
@@ -514,21 +510,22 @@ export default function AlertsPage() {
 
     const copyLink = async () => {
         if (!selectedAlert) return;
-        
-        const currentUserId = userId; 
+
+        const currentUserId = userId;
         if (currentUserId === null) {
             console.error('❌ ACTION_COPY: User ID is null. Cannot copy link.');
             showToastNotification('Error: User session invalid. Please refresh.');
             return;
         }
-        
+
         try {
             // Use token-based headers for user data fetch
-            const userResponse = await fetch(`${API_BASE_URL}/users/${currentUserId}`, { 
-                headers: getAuthHeaders() }); 
-             if (!userResponse.ok) throw new Error('Failed to fetch user data for sharing link.');
+            const userResponse = await fetch(`${API_BASE_URL}/users/${currentUserId}`, {
+                headers: getAuthHeaders()
+            });
+            if (!userResponse.ok) throw new Error('Failed to fetch user data for sharing link.');
             const userData = await userResponse.json();
-            
+
             const referralLink = `${window.location.origin}/signup?ref=$${userData.id}-${userData.referral_code}`;
             const alertUrl = `${referralLink}&alert=${selectedAlert.id}`;
             navigator.clipboard.writeText(alertUrl);
@@ -544,83 +541,83 @@ export default function AlertsPage() {
     };
 
     const awardSharingPoints = async () => {
-    if (!selectedAlert) return;
+        if (!selectedAlert) return;
 
-    const currentUserId = userId;
-    if (currentUserId === null) {
-        showToastNotification('Error: Session invalid. Please refresh.');
-        return;
-    }
-
-    const alertId = selectedAlert.id.toString();
-
-    // Prevent double-awarding
-    if (sharedAlerts.has(alertId)) {
-        console.log(`Already shared alert ${alertId}, skipping API call`);
-        return;
-    }
-
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/alerts/share`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ alert_id: selectedAlert.id })
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Share API failed:', response.status, errorText);
-            showToastNotification('Failed to record share');
+        const currentUserId = userId;
+        if (currentUserId === null) {
+            showToastNotification('Error: Session invalid. Please refresh.');
             return;
         }
 
-        const data = await response.json(); // Expect: { total_chops, alert_reading_chops?, alert_sharing_chops, chops_earned, ... }
+        const alertId = selectedAlert.id.toString();
 
-        // 1. Update global chops
-        setUserChops(data.total_chops || data.user_chops);
-        if (data.alert_sharing_chops !== undefined) {
-            setSharingChops(data.alert_sharing_chops);
+        // Prevent double-awarding
+        if (sharedAlerts.has(alertId)) {
+            console.log(`Already shared alert ${alertId}, skipping API call`);
+            return;
         }
 
-        // 2. Mark as shared locally (optimistic + confirmed)
-        setSharedAlerts(prev => new Set(prev).add(alertId));
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/alerts/share`, {
+                method: 'POST',
+                headers: getAuthHeaders(),
+                body: JSON.stringify({ alert_id: selectedAlert.id })
+            });
 
-        // 3. Mark as attended (sharing counts as attending an alert)
-        setAttendedAlerts(prev => new Set(prev).add(selectedAlert.id));
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Share API failed:', response.status, errorText);
+                showToastNotification('Failed to record share');
+                return;
+            }
 
-        // 4. Decrement unattended count
-        setAlertStats(prev => ({
-            ...prev,
-            unattended_count: Math.max(0, prev.unattended_count - 1)
-        }));
+            const data = await response.json(); // Expect: { total_chops, alert_reading_chops?, alert_sharing_chops, chops_earned, ... }
 
-        // 5. Update the actual alert in the list so has_shared & is_attended become true
-        setAlerts(prevAlerts =>
-            prevAlerts.map(a =>
-                a.id === selectedAlert.id
-                    ? {
-                          ...a,
-                          has_shared: true,
-                          is_attended: true  // sharing = attending
-                      }
-                    : a
-            )
-        );
+            // 1. Update global chops
+            setUserChops(data.total_chops || data.user_chops);
+            if (data.alert_sharing_chops !== undefined) {
+                setSharingChops(data.alert_sharing_chops);
+            }
 
-        // 6. Show toast if chops were earned
-        if (data.chops_earned > 0) {
-            showToastNotification(`You earned ${data.chops_earned} Chops for sharing!`);
+            // 2. Mark as shared locally (optimistic + confirmed)
+            setSharedAlerts(prev => new Set(prev).add(alertId));
+
+            // 3. Mark as attended (sharing counts as attending an alert)
+            setAttendedAlerts(prev => new Set(prev).add(selectedAlert.id));
+
+            // 4. Decrement unattended count
+            setAlertStats(prev => ({
+                ...prev,
+                unattended_count: Math.max(0, prev.unattended_count - 1)
+            }));
+
+            // 5. Update the actual alert in the list so has_shared & is_attended become true
+            setAlerts(prevAlerts =>
+                prevAlerts.map(a =>
+                    a.id === selectedAlert.id
+                        ? {
+                            ...a,
+                            has_shared: true,
+                            is_attended: true  // sharing = attending
+                        }
+                        : a
+                )
+            );
+
+            // 6. Show toast if chops were earned
+            if (data.chops_earned > 0) {
+                showToastNotification(`You earned ${data.chops_earned} Chops for sharing!`);
+            }
+
+            console.log(`Successfully shared alert ${selectedAlert.id}`);
+
+            // Optional: refetch stats only if backend doesn't return updated ones
+            // await fetchAlertStats(currentUserId);
+
+        } catch (error) {
+            console.error('Error in awardSharingPoints:', error);
+            showToastNotification('Network error while sharing');
         }
-
-        console.log(`Successfully shared alert ${selectedAlert.id}`);
-
-        // Optional: refetch stats only if backend doesn't return updated ones
-        // await fetchAlertStats(currentUserId);
-
-    } catch (error) {
-        console.error('Error in awardSharingPoints:', error);
-        showToastNotification('Network error while sharing');
-    }
     };
 
     // --- HELPER FUNCTIONS (UNCHANGED) ---
@@ -654,32 +651,32 @@ export default function AlertsPage() {
     const totalPages = Math.ceil(alerts.length / ALERTS_PER_PAGE);
     const startIndex = (currentPage - 1) * ALERTS_PER_PAGE;
     const endIndex = startIndex + ALERTS_PER_PAGE;
-    
+
     let sortedAlerts = [...alerts];
 
-// Sort: pinned first, then by attended status, then newest first
-sortedAlerts.sort((a, b) => {
-    // Pinned alerts come first
-    if (a.is_pinned !== b.is_pinned) {
-        return a.is_pinned ? -1 : 1;
-    }
-    // Then unattended alerts
-    if (a.is_attended !== b.is_attended) {
-        return a.is_attended ? 1 : -1;
-    }
-    // Then by date (newest first)
-    return new Date(b.date).getTime() - new Date(a.date).getTime();
-});
+    // Sort: pinned first, then by attended status, then newest first
+    sortedAlerts.sort((a, b) => {
+        // Pinned alerts come first
+        if (a.is_pinned !== b.is_pinned) {
+            return a.is_pinned ? -1 : 1;
+        }
+        // Then unattended alerts
+        if (a.is_attended !== b.is_attended) {
+            return a.is_attended ? 1 : -1;
+        }
+        // Then by date (newest first)
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
 
-let displayedAlerts: Alert[] = [];
-let hasMoreAlerts = false;
+    let displayedAlerts: Alert[] = [];
+    let hasMoreAlerts = false;
 
-if (isPro) {
-    displayedAlerts = sortedAlerts.slice(startIndex, endIndex);
-} else {
-    displayedAlerts = sortedAlerts.slice(0, FREE_USER_ALERT_LIMIT);
-    hasMoreAlerts = sortedAlerts.length > FREE_USER_ALERT_LIMIT;
-}
+    if (isPro) {
+        displayedAlerts = sortedAlerts.slice(startIndex, endIndex);
+    } else {
+        displayedAlerts = sortedAlerts.slice(0, FREE_USER_ALERT_LIMIT);
+        hasMoreAlerts = sortedAlerts.length > FREE_USER_ALERT_LIMIT;
+    }
 
 
     // --- RENDERING (UNCHANGED) ---
@@ -688,7 +685,7 @@ if (isPro) {
         return (
             <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(to bottom right, #fff7ed, #ffffff)' }}>
                 <div style={{ textAlign: 'center' }}>
-                    <div style={{ 
+                    <div style={{
                         width: '48px', height: '48px', border: '4px solid #fed7aa', borderTop: '4px solid #f97316',
                         borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite'
                     }}></div>
@@ -705,7 +702,7 @@ if (isPro) {
 
     // If not logged in (userId is null after initialization) show an error message instead of the page content
     if (userId === null) {
-         return (
+        return (
             <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(to bottom right, #fff7ed, #ffffff)' }}>
                 <div style={{ textAlign: 'center', padding: '32px', backgroundColor: '#fff', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)' }}>
                     <i className="ri-error-warning-line" style={{ color: '#ef4444', fontSize: '48px', marginBottom: '16px' }}></i>
@@ -723,7 +720,7 @@ if (isPro) {
         <div style={{ background: 'linear-gradient(to bottom right, #fff7ed, #ffffff)', minHeight: '100vh', padding: '16px' }}>
             <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
                 {/* Header */}
-                <header style={{ 
+                <header style={{
                     backgroundColor: '#ffffff', borderBottom: '1px solid #e5e7eb', padding: '16px 24px',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     borderRadius: '12px', marginBottom: '24px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
@@ -731,9 +728,9 @@ if (isPro) {
                     <h1 style={{ fontSize: viewportWidth >= 640 ? '24px' : '20px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
                         Opportunity Alerts
                     </h1>
-                    
+
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ 
+                        <div style={{
                             backgroundColor: '#fff7ed', padding: '8px 16px', borderRadius: '20px',
                             fontSize: '14px', fontWeight: '600', color: '#ea580c', display: 'flex', alignItems: 'center', gap: '6px'
                         }}>
@@ -741,26 +738,26 @@ if (isPro) {
                             {userChops} Chops
                         </div>
                         {/* {viewportWidth >= 640 && ( */}
-                            {/* <div style={{  */}
-                                {/* backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', */}
-                                {/* fontSize: '14px', fontWeight: '500', color: '#374151' */}
-                            {/* }}> */}
-                                {/* {alertStats.unattended_count} unattended */}
-                            {/* </div> */}
+                        {/* <div style={{  */}
+                        {/* backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', */}
+                        {/* fontSize: '14px', fontWeight: '500', color: '#374151' */}
+                        {/* }}> */}
+                        {/* {alertStats.unattended_count} unattended */}
+                        {/* </div> */}
                         {/* )} */}
                     </div>
                 </header>
 
                 {/* Summary Cards */}
-                <div style={{ 
+                <div style={{
                     display: 'grid',
                     gridTemplateColumns: viewportWidth >= 1024 ? 'repeat(5, 1fr)' : viewportWidth >= 640 ? 'repeat(2, 1fr)' : '1fr',
                     gap: '16px', marginBottom: '32px'
                 }}>
                     {[
-                        { label: 'New Alerts', value: alertStats.unattended_count, icon: 'ri-notification-line', bg: '#dbeafe', color: '#3b82f6',sub: undefined },
+                        { label: 'New Alerts', value: alertStats.unattended_count, icon: 'ri-notification-line', bg: '#dbeafe', color: '#3b82f6', sub: undefined },
                         { label: 'Total Chops', value: userChops, icon: 'ri-coin-line', bg: '#fef3c7', color: '#f59e0b', sub: undefined },
-                        { label: 'Reading', value: readingChops, icon: 'ri-book-open-line', bg: '#e0e7ff', color: '#6366f1',sub: undefined },
+                        { label: 'Reading', value: readingChops, icon: 'ri-book-open-line', bg: '#e0e7ff', color: '#6366f1', sub: undefined },
                         { label: 'Sharing', value: sharingChops, icon: 'ri-share-line', bg: '#dcfce7', color: '#16a34a', sub: undefined },
                         // { label: 'Referrals', value: referralCount, icon: 'ri-user-add-line', bg: subscriptionStatus === 'active' ? '#f3e8ff' : '#f3f4f6', color: subscriptionStatus === 'active' ? '#8b5cf6' : '#6b7280', sub: `+${referralChops} Chops` }
                     ].map((card, idx) => (
@@ -782,15 +779,16 @@ if (isPro) {
                 {/* Alerts List */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '32px' }}>
                     {displayedAlerts.map((alert: Alert) => (
-                        <div key={alert.id} style={{ 
+                        <div key={alert.id} style={{
                             backgroundColor: '#ffffff', borderRadius: '16px', padding: viewportWidth >= 768 ? '32px' : '20px',
-                            boxShadow: alert.is_pinned ?'0 8px 16px -1px rgba(249, 115, 22, 0.3)' : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                            boxShadow: alert.is_pinned ? '0 8px 16px -1px rgba(249, 115, 22, 0.3)' : '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
                             border: alert.is_pinned ? '2px solid #f97316' : attendedAlerts.has(alert.id) ? '2px solid #10b981' : '1px solid #e5e7eb', position: 'relative'
                         }}>
                             {/* Pin indicator badge */}
                             {alert.is_pinned && (
-                                <div style={{ position: 'absolute', top: '16px', right: '16px', backgroundColor: '#fff7ed', color: '#ea580c', padding: '6px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 4px rgba(249, 115, 22, 0.2)'
-                            }}>
+                                <div style={{
+                                    position: 'absolute', top: '16px', right: '16px', backgroundColor: '#fff7ed', color: '#ea580c', padding: '6px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 2px 4px rgba(249, 115, 22, 0.2)'
+                                }}>
                                     <i className="ri-pushpin-fill" style={{ fontSize: '14px' }}></i>
                                     Pinned
                                 </div>
@@ -814,24 +812,25 @@ if (isPro) {
                                     </h2>
                                 </div>
                                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                
-                                {attendedAlerts.has(alert.id) && (
-                                    <div style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '10px 18px', borderRadius: '24px', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
-                                        {/* <i className="ri-check-line"></i>Attended */}
-                                    </div>
-                                )}
-                                {/* Pin Button */}
-                                <button 
-                    onClick={() => handlePinAlert(alert.id)}
-                    style={{ 
-                        backgroundColor: alert.is_pinned ? '#fff7ed' : '#f9fafb', padding: '10px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '44px', height: '44px', transition: 'all 0.2s', fontSize: '18px',
-                        color: alert.is_pinned ? '#ea580c' : '#6b7280',
-                        border: alert.is_pinned ? '2px solid #f97316' : '1px solid #d1d5db',}}
-                    title={alert.is_pinned ? 'Unpin alert' : 'Pin alert to top'}
-                >
-                    <i className={alert.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'}></i>
-                </button>
-                </div>
+
+                                    {attendedAlerts.has(alert.id) && (
+                                        <div style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '10px 18px', borderRadius: '24px', fontSize: '14px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                                            {/* <i className="ri-check-line"></i>Attended */}
+                                        </div>
+                                    )}
+                                    {/* Pin Button */}
+                                    <button
+                                        onClick={() => handlePinAlert(alert.id)}
+                                        style={{
+                                            backgroundColor: alert.is_pinned ? '#fff7ed' : '#f9fafb', padding: '10px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '44px', height: '44px', transition: 'all 0.2s', fontSize: '18px',
+                                            color: alert.is_pinned ? '#ea580c' : '#6b7280',
+                                            border: alert.is_pinned ? '2px solid #f97316' : '1px solid #d1d5db',
+                                        }}
+                                        title={alert.is_pinned ? 'Unpin alert' : 'Pin alert to top'}
+                                    >
+                                        <i className={alert.is_pinned ? 'ri-pushpin-fill' : 'ri-pushpin-line'}></i>
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Content */}
@@ -841,7 +840,7 @@ if (isPro) {
                                     { title: 'Potential Reward', content: alert.potential_reward, bg: '#f0fdf4', border: '#22c55e', color: '#16a34a', icon: 'ri-trophy-line' },
                                     { title: 'Action Required', content: alert.action_required, bg: '#fff7ed', border: '#f97316', color: '#ea580c', icon: 'ri-flashlight-line' }
                                 ].map((section, idx) => (
-                                    <div key={idx} style={{ backgroundColor: section.bg, padding: '18px', borderRadius: '12px', border: `1px solid ${section.border}`, flex: viewportWidth >= 1024 ? '1 1 calc(33.33% - 20px)' : '1 1 100%',minWidth: viewportWidth >= 1024 ? '270px' : '100%', }}>
+                                    <div key={idx} style={{ backgroundColor: section.bg, padding: '18px', borderRadius: '12px', border: `1px solid ${section.border}`, flex: viewportWidth >= 1024 ? '1 1 calc(33.33% - 20px)' : '1 1 100%', minWidth: viewportWidth >= 1024 ? '270px' : '100%', }}>
                                         <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: section.color, marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                             <i className={section.icon}></i>{section.title}
                                         </h3>
@@ -912,8 +911,8 @@ if (isPro) {
                 )}
 
                 {/* Share Modal & Toast (UNCHANGED) */}
-                
-                 {showShareModal && selectedAlert && (
+
+                {showShareModal && selectedAlert && (
                     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
                         <div style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '32px', maxWidth: '450px', width: '90%', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}>
                             <h3 style={{ fontSize: '20px', fontWeight: 'bold', color: '#111827', marginBottom: '16px', textAlign: 'center' }}>
@@ -943,7 +942,7 @@ if (isPro) {
                         </div>
                     </div>
                 )}
-                
+
                 {showToast && (
                     <div style={{ position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#333', color: '#fff', padding: '12px 20px', borderRadius: '8px', fontSize: '14px', zIndex: 1000 }}>
                         {toastMessage}

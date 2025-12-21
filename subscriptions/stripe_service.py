@@ -89,7 +89,15 @@ class StripeService:
         """
         Verify Stripe webhook signature
         """
+        # Try multiple keys as fallback
         webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+        if not webhook_secret:
+            webhook_secret = os.getenv("STRIPE_CONNECT_WEBHOOK_SECRET")
+        if not webhook_secret:
+            webhook_secret = os.getenv("STRIPE_PLATFORM_WEBHOOK_SECRET")
+        
+        if not webhook_secret:
+            raise Exception("STRIPE_WEBHOOK_SECRET (or CONNECT/PLATFORM variant) is not set in environment variables")
         
         try:
             event = stripe.Webhook.construct_event(

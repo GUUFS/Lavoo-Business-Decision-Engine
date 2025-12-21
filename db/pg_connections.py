@@ -51,8 +51,8 @@ try:
         DATABASE_URL,
         pool_pre_ping=True,  # Verify connections before using
         pool_recycle=300,  # Recycle connections every 5 minutes (prevents stale connections)
-        pool_size=5,  # Number of permanent connections
-        max_overflow=10,  # Additional connections when needed
+        pool_size=15,  # Number of permanent connections
+        max_overflow=20,  # Additional connections when needed
         echo=False,  # Set to True for SQL query logging (debugging)
     )
 

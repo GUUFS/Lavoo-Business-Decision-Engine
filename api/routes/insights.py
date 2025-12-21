@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api", tags=["insights"])
 # Get current user (simplified - implement your auth)
 @router.get("/users/person")
 def get_current_user_route(current_user=Depends(get_current_user)):
-    user = current_user["user"]  # extract actual user object
+    user = current_user  # extract actual user object
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return {
@@ -40,7 +40,7 @@ def get_user_stats(
     db: Session = Depends(get_db)
 ):
     """Get user statistics including chops breakdown"""
-    user = current_user["user"]
+    user = current_user
     
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -113,7 +113,7 @@ def get_insights(
 ):
     """Get paginated insights with user-specific data"""
     try:
-        user = current_user["user"]
+        user = current_user
         
         # Get all active insights
         query = db.query(Insight).filter(Insight.is_active == True)
@@ -188,7 +188,7 @@ def get_insights(
 @router.get("/insights/{insight_id}", response_model=InsightResponse)
 def get_insight(insight_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get a specific insight"""
-    user = current_user["user"]
+    user = current_user
     
     insight = db.query(Insight).filter(Insight.id == insight_id).first()
     if not insight:
@@ -281,7 +281,7 @@ def get_user_insight_stats(user_id: int, db: Session = Depends(get_db)):
 @router.post("/insights/view")
 def view_insight( request: ViewInsightRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     # Get user and insight
-    user = current_user["user"]
+    user = current_user
     insight = db.query(Insight).filter(Insight.id == request.insight_id).first()
 
     if not user:
@@ -366,7 +366,7 @@ def view_insight( request: ViewInsightRequest, current_user = Depends(get_curren
 @router.post("/insights/share")
 def share_insight( request: ShareInsightRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     # Get user and alert
-    user = current_user["user"]
+    user = current_user
     insight = db.query(Insight).filter(Insight.id == request.insight_id).first()
 
     if not user:
@@ -454,7 +454,7 @@ def pin_insight(
     db: Session = Depends(get_db)
 ):
     """Pin or unpin an insight"""
-    user = current_user["user"]
+    user = current_user
     
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")

@@ -1,0 +1,121 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from typing import Optional
+from datetime import datetime, timedelta
+
+from db.pg_connections import get_db
+from db.pg_models import User, Commission, Ticket, Review, Subscriptions, Payout
+from api.routes.control.users import get_current_user
+
+router = APIRouter(prefix="/api/admin/dashboard", tags=["dashboard"])
+
+@router.get("/stats")
+async def get_dashboard_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get real-time system statistics for the admin dashboard.
+    """
+    # Verify admin access
+    is_admin = False
+    if isinstance(current_user, dict):
+        if "user" in current_user:
+            user_data = current_user["user"]
+            if isinstance(user_data, dict):
+                is_admin = user_data.get("is_admin", False)
+            elif hasattr(user_data, 'is_admin'):
+                is_admin = user_data.is_admin
+        else:
+            is_admin = current_user.get("is_admin", False)
+    else:
+        is_admin = getattr(current_user, 'is_admin', False)
+
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        # 1. Total Users (excluding deactivated if preferred, but usually Total means all)
+        total_users = db.query(User).count()
+        
+        # 2. Total Revenue (Sum of paid commissions - this is a proxy for platform revenue if we take a cut, 
+        #    or just total volume. Adjust logic if 'revenue' means platform profit vs total payouts).
+        #    Let's assume Revenue = Total Paid Commissions for now, or maybe Subscription revenue?
+        #    For this MVP, let's use Total Paid Commissions as a metric of activity.
+        #    Or if we have Subscription tables, use that.
+        #    Let's check models... Commission has 'amount'.
+        # 2. Total Revenue
+        # 2. Total Revenue
+        try:
+            # Calculate Total Subscription Revenue (Sum of all 'completed' or 'active' subscriptions)
+            # Assuming 'completed' or 'active' means paid. Adjust 'status' based on actual data values (e.g., 'active', 'paid')
+            total_subscription_revenue = db.query(func.sum(Subscriptions.amount)).filter(
+                Subscriptions.status.in_(['active', 'completed', 'paid'])
+            ).scalar() or 0.0
+
+            # Calculate Total Payouts (Sum of 'completed' payouts)
+            total_payouts = db.query(func.sum(Payout.amount)).filter(
+                Payout.status == 'completed'
+            ).scalar() or 0.0
+
+            total_revenue = float(total_subscription_revenue) - float(total_payouts)
+        except Exception as ex:
+            print(f"DEBUG: Revenue calc error: {ex}")
+            total_revenue = 0.0
+
+        # 3. Active Users (Active in last 30 days)
+        # Ensure timezone awareness for PostgreSQL timestamptz comparison
+        try:
+            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            # active_users = db.query(User).filter(User.updated_at >= thirty_days_ago).count()
+            # Use 'created_at' as fallback if 'updated_at' causes issues, but updated_at should be fine.
+            # Adding logging to trace execution
+            print(f"DEBUG: Calculating active users since {thirty_days_ago}")
+            active_users = db.query(User).filter(User.updated_at >= thirty_days_ago).count()
+        except Exception as ex:
+            print(f"DEBUG: Active users calc error: {ex}")
+            active_users = 0
+
+        # 4. System Uptime (Mock for now as backend doesn't track this easily without external tools)
+        system_uptime = "99.9%" 
+
+        # 5. Recent Activity (Mix of new users and recent tickets)
+        try:
+            recent_users = db.query(User).order_by(User.created_at.desc()).limit(5).all()
+            recent_tickets = db.query(Ticket).order_by(Ticket.created_at.desc()).limit(5).all()
+            
+            activity_stream = []
+            for u in recent_users:
+                activity_stream.append({
+                    "type": "new_user",
+                    "message": f"New user {u.name} joined",
+                    "time": u.created_at.isoformat() if u.created_at else None
+                })
+            for t in recent_tickets:
+                activity_stream.append({
+                    "type": "new_ticket",
+                    "message": f"New ticket #{t.id}: {t.issue[:30] if t.issue else 'No Issue'}...",
+                    "time": t.created_at.isoformat() if t.created_at else None
+                })
+                
+            # Sort combined activity by time desc
+            activity_stream.sort(key=lambda x: x['time'] or '', reverse=True)
+            activity_stream = activity_stream[:10]
+        except Exception as ex:
+             print(f"DEBUG: Activity stream error: {ex}")
+             activity_stream = []
+
+        return {
+            "total_users": total_users,
+            "total_revenue": total_revenue,
+            "active_users": active_users,
+            "system_uptime": system_uptime,
+            "recent_activity": activity_stream
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error fetching dashboard stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch dashboard stats: {str(e)}")

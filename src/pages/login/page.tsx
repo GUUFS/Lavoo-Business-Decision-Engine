@@ -9,7 +9,7 @@ import Footer from "../../components/feature/Footer";
 import Button from "../../components/base/Button";
 import Input from "../../components/base/Input";
 import { useLogin } from "../../api/authentication";
-import { useAdmin } from "../../api/authentication";
+
 
 // ✅ Zod schema for validation
 const loginSchema = z.object({
@@ -24,7 +24,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function Login() {
   const navigate = useNavigate();
-  const {mutateAsync: loginUser} = useLogin();
+  const { mutateAsync: loginUser } = useLogin();
   // const {mutateAsync: loginAdmin} = useAdmin<AuthResponse>();
   // const { mutate, isPending } = useLogin();
   const [isPending, setIsPending] = useState(false);
@@ -43,7 +43,7 @@ export default function Login() {
   const onSubmit = async (data: LoginFormData) => {
     setIsPending(true);
 
-    try { 
+    try {
       const res = await loginUser(data); // call your backend login
       // Save token
       localStorage.setItem("access_token", res.access_token);
@@ -58,33 +58,33 @@ export default function Login() {
       }
 
       // toast.success("Login successful!");
-      } catch (error: any) {
+    } catch (error: any) {
       toast.error(error?.message || "Login failed. Please check your credentials.");
     } finally {
       setIsPending(false);
     }
     //  ?? const adminData = await loginAdmin(data);
-      // localStorage.setItem("isAdmin", "true");
-      // navigate("/admin/dashboard");
-      // return;
+    // localStorage.setItem("isAdmin", "true");
+    // navigate("/admin/dashboard");
+    // return;
     // } catch (error) {
-      // try {
-        // await loginUser(data);
-        // localStorage.setItem("isAdmin", "false");
-        // navigate("/dashboard");
-        // return;
-      // } catch (error) {
-        // toast.error("Login failed. Please check your credentials.");
-      // }
-      // toast.error("Admin Login failed. Please check your credentials.");
+    // try {
+    // await loginUser(data);
+    // localStorage.setItem("isAdmin", "false");
+    // navigate("/dashboard");
+    // return;
+    // } catch (error) {
+    // toast.error("Login failed. Please check your credentials.");
+    // }
+    // toast.error("Admin Login failed. Please check your credentials.");
     // }
     // mutate(data, {
-      // onSuccess: () => {
-        // navigate("/dashboard");
-      // },
-      // onError: (err) => {
-        // toast.error(err.message || "Login failed");
-      // },
+    // onSuccess: () => {
+    // navigate("/dashboard");
+    // },
+    // onError: (err) => {
+    // toast.error(err.message || "Login failed");
+    // },
     // });
   };
 

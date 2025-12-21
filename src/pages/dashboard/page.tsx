@@ -6,7 +6,8 @@ const API_BASE_URL = 'http://localhost:8000';
 
 // --- AUTHENTICATION HELPERS ---
 const getAuthToken = (): string | null => {
-    const token = localStorage.getItem('access_token') || localStorage.getItem('token') || localStorage.getItem('authToken');
+    // const userId = localStorage.getItem('user_id');
+    const token = localStorage.getItem('access_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || localStorage.getItem('authToken');
     if (token) {
         console.log(`✅ AUTH_TOKEN: Token found! Starting with: ${token.slice(0, 15)}...`);
     } else {
@@ -17,9 +18,9 @@ const getAuthToken = (): string | null => {
 
 const getAuthHeaders = (): Record<string, string> => {
     const token = getAuthToken();
-    return { 
-        'Content-Type': 'application/json', 
-        'Authorization': token ? `Bearer ${token}` : '' 
+    return {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : ''
     };
 };
 
@@ -63,11 +64,12 @@ interface DashboardStats {
     total_referrals: number;
     referrals_this_month: number;
     referral_chops: number;
+    total_commissions: number;
 }
 
 export default function Dashboard() {
     const navigate = useNavigate();
-    
+
     // State
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<DashboardStats>({
@@ -82,16 +84,49 @@ export default function Dashboard() {
         unattended_alerts: 0,
         total_referrals: 0,
         referrals_this_month: 0,
-        referral_chops: 0
+        referral_chops: 0,
+        total_commissions: 0
     });
     const [urgentAlerts, setUrgentAlerts] = useState<Alert[]>([]);
     const [topInsights, setTopInsights] = useState<Insight[]>([]);
     const [recentReviews, setRecentReviews] = useState<Review[]>([]);
-    const [userId, setUserId] = useState<number | null>(null);
+    // const [userId, setUserId] = useState<number | null>(null);
 
     // Initialize data on mount
     useEffect(() => {
         initializeDashboard();
+    }, []);
+
+    useEffect(() => {
+        // Test all API endpoints
+        const testEndpoints = async () => {
+            const endpoints = [
+                '/users/me',
+                '/api/alerts?limit=3',
+                '/api/insights?page=1&limit=3',
+                '/api/reviews',
+                '/api/user/stats'
+            ];
+
+            for (const endpoint of endpoints) {
+                try {
+                    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+                        headers: getAuthHeaders(),
+                        credentials: 'include'
+                    });
+                    console.log(`🔍 TEST ${endpoint}: ${response.status} ${response.ok ? '✅' : '❌'}`);
+                } catch (error: unknown) {
+                    // Proper TypeScript error handling
+                    if (error instanceof Error) {
+                        console.error(`🔍 TEST ${endpoint}: ${error.message}`);
+                    } else {
+                        console.error(`🔍 TEST ${endpoint}: Unknown error occurred`);
+                    }
+                }
+            }
+        };
+
+        testEndpoints();
     }, []);
 
     const initializeDashboard = async () => {
@@ -117,12 +152,12 @@ export default function Dashboard() {
             }
 
             const userData = await userResponse.json();
-            setUserId(userData.id);
+            // setUserId(userData.id);
 
             // Fetch all dashboard data in parallel
             await Promise.all([
                 fetchDashboardStats(userData.id),
-                fetchUrgentAlerts(userData.id),
+                fetchUrgentAlerts(),
                 fetchTopInsights(),
                 fetchRecentReviews()
             ]);
@@ -142,9 +177,9 @@ export default function Dashboard() {
                 credentials: 'include'
             });
             if (!userResponse.ok) {
-              const text = await userResponse.text();
-              console.error(`Request failed: ${API_BASE_URL}/users/me`, userResponse.status, text.slice(0, 200));
-              throw new Error(`HTTP ${userResponse.status}`);
+                const text = await userResponse.text();
+                console.error(`Request failed: ${API_BASE_URL}/users/me`, userResponse.status, text.slice(0, 200));
+                throw new Error(`HTTP ${userResponse.status}`);
             }
             const userData = await userResponse.json();
 
@@ -154,9 +189,9 @@ export default function Dashboard() {
                 credentials: 'include'
             });
             if (!alertStatsResponse.ok) {
-              const text = await alertStatsResponse.text();
-              console.error(`Request failed: ${API_BASE_URL}/api/users/${userId}/alerts/stats`, alertStatsResponse.status, text.slice(0, 200));
-              throw new Error(`HTTP ${alertStatsResponse.status}`);
+                const text = await alertStatsResponse.text();
+                console.error(`Request failed: ${API_BASE_URL}/api/users/${userId}/alerts/stats`, alertStatsResponse.status, text.slice(0, 200));
+                throw new Error(`HTTP ${alertStatsResponse.status}`);
             }
             const alertStats = await alertStatsResponse.json();
 
@@ -166,9 +201,9 @@ export default function Dashboard() {
                 credentials: 'include'
             });
             if (!insightStatsResponse.ok) {
-              const text = await insightStatsResponse.text();
-              console.error(`Request failed: ${API_BASE_URL}/api/users/stats`, insightStatsResponse.status, text.slice(0, 200));
-              throw new Error(`HTTP ${insightStatsResponse.status}`);
+                const text = await insightStatsResponse.text();
+                console.error(`Request failed: ${API_BASE_URL}/api/users/stats`, insightStatsResponse.status, text.slice(0, 200));
+                throw new Error(`HTTP ${insightStatsResponse.status}`);
             }
             const insightStats = await insightStatsResponse.json();
 
@@ -179,9 +214,9 @@ export default function Dashboard() {
             });
 
             if (!referralStatsResponse.ok) {
-              const text = await referralStatsResponse.text();
-              console.error(`Request failed: ${API_BASE_URL}/api/referrals/stats`, referralStatsResponse.status, text.slice(0, 200));
-              throw new Error(`HTTP ${referralStatsResponse.status}`);
+                const text = await referralStatsResponse.text();
+                console.error(`Request failed: ${API_BASE_URL}/api/referrals/stats`, referralStatsResponse.status, text.slice(0, 200));
+                throw new Error(`HTTP ${referralStatsResponse.status}`);
             }
             const referralStats = await referralStatsResponse.json();
 
@@ -191,11 +226,24 @@ export default function Dashboard() {
                 credentials: 'include'
             });
             if (!reviewsResponse.ok) {
-              const text = await reviewsResponse.text();
-              console.error(`Request failed: ${API_BASE_URL}/api/reviews`, reviewsResponse.status, text.slice(0, 200));
-              throw new Error(`HTTP ${reviewsResponse.status}`);
+                const text = await reviewsResponse.text();
+                console.error(`Request failed: ${API_BASE_URL}/api/reviews`, reviewsResponse.status, text.slice(0, 200));
+                throw new Error(`HTTP ${reviewsResponse.status}`);
             }
             const reviews = await reviewsResponse.json();
+
+            // Fetch earnings summary for commissions
+            const earningsResponse = await fetch(`${API_BASE_URL}/earnings/summary`, {
+                headers: getAuthHeaders(),
+                credentials: 'include'
+            });
+            let totalCommissions = 0;
+            if (earningsResponse.ok) {
+                const earningsData = await earningsResponse.json();
+                totalCommissions = earningsData.totalCommissions || 0;
+            } else {
+                console.error('Failed to fetch earnings summary', earningsResponse.status);
+            }
 
             // Calculate average rating
             const averageRating = reviews.length > 0
@@ -217,7 +265,8 @@ export default function Dashboard() {
                 unattended_alerts: alertStats.unattended_count,
                 total_referrals: referralStats.total_referrals,
                 referrals_this_month: referralStats.referrals_this_month,
-                referral_chops: referralStats.total_chops_earned
+                referral_chops: referralStats.total_chops_earned,
+                total_commissions: totalCommissions
             });
 
             console.log('✅ Dashboard stats loaded');
@@ -226,7 +275,7 @@ export default function Dashboard() {
         }
     };
 
-    const fetchUrgentAlerts = async (userId: number) => {
+    const fetchUrgentAlerts = async () => {
         try {
             const response = await fetch(`${API_BASE_URL}/api/alerts?limit=3`, {
                 headers: getAuthHeaders(),
@@ -236,16 +285,23 @@ export default function Dashboard() {
             if (!response.ok) throw new Error('Failed to fetch alerts');
 
             const alerts = await response.json();
-            
-            // Filter for high priority, unattended alerts and take top 3
+
+            // ADJUSTED FILTER: Either high priority OR high score
             const urgentOnes = alerts
-                .filter((a: Alert) => a.priority === 'High' && a.score >= 90)
+                .filter((a: Alert) => {
+                    // Show alerts that are either High priority OR have score >= 85
+                    const isHighPriority = a.priority === 'High';
+                    const hasGoodScore = a.score >= 85; // Lowered from 90 to 85
+                    return isHighPriority || hasGoodScore;
+                })
                 .slice(0, 3);
 
             setUrgentAlerts(urgentOnes);
             console.log('✅ Urgent alerts loaded:', urgentOnes.length);
-        } catch (error) {
-            console.error('❌ Error fetching urgent alerts:', error);
+        } catch (error: unknown) {
+            if (error instanceof Error) {
+                console.error('❌ Error fetching urgent alerts:', error.message);
+            }
         }
     };
 
@@ -287,7 +343,7 @@ export default function Dashboard() {
         const date = new Date(dateString);
         const now = new Date();
         const diffInHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60));
-        
+
         if (diffInHours < 1) return 'Just now';
         if (diffInHours < 24) return `${diffInHours} hours ago`;
         const diffInDays = Math.floor(diffInHours / 24);
@@ -352,7 +408,7 @@ export default function Dashboard() {
                                 <p className="text-xl md:text-2xl font-bold text-gray-900">{stats.unattended_alerts}</p>
                             </div>
                             <div className="w-10 h-10 md:w-12 md:h-12 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-alert-line text-orange-600 text-lg md:text-xl"></i> 
+                                <i className="ri-alert-line text-orange-600 text-lg md:text-xl"></i>
                             </div>
                         </div>
                         <div className="mt-3 flex items-center">
@@ -515,7 +571,7 @@ export default function Dashboard() {
                             </div>
                         </div>
                         <div className="p-4 md:p-6">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 md:gap-6">
                                 {/* Total Chops */}
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-green-200 hover:bg-green-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
@@ -530,10 +586,10 @@ export default function Dashboard() {
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
                                         <h4 className="font-medium text-gray-900 text-sm md:text-base">Affiliate Commissions</h4>
-                                        <i className="ri-user-add-line text-purple-600 text-xl"></i>
+                                        <i className="ri-money-dollar-circle-line text-purple-600 text-xl"></i>
                                     </div>
-                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">$0</div>
-                                    <div className="text-sm text-gray-500"></div>
+                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">${stats.total_commissions.toLocaleString()}</div>
+                                    <div className="text-sm text-gray-500">Total earned</div>
                                 </div>
 
                                 {/* Referral Chops */}

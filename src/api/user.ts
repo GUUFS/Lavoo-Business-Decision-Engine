@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchHelper } from "../lib/fetch-helper";
+// import { fetchHelper } from "../lib/fetch-helper";
 import axios from "axios";
 
 export interface User {
@@ -9,15 +9,24 @@ export interface User {
   subscription_status?: string;
   subscription_plan?: string;
   referral_code?: string;
+  total_chops?: number;
+  created_at?: string;
+  department?: string;
+  location?: string;
+  bio?: string;
 }
 
 export const useCurrentUser = () => {
   return useQuery({
     queryKey: ["currentUser"],  // ✅ required as part of options object
     queryFn: async () => {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("user_token") || localStorage.getItem("access_token");
+      if (!token) return null; // Prevent 401 if not logged in
+
       try {
         const res = await axios.get("http://localhost:8000/me", {
-          withCredentials: true,  // send HTTP-only cookie
+          withCredentials: true,
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         return res.data; // should return {id, name, email, role, ...}
       } catch (err: any) {
@@ -31,6 +40,7 @@ export const useCurrentUser = () => {
 
             const retryRes = await axios.get("http://localhost:8000/me", {
               withCredentials: true,
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
             return retryRes.data
           } catch (refreshErr) {
@@ -44,13 +54,12 @@ export const useCurrentUser = () => {
     },
   });
 };
-// export const useCurrentUser = () => {
-  //  / useQuery(["currentUser"], async () => {
-    // const res = await axios.get("http://localhost:8000/me", { withCredentials: true });
-    // return res.data;
-  // return useQuery<User, Error>({
-    // queryKey: ["currentUser"],
-    // queryFn: () => fetchHelper<User>("/analyzer"),
-    // retry: false, // don't keep retrying if unauthorized
-  // });
-// };
+
+export const updateProfile = async (data: any) => {
+  const token = localStorage.getItem("access_token");
+  const res = await axios.patch("http://localhost:8000/me", data, {
+    withCredentials: true,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  return res.data;
+};

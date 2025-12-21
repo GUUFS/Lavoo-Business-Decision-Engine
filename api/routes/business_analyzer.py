@@ -211,3 +211,155 @@ async def get_analysis_detail(
     except Exception as e:
         logger.error(f"Failed to fetch analysis detail: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch analysis")
+
+
+@router.get("/admin/analyses")
+async def get_admin_analyses(
+    page: int = 1,
+    limit: int = 10,
+    status: str = 'all',
+    type: str = 'all',
+    search: str = None,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all business analyses for admin dashboard.
+    """
+    from db.pg_models import BusinessAnalysis, User
+
+    # content_user is either User object or dict {"user": User, "role": "admin"}
+    if isinstance(current_user, dict):
+        user_obj = current_user.get("user")
+    else:
+        user_obj = current_user
+
+    if not user_obj or not getattr(user_obj, 'is_admin', False):
+         raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    try:
+        query = db.query(BusinessAnalysis).join(User)
+
+        if status != 'all':
+            query = query.filter(BusinessAnalysis.status == status)
+        
+        # Note: 'type' is not a direct column, usually inferred. If needed, we can store it or filter by text search on intent_analysis
+        # For now, if type is provided and not 'all', we might skip filtering or try ILIKE on business_goal?
+        # The user's frontend uses specific types like 'Sales Analysis'. 
+        # We'll skip strict type filtering for now or implement if schema supports.
+        
+        if search:
+            query = query.filter(
+                (BusinessAnalysis.business_goal.ilike(f"%{search}%")) |
+                (User.name.ilike(f"%{search}%")) |
+                (User.email.ilike(f"%{search}%"))
+            )
+
+        total = query.count()
+        
+        analyses = (
+            query
+            .order_by(BusinessAnalysis.created_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+
+        # Transform to UI list format
+        result = []
+        for a in analyses:
+            # Infer confidence from intent_analysis if possible, else random/mock or 0
+            confidence = 0
+            if a.intent_analysis and isinstance(a.intent_analysis, dict):
+                # Mock logic or extract real confidence if stored
+                confidence = a.intent_analysis.get('confidence_score', 85) # Default/Mock
+            
+            # Infer type
+            analysis_type = "Business Analysis"
+            if a.intent_analysis and isinstance(a.intent_analysis, dict):
+                analysis_type = a.intent_analysis.get('category', 'General Analysis')
+
+            result.append({
+                "id": a.id,
+                "title": (a.business_goal[:50] + "...") if len(a.business_goal) > 50 else a.business_goal,
+                "user": a.user.name if a.user else "Unknown User",
+                "user_email": a.user.email if a.user else "",
+                "type": analysis_type,
+                "status": a.status,
+                "confidence": confidence,
+                "duration": "N/A", # Processing time not currently stored
+                "date": a.created_at.strftime("%Y-%m-%d %H:%M"),
+                "insights": len(a.tool_combinations) if a.tool_combinations else 0,
+                "recommendations": len(a.roadmap) if a.roadmap else 0,
+                # Include full details for modal? Or fetch separately?
+                # User request implies specific fetch might be better, but we can send basics here.
+            })
+
+        return {
+            "success": True,
+            "data": result,
+            "total": total,
+            "page": page,
+            "total_pages": (total + limit - 1) // limit
+        }
+
+    except Exception as e:
+        logger.error(f"Admin fetch analyses failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/admin/analyses/{analysis_id}")
+async def get_admin_analysis_detail(
+    analysis_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed analysis for admin modal.
+    """
+    from db.pg_models import BusinessAnalysis, User
+    from ai.business_analyzer import BusinessAnalyzer
+
+    if isinstance(current_user, dict):
+        user_obj = current_user.get("user")
+    else:
+        user_obj = current_user
+
+    if not user_obj or not getattr(user_obj, 'is_admin', False):
+         raise HTTPException(status_code=403, detail="Admin privileges required")
+
+    analysis = db.query(BusinessAnalysis).filter(BusinessAnalysis.id == analysis_id).first()
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    user = db.query(User).filter(User.id == analysis.user_id).first()
+
+    # Reuse transformation logic
+    analyzer = BusinessAnalyzer(db)
+    pre_generated_tools = analysis.ai_tools_data if hasattr(analysis, 'ai_tools_data') and analysis.ai_tools_data else None
+
+    ui_data = await analyzer._transform_to_ui_format(
+        db=db,
+        analysis_id=analysis.id,
+        user_goal=analysis.business_goal,
+        intent_analysis=analysis.intent_analysis or {},
+        tool_combinations=analysis.tool_combinations or [],
+        roadmap=analysis.roadmap or [],
+        roi_projections=analysis.roi_projections or {},
+        skip_tool_generation=True,
+        pre_generated_tools=pre_generated_tools,
+    )
+
+    # Attach user details
+    ui_data['user_details'] = {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "join_date": user.created_at.strftime("%Y-%m-%d") if user.created_at else "N/A",
+        "subscription": user.subscription_status
+    }
+
+    return {
+        "success": True,
+        "data": ui_data
+    }

@@ -8,7 +8,7 @@ interface AuthResponse {
   token_type?: string;
   refresh_token?: string;
   role: "admin" | "user";
-  // data: string
+  id: number;
 }
 
 interface LoginData {
@@ -16,12 +16,6 @@ interface LoginData {
   password: string;
 }
 
-interface SignupData {
-  email: string;
-  password: string;
-  confirm_password:string;
-  name?: string;
-}
 
 export const useAdmin = () => {
   return useMutation<AuthResponse, Error, LoginData>({
@@ -76,7 +70,7 @@ export const useLogin = () => {
           errorBody.detail || `Login failed with status ${response.status}`;
         throw new Error(message);
       }
-       return (await response.json()) as AuthResponse
+      return (await response.json()) as AuthResponse
       // return response.json();
     },
 
@@ -101,6 +95,7 @@ export const useSignup = () => {
   return useMutation<AuthResponse, Error, FormData>({
     mutationFn: async (data) => {
       const res = await instance.post<AuthResponse>("/api/signup", data);
-      return res.data;    },
+      return res.data;
+    },
   });
 };

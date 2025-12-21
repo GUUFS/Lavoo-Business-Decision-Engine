@@ -1,8 +1,8 @@
 
-import { useNavigate } from 'react-router-dom';
+
 
 export default function Footer() {
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
 
   return (
     <footer className="bg-gradient-to-br from-orange-50 to-white text-gray-900">
@@ -66,7 +66,7 @@ export default function Footer() {
           <div>
             <h3 className="text-base sm:text-lg font-bold mb-3 sm:mb-4">Company</h3>
             <ul className="space-y-2 sm:space-y-3">
-            <li>
+              <li>
                 <button className="text-sm sm:text-base text-gray-600 hover:text-orange-500 transition-colors">
                   About Us
                 </button>
@@ -78,7 +78,7 @@ export default function Footer() {
               </li>
               <li>
                 <button className="text-sm sm:text-base text-gray-600 hover:text-orange-500 transition-colors">
-                  Blog
+                  Chopsticks
                 </button>
               </li>
               <li>
@@ -121,11 +121,11 @@ export default function Footer() {
         <div className="border-t border-gray-200 mt-10 sm:mt-12 pt-6 sm:pt-8">
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             <p className="text-xs sm:text-sm text-gray-600 text-center sm:text-left">
-              © {new Date().getFullYear()} AItugo+. All rights reserved.
+              © {new Date().getFullYear()} Lavoo. All rights reserved.
             </p>
             <div className="flex flex-wrap justify-center gap-4 sm:gap-6">
-              <a 
-                href="#" 
+              <a
+                href="#"
                 className="text-xs sm:text-sm text-orange-500 hover:text-orange-400 transition-colors whitespace-nowrap"
               >
                 Powered by GUUFS

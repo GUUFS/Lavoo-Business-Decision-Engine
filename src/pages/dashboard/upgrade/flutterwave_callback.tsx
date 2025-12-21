@@ -10,7 +10,7 @@ export default function PaymentCallback() {
   useEffect(() => {
     const verifyPayment = async () => {
       const transactionId = searchParams.get('transaction_id');
-      const txRef = searchParams.get('tx_ref');
+      // const txRef = searchParams.get('tx_ref');
       const status = searchParams.get('status');
 
       if (status === 'successful' && transactionId) {
@@ -28,7 +28,7 @@ export default function PaymentCallback() {
 
           if (data.status === 'success') {
             setStatus('success');
-            setTimeout(() => navigate('/dashboard'), 2000);
+            setTimeout(() => navigate('/upgrade'), 2000);
           } else {
             setStatus('failed');
           }
@@ -59,7 +59,7 @@ export default function PaymentCallback() {
               <i className="ri-check-line text-green-600 text-3xl"></i>
             </div>
             <h2 className="text-2xl font-bold text-gray-900 mb-2">Payment Successful!</h2>
-            <p className="text-gray-600">Redirecting to dashboard...</p>
+            <p className="text-gray-600">Redirecting to your account...</p>
           </>
         )}
         {(status === 'failed' || status === 'cancelled') && (

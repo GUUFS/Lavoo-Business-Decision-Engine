@@ -1,298 +1,325 @@
-
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import AdminHeader from '../../../components/feature/AdminHeader';
+import { getAuthHeaders } from '../../../utils/auth';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+interface Message {
+  id: number;
+  review_id: number;
+  sender_type: 'user' | 'admin';
+  message: string;
+  timestamp: string;
+  is_read: boolean;
+}
+
+interface Review {
+  id: number;
+  user_name: string;
+  user_email: string;
+  business_name: string;
+  review_title: string;
+  rating: number;
+  review_text: string;
+  date_submitted: string;
+  status: string;
+  category: string;
+  admin_response: boolean;
+  conversation_count: number;
+  unread_messages: number;
+  is_attended: boolean; // Added field
+}
+
+const ConversationModal = ({ review, onClose, onReply }: {
+  review: Review,
+  onClose: () => void,
+  onReply: (id: number, message: string) => Promise<boolean>
+}) => {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newMessage, setNewMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchMessages = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${review.id}/conversations`, {
+        headers: getAuthHeaders()
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setMessages(data);
+      }
+    } catch (error) {
+      console.error("Error fetching messages", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMessages();
+  }, [review.id]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!newMessage.trim()) return;
+    setSending(true);
+    const success = await onReply(review.id, newMessage);
+    if (success) {
+      setNewMessage('');
+      fetchMessages();
+    }
+    setSending(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col animate-fade-in">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Review #{review.id}</h2>
+            <div className="flex items-center gap-2 text-sm text-gray-600 mt-1">
+              <span className="font-medium">{review.user_name}</span>
+              <span>&bull;</span>
+              <span>{review.business_name}</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+            <i className="ri-close-line text-2xl text-gray-500"></i>
+          </button>
+        </div>
+        <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
+          <div className="flex items-center mb-1">
+            {Array.from({ length: 5 }, (_, i) => (
+              <i key={i} className={`ri-star-${i < review.rating ? 'fill' : 'line'} text-yellow-400 mr-1`}></i>
+            ))}
+            <span className="font-medium ml-2 text-gray-900">{review.review_title}</span>
+          </div>
+          <p className="text-sm text-gray-600 italic">"{review.review_text}"</p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 bg-white space-y-4">
+          {loading ? (
+            <div className="flex justify-center py-10">
+              <i className="ri-loader-4-line text-2xl animate-spin text-gray-400"></i>
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="text-center text-gray-400 py-10">No messages yet.</div>
+          ) : (
+            messages.map((msg) => (
+              <div key={msg.id} className={`flex ${msg.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[70%] rounded-2xl px-4 py-3 shadow-sm ${msg.sender_type === 'admin' ? 'bg-red-600 text-white rounded-br-none' : 'bg-gray-100 text-gray-800 border border-gray-200 rounded-bl-none'}`}>
+                  <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
+                  <div className={`text-xs mt-1 ${msg.sender_type === 'admin' ? 'text-red-100' : 'text-gray-400'}`}>
+                    {msg.timestamp ? new Date(msg.timestamp).toLocaleString() : ''}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+        <div className="p-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+          <div className="flex gap-2">
+            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Type your reply..." onKeyDown={(e) => e.key === 'Enter' && handleSend()} className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all" />
+            <button onClick={handleSend} disabled={sending || !newMessage.trim()} className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              {sending ? <i className="ri-loader-4-line animate-spin"></i> : <i className="ri-send-plane-fill"></i>}
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const HistoryModal = ({ user, reviews, onClose, onToggleAttended }: { user: any, reviews: Review[], onClose: () => void, onToggleAttended: (id: number) => Promise<void> }) => {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col animate-fade-in">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Review History</h2>
+            <div className="text-sm text-gray-600 mt-1">User: <span className="font-semibold">{user.user_name}</span> ({user.user_email})</div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+            <i className="ri-close-line text-2xl text-gray-500"></i>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 bg-gray-50 space-y-4">
+          {reviews.length === 0 ? (
+            <div className="text-center py-10 text-gray-500">No review history found.</div>
+          ) : (
+            reviews.map((review) => (
+              <div key={review.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 relative">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex">
+                      {Array.from({ length: 5 }, (_, i) => (
+                        <i key={i} className={`ri-star-${i < review.rating ? 'fill' : 'line'} text-yellow-400 text-sm`}></i>
+                      ))}
+                    </div>
+                    <span className="text-sm text-gray-500">{new Date(review.date_submitted).toLocaleDateString()}</span>
+                  </div>
+                  <button onClick={() => onToggleAttended(review.id)} className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors border ${review.is_attended ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'}`}>
+                    {review.is_attended ? 'Details Attended' : 'Mark Attended'}
+                  </button>
+                </div>
+                <h4 className="font-semibold text-gray-900 mb-1">{review.review_title}</h4>
+                <p className="text-sm text-gray-700 mb-3">{review.review_text}</p>
+                <div className="flex gap-2">
+                  <span className={`px-2 py-0.5 rounded text-xs border ${review.status === 'published' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>{review.status}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function AdminReviews() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [selectedRating, setSelectedRating] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const [dropdownOpen, setDropdownOpen] = useState<number | null>(null);
-  const [responseText, setResponseText] = useState('');
-  const [showResponseForm, setShowResponseForm] = useState<number | null>(null);
-  const [showConversation, setShowConversation] = useState<number | null>(null);
-  const [conversations, setConversations] = useState<{[key: number]: Array<{id: number, message: string, sender: 'admin' | 'user', timestamp: string, isRead: boolean}>}>({});
-  const [readStatus, setReadStatus] = useState<{[key: number]: boolean}>({});
+  const itemsPerPage = 10;
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedReview, setSelectedReview] = useState<Review | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'users'>('list');
+  const [users, setUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [historyModal, setHistoryModal] = useState<{ open: boolean, user: any, reviews: Review[] }>({
+    open: false, user: null, reviews: []
+  });
+  const [totalPages, setTotalPagesState] = useState(1);
 
-  const reviewsPerPage = 10;
-
-  // Mock data for conversations
-  const mockConversations: {[key: number]: Array<{id: number, message: string, sender: 'admin' | 'user', timestamp: string, isRead: boolean}>} = {
-    1: [
-      {
-        id: 1,
-        message: "Thank you for your detailed feedback! We're thrilled to hear that our AI analysis platform has transformed your data analysis process.",
-        sender: 'admin',
-        timestamp: '2024-02-26T10:30:00Z',
-        isRead: true
-      },
-      {
-        id: 2,
-        message: "You're welcome! The insights have been incredibly valuable for our decision-making process. Keep up the great work!",
-        sender: 'user',
-        timestamp: '2024-02-26T14:15:00Z',
-        isRead: false
-      },
-      {
-        id: 3,
-        message: "I have a question about the export functionality. Is there a way to export the analysis in Excel format?",
-        sender: 'user',
-        timestamp: '2024-02-27T09:20:00Z',
-        isRead: false
-      },
-      {
-        id: 4,
-        message: "Also, would it be possible to schedule automated reports? That would be really helpful for our weekly meetings.",
-        sender: 'user',
-        timestamp: '2024-02-27T09:25:00Z',
-        isRead: false
+  const fetchReviews = async () => {
+    try {
+      setLoading(true);
+      let url = `${API_BASE_URL}/api/admin/reviews?page=${currentPage}&limit=${itemsPerPage}`;
+      if (selectedFilter !== 'all') url += `&status=${selectedFilter}`;
+      const response = await fetch(url, { headers: getAuthHeaders() });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.reviews) {
+          setReviews(data.reviews);
+          const total = Math.ceil(data.total / itemsPerPage);
+          setTotalPagesState(total > 0 ? total : 1);
+        } else {
+          setReviews(data);
+          setTotalPagesState(1);
+        }
       }
-    ],
-    3: [
-      {
-        id: 5,
-        message: "We appreciate your positive feedback about our AI analysis and integration support. Your success is our priority!",
-        sender: 'admin',
-        timestamp: '2024-02-24T09:45:00Z',
-        isRead: true
-      },
-      {
-        id: 6,
-        message: "The integration process was seamless thanks to your team's expertise. Looking forward to continued partnership!",
-        sender: 'user',
-        timestamp: '2024-02-24T16:20:00Z',
-        isRead: true
-      },
-      {
-        id: 7,
-        message: "That's wonderful to hear! If you need any additional features or support, please don't hesitate to reach out.",
-        sender: 'admin',
-        timestamp: '2024-02-25T08:30:00Z',
-        isRead: true
-      },
-      {
-        id: 8,
-        message: "Actually, I do have a feature request. Could you add support for real-time data streaming?",
-        sender: 'user',
-        timestamp: '2024-02-27T11:15:00Z',
-        isRead: false
-      }
-    ]
+    } catch (e) {
+      console.error("Failed to fetch reviews", e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
-    setConversations(mockConversations);
-    
-    // Load read status from localStorage
-    const savedReadStatus = localStorage.getItem('reviewReadStatus');
-    if (savedReadStatus) {
-      setReadStatus(JSON.parse(savedReadStatus));
-    }
-  }, []);
+    fetchReviews();
+  }, [selectedFilter, currentPage]);
 
-  // Save read status to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('reviewReadStatus', JSON.stringify(readStatus));
-  }, [readStatus]);
+  const filteredReviews = reviews.filter(r => {
+    if (selectedRating === 'all') return true;
+    return Math.round(r.rating).toString() === selectedRating;
+  });
 
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedFilter, selectedRating]);
-
-  // Listen for messages being read from conversation page
-  useEffect(() => {
-    const handleConversationRead = (event: CustomEvent) => {
-      const { reviewId } = event.detail;
-      setReadStatus(prev => {
-        const newStatus = {
-          ...prev,
-          [reviewId]: true
-        };
-        localStorage.setItem('reviewReadStatus', JSON.stringify(newStatus));
-        return newStatus;
+  const handleReply = async (id: number, message: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/reply`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ message })
       });
-    };
+      if (response.ok) return true;
+      alert('Failed to send reply');
+      return false;
+    } catch (e) {
+      alert('Error sending reply');
+      return false;
+    }
+  };
 
-    // Also listen for page visibility changes to reload read status
-    const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        // Page became visible, reload read status from localStorage
-        const savedReadStatus = localStorage.getItem('reviewReadStatus');
-        if (savedReadStatus) {
-          setReadStatus(JSON.parse(savedReadStatus));
+  const handleUpdateStatus = async (id: number, status: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/status`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ status })
+      });
+      if (response.ok) {
+        setReviews(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+      }
+    } catch (e) {
+      alert('Failed to update status');
+    }
+  };
+
+  const handleToggleAttended = async (id: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/attended`, {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Update reviews in main list and history modal
+        setReviews(prev => prev.map(r => r.id === id ? { ...r, is_attended: data.is_attended } : r));
+        if (historyModal.open) {
+          setHistoryModal(prev => ({
+            ...prev,
+            reviews: prev.reviews.map(r => r.id === id ? { ...r, is_attended: data.is_attended } : r)
+          }));
         }
       }
-    };
-
-    window.addEventListener('conversationRead', handleConversationRead as EventListener);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      window.removeEventListener('conversationRead', handleConversationRead as EventListener);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, []);
-
-  // Mock reviews data
-  const mockReviews = [
-    {
-      id: 1,
-      user: 'Sarah Johnson',
-      email: 'sarah.j@techstart.com',
-      company: 'TechStart Solutions',
-      rating: 5,
-      title: 'Exceptional AI Analysis Platform',
-      content: 'This AI business intelligence tool has completely transformed how we analyze our data. The insights are incredibly accurate and actionable.',
-      date: '2024-02-26',
-      status: 'published'
-    },
-    {
-      id: 2,
-      user: 'Michael Chen',
-      email: 'michael.c@dataflow.com',
-      company: 'DataFlow Analytics',
-      rating: 4,
-      title: 'Solid Performance with Room for Growth',
-      content: 'Great tool overall. The AI recommendations are helpful, though I\'d love to see more customization options for industry-specific analysis.',
-      date: '2024-02-25',
-      status: 'published'
-    },
-    {
-      id: 3,
-      user: 'Emily Rodriguez',
-      email: 'emily.r@startup.io',
-      rating: 5,
-      title: 'Game Changer for Our Business',
-      content: 'As a startup, we needed data-driven insights without hiring a full analytics team. This AI analyst provides exactly what we need.',
-      date: '2024-02-24',
-      status: 'published'
-    },
-    {
-      id: 4,
-      user: 'David Park',
-      email: 'david.p@enterprise.com',
-      company: 'Enterprise Solutions Inc.',
-      rating: 3,
-      title: 'Good but Needs Improvement',
-      content: 'The basic functionality works well, but we encountered some issues with large dataset processing. Customer support was responsive though.',
-      date: '2024-02-23',
-      status: 'published'
-    },
-    {
-      id: 5,
-      user: 'Lisa Thompson',
-      email: 'lisa.t@marketing.co',
-      company: 'Marketing Dynamics',
-      rating: 5,
-      title: 'Outstanding Customer Insights',
-      content: 'The customer behavior analysis features are phenomenal. We\'ve increased our conversion rates by 40% using these insights.',
-      date: '2024-02-22',
-      status: 'published'
-    },
-    {
-      id: 6,
-      user: 'James Wilson',
-      email: 'james.w@retail.com',
-      company: 'Retail Chain Corp',
-      rating: 2,
-      title: 'Disappointing Experience',
-      content: 'The interface is confusing and the results don\'t seem accurate for our retail data. Expected much better for the price point.',
-      date: '2024-02-21',
-      status: 'rejected'
-    },
-    {
-      id: 7,
-      user: 'Anna Martinez',
-      email: 'anna.m@consulting.org',
-      company: 'Strategic Consulting Group',
-      rating: 4,
-      title: 'Valuable for Client Projects',
-      content: 'We use this for client consulting projects. The visualizations are impressive and help communicate insights effectively.',
-      date: '2024-02-20',
-      status: 'published'
-    },
-    {
-      id: 8,
-      user: 'Robert Kim',
-      email: 'robert.k@finance.net',
-      company: 'Financial Services Ltd',
-      rating: 5,
-      title: 'Perfect for Financial Analysis',
-      content: 'Excellent tool for financial data analysis. The risk assessment features are particularly valuable for our investment decisions.',
-      date: '2024-02-19',
-      status: 'published'
-    },
-    {
-      id: 9,
-      user: 'Sophie Brown',
-      email: 'sophie.b@healthcare.org',
-      company: 'Healthcare Analytics',
-      rating: 4,
-      title: 'Great for Healthcare Data',
-      content: 'Very useful for analyzing patient data trends. HIPAA compliance features give us confidence in data security.',
-      date: '2024-02-18',
-      status: 'published'
-    },
-    {
-      id: 10,
-      user: 'Mark Davis',
-      email: 'mark.d@logistics.com',
-      company: 'Global Logistics',
-      rating: 3,
-      title: 'Mixed Results',
-      content: 'Works well for some types of analysis but struggles with our complex supply chain data. Still evaluating.',
-      date: '2024-02-17',
-      status: 'pending'
-    },
-    {
-      id: 11,
-      user: 'Jennifer Lee',
-      email: 'jennifer.l@ecommerce.shop',
-      company: 'E-commerce Solutions',
-      rating: 5,
-      title: 'Boosted Our Sales Analytics',
-      content: 'Amazing insights into customer purchasing patterns. Helped us optimize our product recommendations significantly.',
-      date: '2024-02-16',
-      status: 'published'
-    },
-    {
-      id: 12,
-      user: 'Alex Turner',
-      email: 'alex.t@manufacturing.co',
-      company: 'Manufacturing Corp',
-      rating: 4,
-      title: 'Solid Manufacturing Analytics',
-      content: 'Good for production efficiency analysis. The predictive maintenance features have saved us significant downtime.',
-      date: '2024-02-15',
-      status: 'published'
+    } catch (e) {
+      console.error(e);
     }
-  ];
+  };
 
-  // Filter reviews
-  const filteredReviews = mockReviews.filter(review => {
-    const statusMatch = selectedFilter === 'all' || review.status === selectedFilter;
-    const ratingMatch = selectedRating === 'all' || review.rating.toString() === selectedRating;
-    return statusMatch && ratingMatch;
-  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/users`, { headers: getAuthHeaders() });
+      if (res.ok) setUsers(await res.json());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
 
-  // Pagination
-  const totalPages = Math.ceil(filteredReviews.length / reviewsPerPage);
-  const startIndex = (currentPage - 1) * reviewsPerPage;
-  const endIndex = startIndex + reviewsPerPage;
-  const currentReviews = filteredReviews.slice(startIndex, endIndex);
+  const handleViewHistory = async (user: any) => {
+    setHistoryModal({ open: true, user, reviews: [] });
+    // TODO: Pagination support for history in future if needed, currently fetching all?
+    // The backend endpoint admin_get_user_reviews supports pagination now. Default 10.
+    // For now we just fetch page 1.
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/user/${user.user_id}?page=1&limit=50`, { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryModal(prev => ({ ...prev, reviews: data.reviews }));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const renderStars = (rating: number) => {
     return Array.from({ length: 5 }, (_, i) => (
-      <i 
-        key={i} 
-        className={`ri-star-${i < rating ? 'fill' : 'line'} text-yellow-400`}
-      ></i>
+      <i key={i} className={`ri-star-${i < rating ? 'fill' : 'line'} text-yellow-400`}></i>
     ));
   };
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'published': return 'bg-green-100 text-green-800';
@@ -302,376 +329,132 @@ export default function AdminReviews() {
     }
   };
 
-  const sendResponse = (reviewId: number) => {
-    if (!responseText.trim()) return;
-
-    const newMessage = {
-      id: Date.now(),
-      message: responseText,
-      sender: 'admin' as const,
-      timestamp: new Date().toISOString(),
-      isRead: true
-    };
-
-    setConversations(prev => ({
-      ...prev,
-      [reviewId]: [...(prev[reviewId] || []), newMessage]
-    }));
-
-    setResponseText('');
-    setShowResponseForm(null);
-    setDropdownOpen(null);
-  };
-
-  const getUnreadCount = (reviewId: number) => {
-    if (readStatus[reviewId]) return 0;
-    const reviewConversations = conversations[reviewId] || [];
-    return reviewConversations.filter(msg => msg.sender === 'user' && !msg.isRead).length;
-  };
-
-  const markAsRead = (reviewId: number) => {
-    const unreadCount = getUnreadCount(reviewId);
-    
-    if (unreadCount > 0) {
-      // Mark as read locally
-      setReadStatus(prev => {
-        const newStatus = {
-          ...prev,
-          [reviewId]: true
-        };
-        // Save to localStorage immediately
-        localStorage.setItem('reviewReadStatus', JSON.stringify(newStatus));
-        return newStatus;
-      });
-
-      // Update conversations to mark messages as read
-      setConversations(prev => ({
-        ...prev,
-        [reviewId]: (prev[reviewId] || []).map(msg => ({
-          ...msg,
-          isRead: true
-        }))
-      }));
-
-      // Dispatch event to update sidebar badge
-      window.dispatchEvent(new CustomEvent('reviewMessageRead', {
-        detail: { reviewId, count: unreadCount }
-      }));
-    }
-  };
-
-  const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebar 
-        isMobileMenuOpen={isMobileMenuOpen} 
-        setIsMobileMenuOpen={setIsMobileMenuOpen} 
-      />
-      
+      <AdminSidebar isMobileMenuOpen={isMobileMenuOpen} setIsMobileMenuOpen={setIsMobileMenuOpen} />
       <div className="flex-1 ml-0 flex flex-col">
-        {/* Admin Header */}
-        <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100"
-            >
-              <i className="ri-menu-line text-xl"></i>
-            </button>
-            <div className="flex-1"></div>
-            <div className="relative">
-              <button 
-                onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                  <i className="ri-user-line text-red-600"></i>
-                </div>
-                <span className="font-medium text-gray-900">Admin User</span>
-                <i className="ri-arrow-down-s-line text-gray-400"></i>
-              </button>
-              
-              {/* Profile Dropdown */}
-              {isProfileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-                  <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3">
-                    <i className="ri-user-line text-gray-500"></i>
-                    Profile
-                  </button>
-                  <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3">
-                    <i className="ri-logout-box-line text-gray-500"></i>
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
+        <AdminHeader setIsMobileMenuOpen={setIsMobileMenuOpen} />
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
-            {/* Header */}
-            <div className="mb-6">
-              <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Customer Reviews</h1>
-              <p className="text-gray-600">Manage and respond to customer feedback</p>
-            </div>
-
-            {/* Filters */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-              <div className="flex flex-col md:flex-row gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
-                  <select 
-                    value={selectedFilter}
-                    onChange={(e) => setSelectedFilter(e.target.value)}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  >
-                    <option value="all">All Reviews</option>
-                    <option value="published">Published</option>
-                    <option value="pending">Pending</option>
-                    <option value="rejected">Rejected</option>
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Rating</label>
-                  <select 
-                    value={selectedRating}
-                    onChange={(e) => setSelectedRating(e.target.value)}
-                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  >
-                    <option value="all">All Ratings</option>
-                    <option value="5">5 Stars</option>
-                    <option value="4">4 Stars</option>
-                    <option value="3">3 Stars</option>
-                    <option value="2">2 Stars</option>
-                    <option value="1">1 Star</option>
-                  </select>
-                </div>
+            <div className="mb-6 flex justify-between items-end">
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Customer Reviews</h1>
+                <p className="text-gray-600">Manage feedback and engage with users</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={fetchReviews} className="p-2 text-gray-500 hover:text-red-600 transition-colors" title="Refresh">
+                  <i className="ri-refresh-line text-xl"></i>
+                </button>
               </div>
             </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+              <div className="flex border-b border-gray-200 mb-6">
+                <button className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${viewMode === 'list' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={() => setViewMode('list')}>All Reviews</button>
+                <button className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${viewMode === 'users' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={() => { setViewMode('users'); fetchUsers(); }}>Group by User</button>
+              </div>
+              {viewMode === 'list' ? (
+                <div className="flex flex-col md:flex-row gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
+                    <select value={selectedFilter} onChange={(e) => setSelectedFilter(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
+                      <option value="all">All Reviews</option>
+                      <option value="published">Published</option>
+                      <option value="pending">Pending</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Rating</label>
+                    <select value={selectedRating} onChange={(e) => setSelectedRating(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
+                      <option value="all">All Ratings</option>
+                      <option value="5">5 Stars</option>
+                      <option value="4">4 Stars</option>
+                      <option value="3">3 Stars</option>
+                      <option value="2">2 Stars</option>
+                      <option value="1">1 Star</option>
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">Viewing reviews grouped by distinct users. Click "History" to see all reviews for a user.</div>
+              )}
+            </div>
+            {viewMode === 'list' ? (
+              <div className="space-y-4">
+                {loading ? <div className="text-center py-10 text-gray-500">Loading reviews...</div> : filteredReviews.length === 0 ? <div className="text-center py-10 text-gray-500">No reviews found.</div> : filteredReviews.map((review) => (
+                  <div key={review.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 relative">
+                    {/* Attended Badge/Button */}
+                    <div className="absolute top-6 right-6 flex gap-2">
+                      <button onClick={() => handleToggleAttended(review.id)} className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors border ${review.is_attended ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}>
+                        {review.is_attended ? <><i className="ri-check-line mr-1"></i>Attended</> : 'Mark Attended'}
+                      </button>
+                    </div>
 
-            {/* Reviews List */}
-            <div className="space-y-4">
-              {currentReviews.map((review) => {
-                const unreadCount = getUnreadCount(review.id);
-                const hasConversations = conversations[review.id] && conversations[review.id].length > 0;
-                
-                return (
-                  <div key={review.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
+                      <div className="flex-1 pr-32">
                         <div className="flex items-center gap-3 mb-3">
-                          <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-                            <i className="ri-user-line text-red-600"></i>
-                          </div>
+                          <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center"><i className="ri-user-line text-red-600"></i></div>
                           <div>
-                            <h3 className="font-semibold text-gray-900">{review.user}</h3>
-                            <p className="text-sm text-gray-500">{review.email}</p>
-                            {review.company && <p className="text-sm text-gray-500">{review.company}</p>}
+                            <h3 className="font-semibold text-gray-900">{review.user_name}</h3>
+                            <p className="text-sm text-gray-500">{review.business_name}</p>
                           </div>
-                          <div className="flex">
-                            {renderStars(review.rating)}
-                          </div>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(review.status)}`}>
-                            {review.status}
-                          </span>
+                          <div className="flex">{renderStars(review.rating)}</div>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(review.status)}`}>{review.status}</span>
                         </div>
-                        
-                        <h4 className="font-medium text-gray-900 mb-2">{review.title}</h4>
-                        <p className="text-gray-700 mb-4">{review.content}</p>
-                        
+                        <h4 className="font-medium text-gray-900 mb-2">{review.review_title}</h4>
+                        <p className="text-gray-700 mb-4">{review.review_text}</p>
                         <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
-                          <span>{review.date}</span>
-                          {hasConversations && (
-                            <span className="text-purple-600 font-medium">
-                              {conversations[review.id].length} conversation{conversations[review.id].length !== 1 ? 's' : ''}
-                            </span>
-                          )}
-                          {unreadCount > 0 && (
-                            <span className="text-red-600 font-medium">
-                              {unreadCount} unread message{unreadCount !== 1 ? 's' : ''}
-                            </span>
-                          )}
+                          <span>{new Date(review.date_submitted).toLocaleDateString()}</span>
                         </div>
-
-                        {/* Response Form */}
-                        {showResponseForm === review.id && (
-                          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                            <h5 className="font-medium text-gray-900 mb-3">Respond to Review</h5>
-                            <textarea
-                              value={responseText}
-                              onChange={(e) => setResponseText(e.target.value)}
-                              placeholder="Type your response..."
-                              className="w-full min-h-20 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 resize-vertical mb-3"
-                              rows={3}
-                            />
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => sendResponse(review.id)}
-                                disabled={!responseText.trim()}
-                                className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                Send Response
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setShowResponseForm(null);
-                                  setResponseText('');
-                                }}
-                                className="px-4 py-2 bg-gray-200 text-gray-700 text-sm rounded-lg hover:bg-gray-300 transition-colors"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Conversation View */}
-                        {showConversation === review.id && hasConversations && (
-                          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                            <h5 className="font-medium text-gray-900 mb-3">Conversation History</h5>
-                            <div className="space-y-3 max-h-60 overflow-y-auto">
-                              {conversations[review.id].map((message) => (
-                                <div
-                                  key={message.id}
-                                  className={`flex ${message.sender === 'admin' ? 'justify-end' : 'justify-start'}`}
-                                >
-                                  <div
-                                    className={`max-w-xs px-3 py-2 rounded-lg ${
-                                      message.sender === 'admin'
-                                        ? 'bg-red-600 text-white'
-                                        : 'bg-white text-gray-900 border border-gray-200'
-                                    }`}
-                                  >
-                                    <p className="text-sm">{message.message}</p>
-                                    <p className={`text-xs mt-1 ${
-                                      message.sender === 'admin' ? 'text-red-100' : 'text-gray-500'
-                                    }`}>
-                                      {message.sender === 'admin' ? 'Admin' : review.user} • {formatTimestamp(message.timestamp)}
-                                    </p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                            <button
-                              onClick={() => setShowConversation(null)}
-                              className="mt-3 px-4 py-2 bg-gray-200 text-gray-700 text-sm rounded-lg hover:bg-gray-300 transition-colors"
-                            >
-                              Close
-                            </button>
-                          </div>
-                        )}
+                        <div className="flex gap-2">
+                          <button onClick={() => { setSelectedReview(review); setIsModalOpen(true); }} className="px-4 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium flex items-center gap-2"><i className="ri-chat-1-line"></i> View Conversation ({review.conversation_count})</button>
+                          {review.status === 'pending' && (<><button onClick={() => handleUpdateStatus(review.id, 'published')} className="px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors text-sm">Approve</button><button onClick={() => handleUpdateStatus(review.id, 'rejected')} className="px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors text-sm">Reject</button></>)}
+                        </div>
                       </div>
-                      
-                      {/* Actions */}
-                      {review.status !== 'rejected' && (
-                        <div className="relative ml-4">
-                          <button
-                            onClick={() => setDropdownOpen(dropdownOpen === review.id ? null : review.id)}
-                            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                          >
-                            <i className="ri-more-2-line text-lg"></i>
-                          </button>
-                          
-                          {dropdownOpen === review.id && (
-                            <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-10">
-                              <button
-                                onClick={() => {
-                                  setShowResponseForm(review.id);
-                                  setDropdownOpen(null);
-                                }}
-                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
-                              >
-                                <i className="ri-reply-line text-gray-500"></i>
-                                Respond
-                              </button>
-                              {hasConversations && (
-                                <Link
-                                  to={`/admin/conversations/${review.id}`}
-                                  onClick={() => {
-                                    markAsRead(review.id);
-                                    setDropdownOpen(null);
-                                  }}
-                                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
-                                >
-                                  <i className="ri-chat-3-line text-gray-500"></i>
-                                  View Conversations
-                                </Link>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                  
-                  <div className="flex gap-1">
-                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                      let pageNum;
-                      if (totalPages <= 5) {
-                        pageNum = i + 1;
-                      } else if (currentPage <= 3) {
-                        pageNum = i + 1;
-                      } else if (currentPage >= totalPages - 2) {
-                        pageNum = totalPages - 4 + i;
-                      } else {
-                        pageNum = currentPage - 2 + i;
-                      }
-                      
-                      return (
-                        <button
-                          key={pageNum}
-                          onClick={() => setCurrentPage(pageNum)}
-                          className={`px-3 py-2 text-sm font-medium rounded-lg ${
-                            currentPage === pageNum
-                              ? 'bg-red-600 text-white'
-                              : 'text-gray-500 bg-white border border-gray-300 hover:bg-gray-50'
-                          }`}
-                        >
-                          {pageNum}
-                        </button>
-                      );
-                    })}
+                ))}
+                {totalPages > 1 && (
+                  <div className="mt-8 flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Page {currentPage} of {totalPages}</span>
+                    <div className="flex gap-2">
+                      <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Previous</button>
+                      <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">Next</button>
+                    </div>
                   </div>
-                  
-                  <button
-                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
-                </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Total Reviews</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Rating</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Activity</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {loadingUsers ? <tr><td colSpan={5} className="px-6 py-10 text-center text-gray-500">Loading users...</td></tr> : users.length === 0 ? <tr><td colSpan={5} className="px-6 py-10 text-center text-gray-500">No users found.</td></tr> : users.map(user => (
+                      <tr key={user.user_id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap"><div className="flex items-center"><div className="h-10 w-10 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold">{user.user_name?.charAt(0) || 'U'}</div><div className="ml-4"><div className="text-sm font-medium text-gray-900">{user.user_name}</div><div className="text-sm text-gray-500">{user.user_email}</div></div></div></td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">{user.review_count}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center"><div className="flex items-center justify-center"><span className="text-sm text-gray-900 font-medium mr-1">{user.average_rating}</span><i className="ri-star-fill text-yellow-400 text-xs"></i></div></td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{user.last_review_date ? new Date(user.last_review_date).toLocaleDateString() : '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium"><button onClick={() => handleViewHistory(user)} className="text-blue-600 hover:text-blue-900 hover:bg-blue-50 px-3 py-1 rounded-md transition-colors">History</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
-
-            {/* Pagination Info */}
-            <div className="mt-4 text-center text-sm text-gray-600">
-              Showing {startIndex + 1} to {Math.min(endIndex, filteredReviews.length)} of {filteredReviews.length} reviews
-            </div>
           </div>
         </div>
-        
       </div>
+      {isModalOpen && selectedReview && <ConversationModal review={selectedReview} onClose={() => setIsModalOpen(false)} onReply={handleReply} />}
+      {historyModal.open && historyModal.user && <HistoryModal user={historyModal.user} reviews={historyModal.reviews} onClose={() => setHistoryModal({ ...historyModal, open: false })} onToggleAttended={handleToggleAttended} />}
     </div>
   );
 }

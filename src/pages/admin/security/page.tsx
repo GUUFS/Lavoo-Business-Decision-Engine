@@ -1,112 +1,86 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import axios from 'axios';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import { getAuthToken } from '../../../utils/auth';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+
+// Create axios instance with auth
+const api = axios.create({
+  baseURL: API_BASE,
+  headers: {
+    'Authorization': `Bearer ${getAuthToken()}`
+  }
+});
+
+// Add auth token to all requests
+api.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 export default function AdminSecurity() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showAdminDropdown, setShowAdminDropdown] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const itemsPerPage = 10;
 
-  const securityMetrics = {
-    threatLevel: 'Low',
-    blockedAttacks: 247,
-    failedLogins: 18,
-    suspiciousActivity: 5,
-    activeFirewallRules: 156,
-    lastSecurityScan: '2 hours ago'
-  };
+  // State for REAL data
+  const [securityMetrics, setSecurityMetrics] = useState({
+    threatLevel: 'Loading...',
+    blockedAttacks: 0,
+    failedLogins: 0,
+    suspiciousActivity: 0,
+    activeFirewallRules: 0,
+    lastSecurityScan: 'Loading...'
+  });
 
-  const securityEvents = [
-    {
-      id: 1,
-      type: 'failed_login',
-      severity: 'medium',
-      user: 'unknown@suspicious.com',
-      ip: '192.168.1.100',
-      location: 'Unknown',
-      description: 'Multiple failed login attempts detected',
-      time: '5 minutes ago',
-      status: 'blocked'
-    },
-    {
-      id: 2,
-      type: 'suspicious_activity',
-      severity: 'high',
-      user: 'john.doe@company.com',
-      ip: '10.0.0.45',
-      location: 'New York, US',
-      description: 'Unusual API access pattern detected',
-      time: '15 minutes ago',
-      status: 'investigating'
-    },
-    {
-      id: 3,
-      type: 'blocked_attack',
-      severity: 'high',
-      user: 'N/A',
-      ip: '203.0.113.0',
-      location: 'Unknown',
-      description: 'SQL injection attempt blocked',
-      time: '1 hour ago',
-      status: 'blocked'
-    },
-    {
-      id: 4,
-      type: 'password_change',
-      severity: 'low',
-      user: 'sarah.johnson@email.com',
-      ip: '172.16.0.10',
-      location: 'California, US',
-      description: 'Password changed successfully',
-      time: '2 hours ago',
-      status: 'completed'
-    },
-    {
-      id: 5,
-      type: 'admin_access',
-      severity: 'medium',
-      user: 'admin@company.com',
-      ip: '192.168.1.50',
-      location: 'Office Network',
-      description: 'Admin panel accessed',
-      time: '3 hours ago',
-      status: 'completed'
-    },
-    {
-      id: 6,
-      type: 'failed_login',
-      severity: 'high',
-      user: 'attacker@malicious.com',
-      ip: '198.51.100.42',
-      location: 'Unknown',
-      description: 'Brute force attack detected',
-      time: '4 hours ago',
-      status: 'blocked'
-    },
-    {
-      id: 7,
-      type: 'suspicious_activity',
-      severity: 'medium',
-      user: 'user@example.com',
-      ip: '192.0.2.15',
-      location: 'London, UK',
-      description: 'Unusual download pattern detected',
-      time: '5 hours ago',
-      status: 'investigating'
-    },
-    {
-      id: 8,
-      type: 'blocked_attack',
-      severity: 'high',
-      user: 'N/A',
-      ip: '203.0.113.99',
-      location: 'Unknown',
-      description: 'XSS attack attempt blocked',
-      time: '6 hours ago',
-      status: 'blocked'
-    }
-  ];
+  const [securityEvents, setSecurityEvents] = useState<any[]>([]);
+  const [firewallRules, setFirewallRules] = useState<any[]>([]);
+  const [vulnerabilityScans, setVulnerabilityScans] = useState<any[]>([]);
+
+  // Fetch all security data
+  useEffect(() => {
+    const fetchSecurityData = async () => {
+      try {
+        setLoading(true);
+
+        // Fetch metrics
+        const metricsRes = await api.get('/security/metrics');
+        setSecurityMetrics(metricsRes.data);
+
+        // Fetch security events
+        const eventsRes = await api.get('/security/events?limit=50');
+        setSecurityEvents(eventsRes.data.events || []);
+
+        // Fetch firewall rules
+        const rulesRes = await api.get('/security/firewall-rules');
+        setFirewallRules(rulesRes.data.rules || []);
+
+        // Fetch vulnerability scans
+        const scansRes = await api.get('/security/vulnerability-scans');
+        setVulnerabilityScans(scansRes.data.scans || []);
+
+        setLoading(false);
+      } catch (err: any) {
+        console.error('Failed to fetch security data:', err);
+        setError(err.response?.data?.error || 'Failed to load security data');
+        setLoading(false);
+      }
+    };
+
+    fetchSecurityData();
+
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchSecurityData, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Pagination calculations
   const totalPages = Math.ceil(securityEvents.length / itemsPerPage);
@@ -114,81 +88,8 @@ export default function AdminSecurity() {
   const endIndex = startIndex + itemsPerPage;
   const currentEvents = securityEvents.slice(startIndex, endIndex);
 
-  const firewallRules = [
-    {
-      id: 1,
-      name: 'Block Suspicious IPs',
-      type: 'IP Block',
-      status: 'active',
-      priority: 'high',
-      description: 'Block known malicious IP addresses',
-      created: '2024-01-15',
-      hits: 1247
-    },
-    {
-      id: 2,
-      name: 'Rate Limiting',
-      type: 'Rate Limit',
-      status: 'active',
-      priority: 'medium',
-      description: 'Limit API requests per minute',
-      created: '2024-01-20',
-      hits: 89
-    },
-    {
-      id: 3,
-      name: 'SQL Injection Protection',
-      type: 'WAF Rule',
-      status: 'active',
-      priority: 'high',
-      description: 'Detect and block SQL injection attempts',
-      created: '2024-01-10',
-      hits: 23
-    },
-    {
-      id: 4,
-      name: 'Geographic Restrictions',
-      type: 'Geo Block',
-      status: 'inactive',
-      priority: 'low',
-      description: 'Block access from specific countries',
-      created: '2024-02-01',
-      hits: 0
-    }
-  ];
-
-  const vulnerabilityScans = [
-    {
-      id: 1,
-      type: 'Full System Scan',
-      status: 'completed',
-      severity: 'low',
-      findings: 2,
-      date: '2024-02-26 08:00',
-      duration: '45 minutes'
-    },
-    {
-      id: 2,
-      type: 'Database Security Scan',
-      status: 'completed',
-      severity: 'medium',
-      findings: 1,
-      date: '2024-02-25 20:00',
-      duration: '23 minutes'
-    },
-    {
-      id: 3,
-      type: 'Web Application Scan',
-      status: 'in_progress',
-      severity: 'unknown',
-      findings: 0,
-      date: '2024-02-26 14:30',
-      duration: 'Running...'
-    }
-  ];
-
   const getSeverityColor = (severity: string) => {
-    switch (severity) {
+    switch (severity?.toLowerCase()) {
       case 'high': return 'bg-red-100 text-red-600';
       case 'medium': return 'bg-yellow-100 text-yellow-600';
       case 'low': return 'bg-green-100 text-green-600';
@@ -197,11 +98,12 @@ export default function AdminSecurity() {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'active': return 'bg-green-100 text-green-600';
       case 'blocked': return 'bg-red-100 text-red-600';
       case 'investigating': return 'bg-yellow-100 text-yellow-600';
       case 'completed': return 'bg-blue-100 text-blue-600';
+      case 'logged': return 'bg-gray-100 text-gray-600';
       case 'inactive': return 'bg-gray-100 text-gray-600';
       case 'in_progress': return 'bg-blue-100 text-blue-600';
       default: return 'bg-gray-100 text-gray-600';
@@ -209,23 +111,84 @@ export default function AdminSecurity() {
   };
 
   const getEventIcon = (type: string) => {
-    switch (type) {
+    switch (type?.toLowerCase()) {
       case 'failed_login': return 'ri-lock-line';
+      case 'login': return 'ri-login-box-line';
       case 'suspicious_activity': return 'ri-eye-line';
       case 'blocked_attack': return 'ri-shield-line';
+      case 'sql_injection': return 'ri-shield-cross-line';
+      case 'xss_attempt': return 'ri-shield-cross-line';
+      case 'brute_force': return 'ri-skull-line';
       case 'password_change': return 'ri-key-line';
       case 'admin_access': return 'ri-admin-line';
+      case 'blocked_ip': return 'ri-forbid-line';
       default: return 'ri-alert-line';
     }
   };
 
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+    if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
+
+    return date.toLocaleDateString();
+  };
+
+  const getThreatLevelColor = (level: string) => {
+    switch (level?.toLowerCase()) {
+      case 'high': return 'bg-red-100 text-red-600';
+      case 'medium': return 'bg-yellow-100 text-yellow-600';
+      case 'low': return 'bg-green-100 text-green-600';
+      default: return 'bg-gray-100 text-gray-600';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-orange-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading security dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && securityEvents.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <i className="ri-error-warning-line text-6xl text-red-600 mb-4"></i>
+          <p className="text-xl text-gray-900 mb-2">Failed to load security data</p>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebar 
-        isMobileMenuOpen={isMobileMenuOpen} 
-        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      <AdminSidebar
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
+        isCollapsed={false}
+        setIsCollapsed={() => { }}
       />
-      
+
       <div className="flex-1 ml-0 flex flex-col">
         {/* Admin Header */}
         <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
@@ -247,18 +210,18 @@ export default function AdminSecurity() {
                 <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
                   <i className="ri-user-line text-orange-600"></i>
                 </div>
-                <span className="font-medium">John Admin</span>
+                <span className="font-medium">Admin</span>
                 <i className="ri-arrow-down-s-line"></i>
               </button>
-              
+
               {showAdminDropdown && (
                 <>
-                  <div 
+                  <div
                     className="fixed inset-0 z-40"
                     onClick={() => setShowAdminDropdown(false)}
                   ></div>
                   <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-gray-200 py-2 z-50">
-                    <Link 
+                    <Link
                       to="/admin/profile"
                       className="w-full flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 transition-colors"
                       onClick={() => setShowAdminDropdown(false)}
@@ -280,9 +243,18 @@ export default function AdminSecurity() {
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
             {/* Header */}
-            <div className="mb-6 md:mb-8">
-              <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Security Center</h1>
-              <p className="text-gray-600">Monitor security threats, manage firewall rules, and track system vulnerabilities</p>
+            <div className="mb-6 md:mb-8 flex items-center justify-between">
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Security Center</h1>
+                <p className="text-gray-600">Real-time security monitoring and threat detection</p>
+              </div>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2"
+              >
+                <i className="ri-refresh-line"></i>
+                Refresh
+              </button>
             </div>
 
             {/* Security Overview */}
@@ -292,7 +264,9 @@ export default function AdminSecurity() {
                   <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
                     <i className="ri-shield-check-line text-xl text-green-600"></i>
                   </div>
-                  <span className="text-sm font-medium px-2 py-1 rounded-full bg-green-100 text-green-600">{securityMetrics.threatLevel}</span>
+                  <span className={`text-sm font-medium px-2 py-1 rounded-full ${getThreatLevelColor(securityMetrics.threatLevel)}`}>
+                    {securityMetrics.threatLevel}
+                  </span>
                 </div>
                 <h3 className="text-sm font-medium text-gray-600 mb-1">Threat Level</h3>
                 <p className="text-2xl font-bold text-gray-900">{securityMetrics.threatLevel}</p>
@@ -334,48 +308,54 @@ export default function AdminSecurity() {
 
             {/* Security Events */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 mb-8">
-              <div className="p-4 md:p-6 border-b border-gray-200">
+              <div className="p-4 md:p-6 border-b border-gray-200 flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">Recent Security Events</h3>
+                <span className="text-sm text-gray-500">{securityEvents.length} total events</span>
               </div>
               <div className="divide-y divide-gray-200">
-                {currentEvents.map((event) => (
-                  <div key={event.id} className="p-4 md:p-6 hover:bg-gray-50">
-                    <div className="flex items-start gap-4">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                        event.severity === 'high' ? 'bg-red-100' :
-                        event.severity === 'medium' ? 'bg-yellow-100' : 'bg-green-100'
-                      }`}>
-                        <i className={`${getEventIcon(event.type)} ${
-                          event.severity === 'high' ? 'text-red-600' :
-                          event.severity === 'medium' ? 'text-yellow-600' : 'text-green-600'
-                        }`}></i>
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSeverityColor(event.severity)}`}>
-                            {event.severity.charAt(0).toUpperCase() + event.severity.slice(1)}
-                          </span>
-                          <span className="text-sm font-medium text-gray-900">{event.user}</span>
-                          <span className="text-sm text-gray-500">{event.time}</span>
+                {currentEvents.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">
+                    <i className="ri-shield-check-line text-4xl mb-2"></i>
+                    <p>No security events recorded yet</p>
+                  </div>
+                ) : (
+                  currentEvents.map((event) => (
+                    <div key={event.id} className="p-4 md:p-6 hover:bg-gray-50">
+                      <div className="flex items-start gap-4">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${event.severity === 'high' ? 'bg-red-100' :
+                          event.severity === 'medium' ? 'bg-yellow-100' : 'bg-green-100'
+                          }`}>
+                          <i className={`${getEventIcon(event.type)} ${event.severity === 'high' ? 'text-red-600' :
+                            event.severity === 'medium' ? 'text-yellow-600' : 'text-green-600'
+                            }`}></i>
                         </div>
-                        <p className="text-gray-700 mb-2">{event.description}</p>
-                        <div className="flex items-center gap-4 text-sm text-gray-600">
-                          <span>IP: {event.ip}</span>
-                          <span>Location: {event.location}</span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(event.status)}`}>
-                            {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
-                          </span>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSeverityColor(event.severity)}`}>
+                              {event.severity?.charAt(0).toUpperCase() + event.severity?.slice(1)}
+                            </span>
+                            <span className="text-sm font-medium text-gray-900">{event.type?.replace(/_/g, ' ').toUpperCase()}</span>
+                            <span className="text-sm text-gray-500">{formatDate(event.created_at)}</span>
+                          </div>
+                          <p className="text-gray-700 mb-2">{event.description}</p>
+                          <div className="flex items-center gap-4 text-sm text-gray-600 flex-wrap">
+                            {event.ip_address && <span>IP: {event.ip_address}</span>}
+                            {event.location && <span>Location: {event.location}</span>}
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(event.status)}`}>
+                              {event.status?.charAt(0).toUpperCase() + event.status?.slice(1)}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
 
               {/* Pagination */}
               {totalPages > 1 && (
                 <div className="px-4 py-4 border-t border-gray-200">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-4">
                     <div className="text-sm text-gray-600">
                       Showing {startIndex + 1} to {Math.min(endIndex, securityEvents.length)} of {securityEvents.length} events
                     </div>
@@ -383,19 +363,18 @@ export default function AdminSecurity() {
                       <button
                         onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                         disabled={currentPage === 1}
-                        className="px-3 py-1 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        className="px-3 py-1 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Previous
                       </button>
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => i + 1).map((page) => (
                         <button
                           key={page}
                           onClick={() => setCurrentPage(page)}
-                          className={`px-3 py-1 rounded-lg text-sm font-medium whitespace-nowrap ${
-                            currentPage === page
-                              ? 'bg-red-600 text-white'
-                              : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                          }`}
+                          className={`px-3 py-1 rounded-lg text-sm font-medium ${currentPage === page
+                            ? 'bg-orange-600 text-white'
+                            : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                            }`}
                         >
                           {page}
                         </button>
@@ -403,7 +382,7 @@ export default function AdminSecurity() {
                       <button
                         onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                         disabled={currentPage === totalPages}
-                        className="px-3 py-1 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        className="px-3 py-1 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Next
                       </button>
@@ -421,23 +400,27 @@ export default function AdminSecurity() {
                   <h3 className="text-lg font-semibold text-gray-900">Firewall Rules</h3>
                 </div>
                 <div className="p-4 md:p-6">
-                  <div className="space-y-4">
-                    {firewallRules.map((rule) => (
-                      <div key={rule.id} className="border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-medium text-gray-900">{rule.name}</h4>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(rule.status)}`}>
-                            {rule.status.charAt(0).toUpperCase() + rule.status.slice(1)}
-                          </span>
+                  {firewallRules.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">No firewall rules configured</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {firewallRules.slice(0, 4).map((rule) => (
+                        <div key={rule.id} className="border border-gray-200 rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium text-gray-900">{rule.name}</h4>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(rule.status)}`}>
+                              {rule.status?.charAt(0).toUpperCase() + rule.status?.slice(1)}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-600 mb-2">{rule.description}</p>
+                          <div className="flex items-center justify-between text-xs text-gray-500">
+                            <span>{rule.type}</span>
+                            <span>{rule.hits} hits</span>
+                          </div>
                         </div>
-                        <p className="text-sm text-gray-600 mb-2">{rule.description}</p>
-                        <div className="flex items-center justify-between text-xs text-gray-500">
-                          <span>{rule.type}</span>
-                          <span>{rule.hits} hits</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -447,34 +430,39 @@ export default function AdminSecurity() {
                   <h3 className="text-lg font-semibold text-gray-900">Vulnerability Scans</h3>
                 </div>
                 <div className="p-4 md:p-6">
-                  <div className="space-y-4">
-                    {vulnerabilityScans.map((scan) => (
-                      <div key={scan.id} className="border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="font-medium text-gray-900">{scan.type}</h4>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(scan.status)}`}>
-                            {scan.status.replace('_', ' ').charAt(0).toUpperCase() + scan.status.replace('_', ' ').slice(1)}
-                          </span>
+                  {vulnerabilityScans.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">No scans performed yet</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {vulnerabilityScans.slice(0, 3).map((scan) => (
+                        <div key={scan.id} className="border border-gray-200 rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium text-gray-900">{scan.scan_type}</h4>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(scan.status)}`}>
+                              {scan.status?.replace('_', ' ').charAt(0).toUpperCase() + scan.status?.replace('_', ' ').slice(1)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-600">Findings: {scan.findings}</span>
+                            {scan.severity && (
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSeverityColor(scan.severity)}`}>
+                                {scan.severity.charAt(0).toUpperCase() + scan.severity.slice(1)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-gray-500 mt-2">
+                            <span>{formatDate(scan.started_at)}</span>
+                            <span>{scan.duration_seconds ? `${scan.duration_seconds}s` : 'Running...'}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-gray-600">Findings: {scan.findings}</span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSeverityColor(scan.severity)}`}>
-                            {scan.severity.charAt(0).toUpperCase() + scan.severity.slice(1)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs text-gray-500 mt-2">
-                          <span>{scan.date}</span>
-                          <span>{scan.duration}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );
