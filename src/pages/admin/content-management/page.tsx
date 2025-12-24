@@ -1,11 +1,18 @@
 
 import { useState } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import { toast } from 'react-toastify';
+import { createInsight, createAlert, createTrend } from '../../../api/admin-content';
 
 export default function AdminContentManagement() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('insights');
+
+  // Loading states for each form
+  const [isInsightSubmitting, setIsInsightSubmitting] = useState(false);
+  const [isAlertSubmitting, setIsAlertSubmitting] = useState(false);
+  const [isTrendSubmitting, setIsTrendSubmitting] = useState(false);
 
   // Form states for each tab
   const [insightForm, setInsightForm] = useState({
@@ -14,7 +21,8 @@ export default function AdminContentManagement() {
     priority: 'medium',
     whatChanged: '',
     whyItMatters: '',
-    actionToTake: ''
+    actionToTake: '',
+    url: ''
   });
 
   const [alertForm, setAlertForm] = useState({
@@ -24,7 +32,8 @@ export default function AdminContentManagement() {
     potentialReward: '',
     actionRequired: '',
     industry: '',
-    score: ''
+    score: '',
+    url: ''
   });
 
   const [trendForm, setTrendForm] = useState({
@@ -39,53 +48,140 @@ export default function AdminContentManagement() {
     actionItems: ''
   });
 
-  const handleInsightSubmit = (e: React.FormEvent) => {
+  const handleInsightSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Insight submitted:', insightForm);
-    // Reset form
-    setInsightForm({
-      title: '',
-      industry: '',
-      priority: 'medium',
-      whatChanged: '',
-      whyItMatters: '',
-      actionToTake: ''
-    });
-    alert('Insight uploaded successfully!');
+    setIsInsightSubmitting(true);
+
+    try {
+      // Get current date
+      const today = new Date().toISOString().split('T')[0];
+
+      // Map form fields to API schema
+      const insightData = {
+        title: insightForm.title,
+        category: insightForm.industry, // Using industry as category
+        read_time: '5 min', // Default read time
+        what_changed: insightForm.whatChanged,
+        why_it_matters: insightForm.whyItMatters,
+        action_to_take: insightForm.actionToTake,
+        source: 'Admin Upload',
+        date: today,
+        url: insightForm.url || null
+      };
+
+      await createInsight(insightData);
+
+      // Reset form
+      setInsightForm({
+        title: '',
+        industry: '',
+        priority: 'medium',
+        whatChanged: '',
+        whyItMatters: '',
+        actionToTake: '',
+        url: ''
+      });
+
+      toast.success('Insight created successfully!');
+    } catch (error: any) {
+      console.error('Failed to create insight:', error);
+      toast.error(error?.response?.data?.detail || 'Failed to create insight');
+    } finally {
+      setIsInsightSubmitting(false);
+    }
   };
 
-  const handleAlertSubmit = (e: React.FormEvent) => {
+  const handleAlertSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Alert submitted:', alertForm);
-    // Reset form
-    setAlertForm({
-      priority: 'medium',
-      whyActNow: '',
-      title: '',
-      potentialReward: '',
-      actionRequired: '',
-      industry: '',
-      score: ''
-    });
-    alert('Alert uploaded successfully!');
+    setIsAlertSubmitting(true);
+
+    try {
+      // Get current date
+      const today = new Date().toISOString().split('T')[0];
+
+      // Map form fields to API schema
+      const alertData = {
+        title: alertForm.title,
+        category: alertForm.industry, // Using industry as category
+        priority: alertForm.priority,
+        score: parseInt(alertForm.score) || 80,
+        time_remaining: '24 hours', // Default time remaining
+        why_act_now: alertForm.whyActNow,
+        potential_reward: alertForm.potentialReward,
+        action_required: alertForm.actionRequired,
+        source: 'Admin Upload',
+        date: today,
+        url: alertForm.url || null
+      };
+
+      await createAlert(alertData);
+
+      // Reset form
+      setAlertForm({
+        priority: 'medium',
+        whyActNow: '',
+        title: '',
+        potentialReward: '',
+        actionRequired: '',
+        industry: '',
+        score: '',
+        url: ''
+      });
+
+      toast.success('Alert created successfully!');
+    } catch (error: any) {
+      console.error('Failed to create alert:', error);
+      toast.error(error?.response?.data?.detail || 'Failed to create alert');
+    } finally {
+      setIsAlertSubmitting(false);
+    }
   };
 
-  const handleTrendSubmit = (e: React.FormEvent) => {
+  const handleTrendSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Trend submitted:', trendForm);
-    // Reset form
-    setTrendForm({
-      title: '',
-      industry: '',
-      nature: '',
-      score: '',
-      hashtags: '',
-      searchVolume: '',
-      opportunity: '',
-      description: '',
-      actionItems: ''
-    });
-    alert('Trend uploaded successfully!');
+    setIsTrendSubmitting(true);
+
+    try {
+      // Map form fields to API schema
+      const trendData = {
+        title: trendForm.title,
+        industry: trendForm.industry,
+        description: trendForm.description,
+        viral_score: parseInt(trendForm.score) || 80,
+        nature: trendForm.nature,
+        action_items: trendForm.actionItems,
+        engagement: '10000', // Default engagement
+        growth: '150%', // Default growth
+        search_volume: trendForm.searchVolume || '50000',
+        peak_time: new Date().toISOString().split('T')[0].substring(0, 7), // Format: YYYY-MM
+        competition: 'medium' as const,
+        opportunity: (trendForm.opportunity || 'high') as 'high' | 'medium' | 'low',
+        hashtags: trendForm.hashtags ? trendForm.hashtags.split(',').map(tag => tag.trim()) : [],
+        platforms: ['TikTok', 'Instagram', 'Twitter'] // Default platforms
+      };
+
+      await createTrend(trendData);
+
+      // Reset form
+      setTrendForm({
+        title: '',
+        industry: '',
+        nature: '',
+        score: '',
+        hashtags: '',
+        searchVolume: '',
+        opportunity: '',
+        description: '',
+        actionItems: ''
+      });
+
+      toast.success('Trend created successfully!');
+    } catch (error: any) {
+      console.error('Failed to create trend:', error);
+      toast.error(error?.response?.data?.detail || 'Failed to create trend');
+    } finally {
+      setIsTrendSubmitting(false);
+    }
   };
 
   const tabs = [
@@ -96,11 +192,11 @@ export default function AdminContentManagement() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebar 
-        isMobileMenuOpen={isMobileMenuOpen} 
-        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      <AdminSidebar
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
       />
-      
+
       <div className="flex-1 ml-0 flex flex-col">
         {/* Admin Header */}
         <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
@@ -113,7 +209,7 @@ export default function AdminContentManagement() {
             </button>
             <div className="flex-1"></div>
             <div className="relative">
-              <button 
+              <button
                 onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
                 className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
               >
@@ -123,7 +219,7 @@ export default function AdminContentManagement() {
                 <span className="font-medium text-gray-900">Admin User</span>
                 <i className="ri-arrow-down-s-line text-gray-400"></i>
               </button>
-              
+
               {/* Profile Dropdown */}
               {isProfileDropdownOpen && (
                 <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
@@ -259,6 +355,20 @@ export default function AdminContentManagement() {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Reference URL <span className="text-gray-500 text-xs">(Optional)</span>
+                      </label>
+                      <input
+                        type="url"
+                        value={insightForm.url}
+                        onChange={(e) => setInsightForm({...insightForm, url: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                        placeholder="https://example.com/article"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">Add a source URL for users to learn more</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
                         Action to Take
                       </label>
                       <textarea
@@ -274,9 +384,17 @@ export default function AdminContentManagement() {
                     <div className="flex justify-end">
                       <button
                         type="submit"
-                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium whitespace-nowrap"
+                        disabled={isInsightSubmitting}
+                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                       >
-                        Upload Insight
+                        {isInsightSubmitting ? (
+                          <>
+                            <i className="ri-loader-4-line animate-spin"></i>
+                            Uploading...
+                          </>
+                        ) : (
+                          'Upload Insight'
+                        )}
                       </button>
                     </div>
                   </form>
@@ -387,6 +505,20 @@ export default function AdminContentManagement() {
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Reference URL <span className="text-gray-500 text-xs">(Optional)</span>
+                      </label>
+                      <input
+                        type="url"
+                        value={alertForm.url}
+                        onChange={(e) => setAlertForm({...alertForm, url: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                        placeholder="https://example.com/alert-source"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">Add a source URL for users to verify the alert</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
                         Action Required
                       </label>
                       <textarea
@@ -402,9 +534,11 @@ export default function AdminContentManagement() {
                     <div className="flex justify-end">
                       <button
                         type="submit"
-                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium whitespace-nowrap"
+                        disabled={isAlertSubmitting}
+                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                       >
-                        Create Alert
+                        {isAlertSubmitting && <i className="ri-loader-line animate-spin"></i>}
+                        {isAlertSubmitting ? 'Creating...' : 'Create Alert'}
                       </button>
                     </div>
                   </form>
@@ -564,9 +698,17 @@ export default function AdminContentManagement() {
                     <div className="flex justify-end">
                       <button
                         type="submit"
-                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium whitespace-nowrap"
+                        disabled={isTrendSubmitting}
+                        className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                       >
-                        Upload Trend
+                        {isTrendSubmitting ? (
+                          <>
+                            <i className="ri-loader-4-line animate-spin"></i>
+                            Uploading...
+                          </>
+                        ) : (
+                          'Upload Trend'
+                        )}
                       </button>
                     </div>
                   </form>

@@ -2,7 +2,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Button from '../../../components/base/Button';
-import { analyzeBusinessGoal, getUserAnalyses } from '../../../api/business-analyzer';
+import { analyzeBusinessGoal } from '../../../api/business-analyzer';
+import { useAnalysisHistory } from '../../../api/analysis';
 import toast from 'react-hot-toast';
 
 export default function Analyze() {
@@ -13,26 +14,15 @@ export default function Analyze() {
   const [businessPrompt, setBusinessPrompt] = useState("")
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [previousAnalyses, setPreviousAnalyses] = useState<any[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(true);
 
-  // Fetch previous analyses on mount
-  useEffect(() => {
-    const fetchPreviousAnalyses = async () => {
-      try {
-        const analyses = await getUserAnalyses(4); // Get last 4 analyses
-        console.log('📊 Fetched analyses:', analyses);
-        console.log('📊 First analysis structure:', analyses[0]);
-        setPreviousAnalyses(analyses);
-      } catch (error) {
-        console.error('Error fetching previous analyses:', error);
-      } finally {
-        setLoadingHistory(false);
-      }
-    };
+  // Use TanStack Query hook for cached previous analyses
+  const {
+    data: analysisHistory = [],
+    isLoading: loadingHistory
+  } = useAnalysisHistory(4); // Get last 4 analyses
 
-    fetchPreviousAnalyses();
-  }, []);
+  // Transform cached data for UI
+  const previousAnalyses = analysisHistory.map((analysis: any) => analysis.raw || analysis);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
