@@ -5,6 +5,7 @@ import logger from '@/monitoring/logger';
 
 const PORT = process.env.PORT || 3000;
 
+
 // Start server
 app.listen(PORT, () => {
   logger.info(`🚀 Server started on port ${PORT}`);

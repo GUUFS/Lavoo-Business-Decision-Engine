@@ -14,7 +14,7 @@ SELECT
     u.name as user_name,
     u.email as user_email
 FROM security_events se
-LEFT JOIN users u ON se.user_id = u.id
+LEFT JOIN users u ON (se.user_id::text)::integer = u.id
 ORDER BY se.created_at DESC
 LIMIT 100;
 
@@ -39,7 +39,7 @@ SELECT
     us.last_activity,
     us.created_at
 FROM user_sessions us
-JOIN users u ON us.user_id = u.id
+JOIN users u ON (us.user_id::text)::integer = u.id
 WHERE us.is_active = true AND us.last_activity > NOW() - INTERVAL '24 hours'
 ORDER BY us.last_activity DESC;
 
@@ -61,6 +61,7 @@ CREATE OR REPLACE FUNCTION auto_block_attacking_ip()
 RETURNS TRIGGER AS $$
 DECLARE
     failed_count INTEGER;
+    attempt_email VARCHAR(255);
 BEGIN
     -- Only check for failed_login events
     IF NEW.type = 'failed_login' THEN
@@ -71,16 +72,23 @@ BEGIN
           AND type = 'failed_login'
           AND created_at > NOW() - INTERVAL '15 minutes';
           
-        -- If more than 5 failed attempts, block the IP
-        IF failed_count >= 5 THEN
-            INSERT INTO ip_blacklist (ip_address, reason, expires_at)
-            VALUES (NEW.ip_address, 'Brute force protection: Multiple failed logins', NOW() + INTERVAL '24 hours')
+        -- If more than 3 failed attempts, block the IP
+        IF failed_count >= 3 THEN
+            -- Get the email from the most recent failed login attempt
+            SELECT email INTO attempt_email
+            FROM failed_login_attempts
+            WHERE ip_address = NEW.ip_address
+            ORDER BY created_at DESC
+            LIMIT 1;
+            
+            INSERT INTO ip_blacklist (ip_address, reason, email, expires_at)
+            VALUES (NEW.ip_address, 'Brute force protection: Multiple failed logins', attempt_email, NOW() + INTERVAL '24 hours')
             ON CONFLICT (ip_address) DO UPDATE 
-            SET expires_at = NOW() + INTERVAL '24 hours', is_active = true;
+            SET expires_at = NOW() + INTERVAL '24 hours', is_active = true, email = EXCLUDED.email;
             
             -- Log the block event
-            INSERT INTO security_events (type, severity, description, ip_address)
-            VALUES ('ip_blocked', 'high', 'IP automatically blocked due to brute force', NEW.ip_address);
+            INSERT INTO security_events (type, severity, description, ip_address, status)
+            VALUES ('ip_blocked', 'high', 'IP automatically blocked due to brute force', NEW.ip_address, 'logged');
         END IF;
     END IF;
     RETURN NEW;

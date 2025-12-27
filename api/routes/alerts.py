@@ -189,6 +189,7 @@ def get_alert(alert_id: int, user_id: Optional[int] = None, db: Session = Depend
             "potential_reward": alert.potential_reward,
             "action_required": alert.action_required,
             "source": alert.source,
+            "url": alert.url or "",
             "date": alert.date,
             "total_views": alert.total_views,
             "total_shares": alert.total_shares,

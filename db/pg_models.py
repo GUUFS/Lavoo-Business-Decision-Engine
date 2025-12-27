@@ -89,6 +89,8 @@ class User(Base):
     # Admin and subscription
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    user_status = Column(String(20), server_default="active", nullable=False)
+    last_login = Column(DateTime(timezone=True), nullable=True)
     subscription_status = Column(String, default="Free")
     subscription_plan = Column(String, nullable=True)
 
@@ -876,6 +878,7 @@ class Alert(Base):
     potential_reward = Column(Text, nullable=False)
     action_required = Column(Text, nullable=False)
     source = Column(String, nullable=True)
+    url = Column(String(500), nullable=True)
     date = Column(String, nullable=False)
     total_views = Column(Integer, default=0)
     total_shares = Column(Integer, default=0)
@@ -984,6 +987,7 @@ class AlertResponse(BaseModel):
     potential_reward: str
     action_required: str
     source: Optional[str]
+    url: Optional[str] = None
     date: str
     total_views: int
     total_shares: int
@@ -1012,6 +1016,7 @@ class Insight(Base):
     read_time = Column(String)
     date = Column(String, nullable=False)
     source = Column(String)
+    url = Column(String(500), nullable=True)
     what_changed = Column(Text)
     why_it_matters = Column(Text)
     action_to_take = Column(Text)
@@ -1073,6 +1078,7 @@ class InsightItems(BaseModel):
     why_it_matters: str
     action_to_take: str
     source: Optional[str]
+    url: Optional[str] = None
     date: str
     total_views: int
     total_shares: int
@@ -1430,6 +1436,7 @@ class IPBlacklist(Base):
     id = Column(Integer, primary_key=True, index=True)
     ip_address = Column(INET, unique=True, nullable=False)
     reason = Column(Text, nullable=False)
+    email = Column(String(255), nullable=True)  # Email that attempted login from this IP
     is_active = Column(Boolean, default=True)
     blocked_at = Column(DateTime(timezone=True), server_default=func.now())
     blocked_by = Column(UUID(as_uuid=True))
@@ -1450,12 +1457,12 @@ class FailedLoginAttempt(Base):
     email = Column(String(255), nullable=False)
     ip_address = Column(INET, nullable=False)
     user_agent = Column(Text)
-    attempt_time = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         Index("idx_failed_logins_email", "email"),
         Index("idx_failed_logins_ip", "ip_address"),
-        Index("idx_failed_logins_time", attempt_time.desc()),
+        Index("idx_failed_logins_time", created_at.desc()),
     )
 
 
@@ -1467,6 +1474,7 @@ class FirewallRule(Base):
     name = Column(String(255), nullable=False)
     type = Column(String(50), nullable=False)
     status = Column(String(20), default="active")
+    is_active = Column(Boolean, default=True)
     priority = Column(String(20), nullable=False)
     description = Column(Text)
     rule_config = Column(JSONB, nullable=False)
@@ -1537,3 +1545,32 @@ class PasswordResetToken(Base):
         Index("idx_password_reset_token", "token"),
         Index("idx_password_reset_user", "user_id"),
     )
+
+
+# Security Metrics Summary View-Model
+class SecurityMetricsSummary(Base):
+    """
+    ORM Model for the security_metrics_summary view.
+    Used for retrieving aggregate security data.
+    """
+    __tablename__ = "security_metrics_summary"
+    
+    # Views don't have PKs, but SQLAlchemy requires one
+    # Using total_events_24h as a dummy PK since it's likely unique enough for reading
+    total_events_24h = Column(Integer, primary_key=True)
+    high_severity_events_24h = Column(Integer)
+    blocked_attacks_24h = Column(Integer)
+    failed_logins_24h = Column(Integer)
+    active_blacklisted_ips = Column(Integer)
+    active_firewall_rules = Column(Integer)
+
+
+class SecurityMetricsResponse(BaseModel):
+    threatLevel: str
+    blockedAttacks: int
+    failedLogins: int
+    suspiciousActivity: int
+    activeFirewallRules: int
+    lastSecurityScan: str
+
+    model_config = ConfigDict(from_attributes=True)

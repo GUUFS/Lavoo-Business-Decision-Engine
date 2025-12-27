@@ -6,32 +6,17 @@ from datetime import datetime, timedelta
 
 from db.pg_connections import get_db
 from db.pg_models import User, Subscriptions, BusinessAnalysis
-from api.routes.login import get_current_user
+from api.routes.dependencies import admin_required
 
 router = APIRouter(prefix="/api/control/users", tags=["admin-users"])
 
-def verify_admin(current_user):
-    """Verify user is admin"""
-    is_admin = False
-    if hasattr(current_user, 'is_admin'):
-        is_admin = current_user.is_admin
-    elif isinstance(current_user, dict):
-         user_data = current_user.get("user", current_user)
-         if isinstance(user_data, dict):
-             is_admin = user_data.get("is_admin", False)
-         elif hasattr(user_data, 'is_admin'):
-             is_admin = user_data.is_admin
-    
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
 
 @router.get("/stats")
 async def get_user_stats(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(admin_required),
     db: Session = Depends(get_db)
 ):
     """Get user statistics"""
-    verify_admin(current_user)
     
     try:
         total_users = db.query(func.count(User.id)).scalar()
@@ -70,11 +55,10 @@ async def get_user_stats(
 @router.get("/{user_id}")
 async def get_user_details(
     user_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(admin_required),
     db: Session = Depends(get_db)
 ):
     """Get full user details for modal"""
-    verify_admin(current_user)
     
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -122,11 +106,10 @@ async def get_users(
     page: int = 1,
     search: str = None,
     status: str = None, # 'active', 'inactive', 'suspended'
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(admin_required),
     db: Session = Depends(get_db)
 ):
     """Get users with pagination and filtering"""
-    verify_admin(current_user)
     
     offset = (page - 1) * limit
     
@@ -196,11 +179,10 @@ async def get_users(
 @router.patch("/{user_id}/status")
 async def update_user_status(
     user_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(admin_required),
     db: Session = Depends(get_db)
 ):
     """Toggle user active status (Deactivate/Activate)"""
-    verify_admin(current_user)
     
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

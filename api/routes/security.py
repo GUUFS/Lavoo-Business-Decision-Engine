@@ -5,6 +5,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from db.pg_connections import get_db
+from db.pg_models import SecurityMetricsSummary
 from api.routes.dependencies import admin_required
 from config.logging import get_logger
 
@@ -14,8 +15,8 @@ router = APIRouter(prefix="/security", tags=["security"])
 @router.get("/metrics")
 async def get_security_metrics(db: Session = Depends(get_db), _user=Depends(admin_required)):
     try:
-        # Get metrics from the view security_metrics_summary
-        result = db.execute(text("SELECT * FROM security_metrics_summary")).fetchone()
+        # Get metrics from the view security_metrics_summary using ORM
+        result = db.query(SecurityMetricsSummary).first()
         
         if not result:
             # Fallback for empty table
@@ -41,7 +42,7 @@ async def get_security_metrics(db: Session = Depends(get_db), _user=Depends(admi
         
         return {
             "threatLevel": threat_level,
-            "blockedAttacks": result.blocked_attacks_24h or 0,
+            "blockedAttacks": result.active_blacklisted_ips or 0,  # Show count of blacklisted IPs
             "failedLogins": result.failed_logins_24h or 0,
             "suspiciousActivity": high_events,
             "activeFirewallRules": result.active_firewall_rules or 0,
@@ -89,6 +90,7 @@ async def get_security_events(
         logger.error(f"Failed to get security events: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve security events")
 
+
 @router.get("/firewall-rules")
 async def get_firewall_rules(db: Session = Depends(get_db), _user=Depends(admin_required)):
     try:
@@ -107,6 +109,7 @@ async def get_firewall_rules(db: Session = Depends(get_db), _user=Depends(admin_
     except Exception as e:
         logger.error(f"Failed to get firewall rules: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve firewall rules")
+
 
 @router.get("/vulnerability-scans")
 async def get_vulnerability_scans(db: Session = Depends(get_db), _user=Depends(admin_required)):
@@ -144,6 +147,7 @@ async def get_top_attacking_ips(db: Session = Depends(get_db), _user=Depends(adm
     except Exception as e:
         logger.error(f"Failed to get top attacking IPs: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve attacking IPs")
+
 
 @router.post("/block-ip")
 async def block_ip(request: Request, db: Session = Depends(get_db), user=Depends(admin_required)):
