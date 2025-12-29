@@ -6,35 +6,18 @@ from datetime import datetime, timedelta
 
 from db.pg_connections import get_db
 from db.pg_models import User, Commission, Ticket, Review, Subscriptions, Payout
-from api.routes.control.users import get_current_user
+from api.routes.dependencies import admin_required
 
 router = APIRouter(prefix="/api/admin/dashboard", tags=["dashboard"])
 
 @router.get("/stats")
 async def get_dashboard_stats(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(admin_required),
     db: Session = Depends(get_db)
 ):
     """
     Get real-time system statistics for the admin dashboard.
     """
-    # Verify admin access
-    is_admin = False
-    if isinstance(current_user, dict):
-        if "user" in current_user:
-            user_data = current_user["user"]
-            if isinstance(user_data, dict):
-                is_admin = user_data.get("is_admin", False)
-            elif hasattr(user_data, 'is_admin'):
-                is_admin = user_data.is_admin
-        else:
-            is_admin = current_user.get("is_admin", False)
-    else:
-        is_admin = getattr(current_user, 'is_admin', False)
-
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Admin access required")
-
     try:
         # 1. Total Users (excluding deactivated if preferred, but usually Total means all)
         total_users = db.query(User).count()

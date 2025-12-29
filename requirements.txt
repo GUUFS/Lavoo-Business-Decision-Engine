@@ -25,3 +25,5 @@ winston
 logtail
 sentry
 nodemailer
+fastapi-cache2
+redis

@@ -1,8 +1,9 @@
 import os
 import secrets
+import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie, Header, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 
 from db.pg_connections import get_db
 from typing import Optional
-from db.pg_models import ShowUser, User, AuthResponse
+from db.pg_models import ShowUser, User, AuthResponse, FailedLoginAttempt, SecurityEvent, IPBlacklist
 
 bearer_scheme = HTTPBearer()
 router = APIRouter(prefix="", tags=["authenticate"])
@@ -246,43 +247,26 @@ def change_password(
     return {"message": "Password updated successfully"}
 
 
-def get_admin_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme), db: Session = Depends(get_db)):
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    except JWTError as e:
-        log_debug(f"DEBUG AUTH: JWT decode error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
-        log_debug(f"DEBUG AUTH: User not found for email: {email}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+def get_admin_user(
+    authorization: Optional[str] = Header(None), 
+    access_token_cookie: Optional[str] = Cookie(None), 
+    db: Session = Depends(get_db)
+):
+    """
+    Get current user and ensure they have admin privileges.
+    Supports both Authorization header and access_token cookie.
+    """
+    user = get_current_user(authorization, access_token_cookie, db)
     
     if not user.is_admin:
-        log_debug(f"DEBUG AUTH: User {email} is NOT an admin")
+        log_debug(f"DEBUG AUTH: User {user.email} is NOT an admin")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this resource.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    log_debug(f"DEBUG AUTH: Successfully authenticated admin: {email}")
+    log_debug(f"DEBUG AUTH: Successfully authenticated admin: {user.email}")
     return user
 
 
@@ -304,7 +288,7 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
 
 
 @router.post("/login", response_model=AuthResponse)
-def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
+def login(request: ShowUser, response: Response, fastapi_request: Request, db: Session = Depends(get_db)):
     """User login endpoint - returns JWT access token"""
     user = db.query(User).filter(User.email == request.email).first()
 
@@ -314,8 +298,56 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND, detail="Email has not been registered!"
         )
 
+    # Get client IP address
+    client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
+    
+    # Check if IP is blacklisted BEFORE any authentication
+    blacklist_check = db.query(IPBlacklist).filter(
+        IPBlacklist.ip_address == client_ip,
+        IPBlacklist.is_active == True
+    ).first()
+    
+    if blacklist_check:
+        log_debug(f"Blocked login attempt from blacklisted IP: {client_ip}")
+        raise HTTPException(
+            status_code=403,
+            detail="IP address blacklisted. Access denied."
+        )
+    
     # Verify password policy: Check password BEFORE is_active
     if not pwd_context.verify(request.password, user.password):
+        # Record failed login attempt
+        try:
+            # Get client IP
+            client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
+            user_agent = fastapi_request.headers.get("user-agent", "unknown")
+            
+            # Record in failed_login_attempts table
+            failed_attempt = FailedLoginAttempt(
+                email=request.email,  # Store email for blacklist tracking
+                ip_address=client_ip,
+                user_agent=user_agent
+            )
+            db.add(failed_attempt)
+            
+            # Create security event
+            # Convert integer user_id to UUID format for database compatibility
+            user_uuid = uuid.UUID(int=user.id) if isinstance(user.id, int) else user.id
+            
+            event = SecurityEvent(
+                type="failed_login",
+                severity="medium",
+                description=f"Failed login attempt for {user.email}",
+                ip_address=client_ip,
+                user_id=user_uuid,
+                status="logged"
+            )
+            db.add(event)
+            db.commit()
+        except Exception as e:
+            print(f"Error recording failed login: {e}")
+            db.rollback()
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Password is incorrect!"
         )
@@ -327,6 +359,7 @@ def login(request: ShowUser, response: Response, db: Session = Depends(get_db)):
 
     # Update Last Active
     user.updated_at = datetime.utcnow()
+    user.last_login = datetime.utcnow() # Update last_login field too
     db.commit()
 
     role = "admin" if user.is_admin else "user"

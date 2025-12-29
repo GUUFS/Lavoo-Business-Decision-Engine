@@ -45,13 +45,11 @@ class User(Base):
 
     # Admin and subscription
     is_admin = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    user_status = Column(String(20), server_default="active", nullable=False)
+    last_login = Column(DateTime(timezone=True), nullable=True)
     subscription_status = Column(String, default="Free")
     subscription_plan = Column(String, nullable=True)
-
-    # User management (admin features)
-    is_active = Column(Boolean, default=True)
-    user_status = Column(String(20), default="active")  # active, inactive, suspended
-    last_login = Column(DateTime(timezone=True), nullable=True)
 
     # Referral system (Clinton's feature)
     referral_code = Column(String, unique=True, index=True)
@@ -569,7 +567,7 @@ class Alert(Base):
     potential_reward = Column(Text, nullable=False)
     action_required = Column(Text, nullable=False)
     source = Column(String, nullable=True)
-    url = Column(String, nullable=True)
+    url = Column(String(500), nullable=True)
     date = Column(String, nullable=False)
     total_views = Column(Integer, default=0)
     total_shares = Column(Integer, default=0)
@@ -670,7 +668,7 @@ class AlertResponse(BaseModel):
     potential_reward: str
     action_required: str
     source: Optional[str]
-    url: Optional[str] = ""
+    url: Optional[str] = None
     date: str
     total_views: int
     total_shares: int
@@ -699,7 +697,7 @@ class Insight(Base):
     read_time = Column(String)
     date = Column(String, nullable=False)
     source = Column(String)
-    url = Column(String, nullable=True)
+    url = Column(String(500), nullable=True)
     what_changed = Column(Text)
     why_it_matters = Column(Text)
     action_to_take = Column(Text)
@@ -801,6 +799,7 @@ class InsightItems(BaseModel):
     why_it_matters: str
     action_to_take: str
     source: Optional[str]
+    url: Optional[str] = None
     date: str
     total_views: int
     total_shares: int
@@ -901,3 +900,211 @@ class TrendResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PayoutResponse(BaseModel):
+    id: int
+    amount: float
+    currency: str
+    status: str
+    payment_method: str
+    requested_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class ApproveCommissionsRequest(BaseModel):
+    payment_method: Optional[str] = None  # Optional filter by payment method   
+    amount: Optional[Decimal] = None
+
+
+'''Security Architecture Tables'''
+# User Session Table
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    ip_address = Column(INET, nullable=False)
+    user_agent = Column(Text)
+    is_active = Column(Boolean, default=True)
+    last_activity = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    revoked_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("idx_user_sessions_user_id", "user_id"),
+        Index("idx_user_sessions_active", "is_active"),
+    )
+
+
+# Security Event Table
+class SecurityEvent(Base):
+    __tablename__ = "security_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    type = Column(String(50), nullable=False)
+    severity = Column(String(20), nullable=False)
+    user_id = Column(UUID(as_uuid=True))
+    ip_address = Column(INET, nullable=False)
+    location = Column(String(255))
+    description = Column(Text, nullable=False)
+    status = Column(String(50), nullable=False)
+    details = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_security_events_type", "type"),
+        Index("idx_security_events_severity", "severity"),
+        Index("idx_security_events_ip", "ip_address"),
+        Index("idx_security_events_created", created_at.desc()),
+    )
+
+
+# IP Blacklist Table
+class IPBlacklist(Base):
+    __tablename__ = "ip_blacklist"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ip_address = Column(INET, unique=True, nullable=False)
+    reason = Column(Text, nullable=False)
+    email = Column(String(255), nullable=True)  # Email that attempted login from this IP
+    is_active = Column(Boolean, default=True)
+    blocked_at = Column(DateTime(timezone=True), server_default=func.now())
+    blocked_by = Column(UUID(as_uuid=True))
+    expires_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_ip_blacklist_ip", "ip_address"),
+        Index("idx_ip_blacklist_active", "is_active"),
+    )
+
+
+# Failed Login Attempt Table
+class FailedLoginAttempt(Base):
+    __tablename__ = "failed_login_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), nullable=False)
+    ip_address = Column(INET, nullable=False)
+    user_agent = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_failed_logins_email", "email"),
+        Index("idx_failed_logins_ip", "ip_address"),
+        Index("idx_failed_logins_time", created_at.desc()),
+    )
+
+
+# Firewall Rule Table
+class FirewallRule(Base):
+    __tablename__ = "firewall_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    type = Column(String(50), nullable=False)
+    status = Column(String(20), default="active")
+    is_active = Column(Boolean, default=True)
+    priority = Column(String(20), nullable=False)
+    description = Column(Text)
+    rule_config = Column(JSONB, nullable=False)
+    hits = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_firewall_rules_status", "status"),
+        Index("idx_firewall_rules_priority", "priority"),
+    )
+
+
+# Vulnerability Scan Table
+class VulnerabilityScan(Base):
+    __tablename__ = "vulnerability_scans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scan_type = Column(String(100), nullable=False)
+    status = Column(String(50), nullable=False)
+    severity = Column(String(20))
+    findings = Column(Integer, default=0)
+    scan_results = Column(JSONB)
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True))
+    duration_seconds = Column(Integer)
+
+    __table_args__ = (
+        Index("idx_vulnerability_scans_status", "status"),
+        Index("idx_vulnerability_scans_started", started_at.desc()),
+    )
+
+
+# Audit Log Table
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(50), nullable=False)
+    resource_id = Column(String(255))
+    ip_address = Column(INET, nullable=False)
+    user_agent = Column(Text)
+    changes = Column(JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_audit_log_user", "user_id"),
+        Index("idx_audit_log_action", "action"),
+        Index("idx_audit_log_created", created_at.desc()),
+    )
+
+
+# Password Reset Token Table
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    token = Column(String(255), unique=True, nullable=False)
+    ip_address = Column(INET, nullable=False)
+    used = Column(Boolean, default=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_password_reset_token", "token"),
+        Index("idx_password_reset_user", "user_id"),
+    )
+
+
+# Security Metrics Summary View-Model
+class SecurityMetricsSummary(Base):
+    """
+    ORM Model for the security_metrics_summary view.
+    Used for retrieving aggregate security data.
+    """
+    __tablename__ = "security_metrics_summary"
+    
+    # Views don't have PKs, but SQLAlchemy requires one
+    # Using total_events_24h as a dummy PK since it's likely unique enough for reading
+    total_events_24h = Column(Integer, primary_key=True)
+    high_severity_events_24h = Column(Integer)
+    blocked_attacks_24h = Column(Integer)
+    failed_logins_24h = Column(Integer)
+    active_blacklisted_ips = Column(Integer)
+    active_firewall_rules = Column(Integer)
+
+
+class SecurityMetricsResponse(BaseModel):
+    threatLevel: str
+    blockedAttacks: int
+    failedLogins: int
+    suspiciousActivity: int
+    activeFirewallRules: int
+    lastSecurityScan: str
+
+    model_config = ConfigDict(from_attributes=True)
+>>>>>>> 816ca52881d9c9cabdd4a76accfaa7ac71f7b3b3

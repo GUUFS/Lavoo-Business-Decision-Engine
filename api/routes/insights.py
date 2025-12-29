@@ -233,6 +233,7 @@ def get_insight(insight_id: int, current_user = Depends(get_current_user), db: S
         "why_it_matters": insight.why_it_matters,
         "action_to_take": insight.action_to_take,
         "source": insight.source,
+        "url": insight.url or "",
         "date": insight.date,
         "total_views": insight.total_views,
         "total_shares": insight.total_shares,

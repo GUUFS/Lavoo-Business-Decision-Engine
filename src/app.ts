@@ -64,8 +64,6 @@ app.use(ipBlacklist);
 app.use(sqlInjectionDetector);
 app.use(xssDetector);
 
-// Load blacklisted IPs on startup
-loadBlacklistedIPs();
 
 // ========================================
 // 6. MONITORING
@@ -100,7 +98,25 @@ app.use('/api/security', securityRoutes);
 // YOUR EXISTING ROUTES
 import usersRoutes from '@/pages/admin/security/routes/users';
 app.use('/api/users', usersRoutes);
-// ... etc
+
+// Add all protected routes from Python backend
+// Note: These routes are handled by the Python FastAPI backend
+// This is just documentation of what routes should be protected
+// Actual implementation is in the Python backend at /api/routes/
+
+// Protected routes (require authentication):
+// - /api/alerts (alerts.py)
+// - /api/insights (insights.py)
+// - /api/reviews (reviews.py)
+// - /api/customer-service (customer_service.py)
+// - /api/admin/* (admin.py)
+// - /api/earnings (earnings.py)
+// - /api/referrals (referrals.py)
+// - /api/analyzer (analyzer.py)
+// - /api/business-analyzer (business_analyzer.py)
+// - /api/ai-tools (ai_db.py)
+// - /api/firewall (firewall_scanner.py)
+// - /api/security (security.py)
 
 // ========================================
 // 10. ERROR HANDLERS (MUST BE LAST)

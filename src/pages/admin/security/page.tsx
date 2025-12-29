@@ -28,6 +28,7 @@ export default function AdminSecurity() {
   const [showAdminDropdown, setShowAdminDropdown] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const itemsPerPage = 10;
 
@@ -45,40 +46,54 @@ export default function AdminSecurity() {
   const [firewallRules, setFirewallRules] = useState<any[]>([]);
   const [vulnerabilityScans, setVulnerabilityScans] = useState<any[]>([]);
 
+  const handleLogout = () => {
+    // Clear all auth tokens
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    document.cookie = 'access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+    document.cookie = 'refresh_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+
+    // Redirect to login
+    window.location.href = '/login';
+  };
+
+  const fetchSecurityData = async (isInitial = false) => {
+    try {
+      if (isInitial) setLoading(true);
+      else setRefreshing(true);
+
+      // Fetch metrics
+      const metricsRes = await api.get('/security/metrics');
+      setSecurityMetrics(metricsRes.data);
+
+      // Fetch security events
+      const eventsRes = await api.get('/security/events?limit=50');
+      setSecurityEvents(eventsRes.data.events || []);
+
+      // Fetch firewall rules
+      const rulesRes = await api.get('/security/firewall-rules');
+      setFirewallRules(rulesRes.data.rules || []);
+
+      // Fetch vulnerability scans
+      const scansRes = await api.get('/security/vulnerability-scans');
+      setVulnerabilityScans(scansRes.data.scans || []);
+
+      setLoading(false);
+      setRefreshing(false);
+    } catch (err: any) {
+      console.error('Failed to fetch security data:', err);
+      setError(err.response?.data?.error || 'Failed to load security data');
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
   // Fetch all security data
   useEffect(() => {
-    const fetchSecurityData = async () => {
-      try {
-        setLoading(true);
-
-        // Fetch metrics
-        const metricsRes = await api.get('/security/metrics');
-        setSecurityMetrics(metricsRes.data);
-
-        // Fetch security events
-        const eventsRes = await api.get('/security/events?limit=50');
-        setSecurityEvents(eventsRes.data.events || []);
-
-        // Fetch firewall rules
-        const rulesRes = await api.get('/security/firewall-rules');
-        setFirewallRules(rulesRes.data.rules || []);
-
-        // Fetch vulnerability scans
-        const scansRes = await api.get('/security/vulnerability-scans');
-        setVulnerabilityScans(scansRes.data.scans || []);
-
-        setLoading(false);
-      } catch (err: any) {
-        console.error('Failed to fetch security data:', err);
-        setError(err.response?.data?.error || 'Failed to load security data');
-        setLoading(false);
-      }
-    };
-
-    fetchSecurityData();
+    fetchSecurityData(true);
 
     // Auto-refresh every 30 seconds
-    const interval = setInterval(fetchSecurityData, 30000);
+    const interval = setInterval(() => fetchSecurityData(false), 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -229,7 +244,10 @@ export default function AdminSecurity() {
                       <i className="ri-user-line mr-3"></i>
                       Profile
                     </Link>
-                    <button className="w-full flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 transition-colors">
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
                       <i className="ri-logout-box-line mr-3"></i>
                       Logout
                     </button>
@@ -249,11 +267,12 @@ export default function AdminSecurity() {
                 <p className="text-gray-600">Real-time security monitoring and threat detection</p>
               </div>
               <button
-                onClick={() => window.location.reload()}
-                className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2"
+                onClick={() => fetchSecurityData(false)}
+                disabled={refreshing}
+                className={`px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2 transition-all ${refreshing ? 'opacity-75 cursor-wait' : ''}`}
               >
-                <i className="ri-refresh-line"></i>
-                Refresh
+                <i className={`ri-refresh-line ${refreshing ? 'animate-spin' : ''}`}></i>
+                {refreshing ? 'Refreshing...' : 'Refresh'}
               </button>
             </div>
 

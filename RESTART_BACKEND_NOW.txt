@@ -1,0 +1,33 @@
+# CRITICAL: Backend Server Restart Required
+# ==========================================
+# 
+# The trigger function fix is in security_setup.sql but the OLD trigger
+# is still active in your PostgreSQL database.
+#
+# PostgreSQL does NOT automatically reload triggers when files change.
+# You MUST restart the backend server to apply the fix.
+#
+# HOW TO RESTART:
+# ===============
+# 1. Stop your backend server (Ctrl+C in the terminal where it's running)
+#
+# 2. Start it again:
+#    python start.py
+#    OR
+#    uvicorn api.main:app --reload
+#
+# 3. Watch the startup logs for:
+#    "✓ Security views and triggers initialized from security_setup.sql"
+#
+# WHAT HAPPENS ON RESTART:
+# =========================
+# - The old trigger function auto_block_attacking_ip() is dropped
+# - A new version WITH the status field is created
+# - Failed login attempts will now trigger IP blacklisting correctly
+#
+# VERIFY IT WORKED:
+# =================
+# After restart, try 5+ failed login attempts and check:
+#   SELECT * FROM ip_blacklist WHERE is_active=true;
+# 
+# You should see your IP automatically blacklisted!

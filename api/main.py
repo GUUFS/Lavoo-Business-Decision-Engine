@@ -47,8 +47,7 @@ logger = get_logger(__name__)
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
 from api.routes import analyzer, index, login, signup, admin, dependencies, business_analyzer, earnings
-from api.routes import customer_service, reviews, alerts, insights, referrals, security
-
+from api.routes import customer_service, reviews, alerts, insights, referrals, security, firewall_scanner
 from api.routes.control import revenue, users, dashboard, settings
 
 #  Payment routes
@@ -153,6 +152,27 @@ async def startup_event():
                 """))
                 
                 db.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS is_attended BOOLEAN DEFAULT FALSE"))
+                
+                # Security table fixes
+                try:
+                    # Rename attempt_time to created_at if it exists
+                    db.execute(text("""
+                        DO $$
+                        BEGIN
+                            IF EXISTS (SELECT 1 FROM information_schema.columns 
+                                       WHERE table_name='failed_login_attempts' AND column_name='attempt_time') THEN
+                                ALTER TABLE failed_login_attempts RENAME COLUMN attempt_time TO created_at;
+                            END IF;
+                        END $$;
+                    """))
+                except Exception as e:
+                    logger.warning(f"Failed to rename attempt_time: {e}")
+
+                try:
+                    # Add is_active to firewall_rules if it doesn't exist
+                    db.execute(text("ALTER TABLE firewall_rules ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+                except Exception as e:
+                    logger.warning(f"Failed to add is_active to firewall_rules: {e}")
             
             except Exception as e:
                 # If batch fails (e.g. SQLite doesn't support multiple ADD COLUMN), fall back to individual or log
@@ -168,6 +188,72 @@ async def startup_event():
 
         # Create admin user
         await create_admin_user(SessionLocal())
+
+        # Schema migrations
+        logger.info("Running schema migrations...")
+        
+        # Add email column to ip_blacklist if it doesn't exist
+        db = SessionLocal() # Create a new session for this migration
+        try:
+            db.execute(text("""
+                ALTER TABLE ip_blacklist 
+                ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+            """))
+            db.commit()
+            logger.info("✓ Added email column to ip_blacklist table")
+        except Exception as e:
+            logger.warning(f"Email column migration: {e}")
+            db.rollback()
+        finally:
+            db.close() # Close the session
+
+        # Execute security setup SQL
+        try:
+            # BASE_DIR is defined below, but we can use it here if we define it earlier
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            sql_file = os.path.join(project_root, "db", "security_setup.sql")
+            if os.path.exists(sql_file):
+                with open(sql_file, "r") as f:
+                    sql_content = f.read()
+                
+                db = SessionLocal()
+                try:
+                    from sqlalchemy import text
+                    
+                    # First, drop security_metrics_summary if it exists as a table (not a view)
+                    # This allows us to recreate it as a view
+                    try:
+                        db.execute(text("DROP TABLE IF EXISTS security_metrics_summary CASCADE"))
+                        db.commit()
+                        logger.info("Dropped existing security_metrics_summary table if present")
+                    except Exception as drop_error:
+                        logger.debug(f"No table to drop: {drop_error}")
+                        db.rollback()
+                    
+                    # Execute the entire SQL file as one block to preserve function definitions
+                    # PostgreSQL can handle multiple statements in one execute call
+                    db.execute(text(sql_content))
+                    db.commit()
+                    logger.info("✓ Security views and triggers initialized from security_setup.sql")
+                    
+                    # Initialize firewall rules
+                    try:
+                        from api.security.firewall import initialize_default_firewall_rules, firewall_manager
+                        initialize_default_firewall_rules(db)
+                        firewall_manager.load_rules(db)
+                        logger.info("✓ Firewall rules initialized")
+                    except Exception as fw_error:
+                        logger.warning(f"Firewall initialization: {fw_error}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to execute security setup SQL: {e}")
+                    db.rollback()
+                finally:
+                    db.close()
+            else:
+                logger.warning(f"security_setup.sql not found at {sql_file}")
+        except Exception as e:
+            logger.error(f"Error during security SQL initialization: {e}")
 
         # Initialize Redis/in-memory cache
         await init_cache()
@@ -226,6 +312,7 @@ app.include_router(revenue.router)
 app.include_router(settings.router) # Register settings router
 app.include_router(stripe_connect.router)
 app.include_router(security.router, prefix="/api")
+app.include_router(firewall_scanner.router, prefix="/api")  # Firewall and vulnerability scanner
 app.include_router(users.router)
 app.include_router(dashboard.router)
 

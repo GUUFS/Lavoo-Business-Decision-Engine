@@ -4,9 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, desc
 from db.pg_connections import get_db
 from db.pg_models import (
-    User, Insight, Alert, Trend, BusinessAnalysis,
-    InsightCreate, AlertCreate, TrendCreate,
-    TrendResponse
+    User, Insight, Alert, BusinessAnalysis,
+    InsightCreate, AlertCreate
 )
 from api.routes.dependencies import admin_required
 from typing import Optional, List
@@ -108,7 +107,7 @@ def create_alert(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-
+'''
 @router.post("/content/trends", response_model=dict)
 def create_trend(
     trend_data: TrendCreate,
@@ -153,7 +152,7 @@ def create_trend(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
+'''
 
 @router.get("/content/insights")
 def get_admin_insights(
