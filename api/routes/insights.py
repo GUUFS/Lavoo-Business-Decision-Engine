@@ -18,21 +18,20 @@ router = APIRouter(prefix="/api", tags=["insights"])
 # Get current user (simplified - implement your auth)
 @router.get("/users/person")
 def get_current_user_route(current_user=Depends(get_current_user)):
-    user = current_user["user"]  # extract actual user object
-    if not user:
+    if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return {
-        "id": user.id,
-        "email": user.email,
-        "subscription_status": user.subscription_status,
-        "total_chops": user.total_chops,
-        "alert_reading_chops": user.alert_reading_chops,
-        "alert_sharing_chops": user.alert_sharing_chops,
-        "insight_reading_chops": user.insight_reading_chops,
-        "insight_sharing_chops": user.insight_sharing_chops,
-        "referral_chops": user.referral_chops,
-        "referral_count": user.referral_count,
-        "referral_code": user.referral_code
+        "id": current_user.id,
+        "email": current_user.email,
+        "subscription_status": current_user.subscription_status,
+        "total_chops": current_user.total_chops,
+        "alert_reading_chops": current_user.alert_reading_chops,
+        "alert_sharing_chops": current_user.alert_sharing_chops,
+        "insight_reading_chops": current_user.insight_reading_chops,
+        "insight_sharing_chops": current_user.insight_sharing_chops,
+        "referral_chops": current_user.referral_chops,
+        "referral_count": current_user.referral_count,
+        "referral_code": current_user.referral_code
     }
 
 @router.get("/user/stats")
@@ -41,10 +40,10 @@ def get_user_stats(
     db: Session = Depends(get_db)
 ):
     """Get user statistics including chops breakdown"""
-    user = current_user["user"]
-
-    if not user:
+    if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    user = current_user
 
     # Get total insights
     total_insights = db.query(Insight).filter(Insight.is_active == True).count()
@@ -114,7 +113,10 @@ async def get_insights(
 ):
     """Get paginated insights with user-specific data"""
     try:
-        user = current_user["user"]
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        user = current_user
 
         # Try to get from cache first (5 minute TTL for insights)
         cache_key = f"insights:list:{user.id}:{page}:{limit}"
@@ -200,7 +202,7 @@ async def get_insights(
 @router.get("/insights/{insight_id}", response_model=InsightResponse)
 def get_insight(insight_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get a specific insight"""
-    user = current_user["user"]
+    user = current_user
 
     insight = db.query(Insight).filter(Insight.id == insight_id).first()
     if not insight:
@@ -294,7 +296,7 @@ def get_user_insight_stats(user_id: int, db: Session = Depends(get_db)):
 @router.post("/insights/view")
 def view_insight( request: ViewInsightRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     # Get user and insight
-    user = current_user["user"]
+    user = current_user
     insight = db.query(Insight).filter(Insight.id == request.insight_id).first()
 
     if not user:
@@ -379,7 +381,7 @@ def view_insight( request: ViewInsightRequest, current_user = Depends(get_curren
 @router.post("/insights/share")
 def share_insight( request: ShareInsightRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     # Get user and alert
-    user = current_user["user"]
+    user = current_user
     insight = db.query(Insight).filter(Insight.id == request.insight_id).first()
 
     if not user:
@@ -467,7 +469,7 @@ def pin_insight(
     db: Session = Depends(get_db)
 ):
     """Pin or unpin an insight"""
-    user = current_user["user"]
+    user = current_user
 
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")

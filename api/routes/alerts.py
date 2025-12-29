@@ -21,7 +21,7 @@ def is_pro_user(subscription_status: str) -> bool:
 # API Endpoints
 @router.get("/users/me")
 def get_current_user_route(current_user=Depends(get_current_user)):
-    user = current_user["user"]  # extract actual user object
+    user = current_user  # extract actual user object
     return {
         "id": user.id,
         "email": user.email,
@@ -95,7 +95,7 @@ async def get_alerts(
     """Get all alerts with optional filtering and user interaction data"""
     # Use authenticated user's ID if not provided
     if not user_id:
-        user_id = current_user["user"].id
+        user_id = current_user.id
 
     # Try to get from cache first (2 minute TTL)
     cache_key = f"alerts:list:{user_id}:{category or 'all'}:{priority or 'all'}:{skip}:{limit}"
@@ -217,7 +217,7 @@ def get_alert(alert_id: int, user_id: Optional[int] = None, db: Session = Depend
 async def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """Mark alert as viewed and award chops if first time"""
     # Get user and alert
-    user = current_user["user"]
+    user = current_user
     alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
 
     if not user:
@@ -318,7 +318,7 @@ async def view_alert(request: ViewAlertRequest, current_user = Depends(get_curre
 def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """Mark alert as shared and award chops if first time"""
     # Get user and alert
-    user = current_user["user"]
+    user = current_user
     alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
 
     if not user:
@@ -411,7 +411,7 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
 @router.get("/api/users/{user_id}/alerts/stats")
 def get_user_alert_stats(user_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
 
-    user = current_user["user"]
+    user = current_user
 
     if user.id != user_id:
         raise HTTPException(status_code=403, detail="Unauthorized")
@@ -459,7 +459,7 @@ def pin_alert(
     db: Session = Depends(get_db)
 ):
     """Pin or unpin an alert"""
-    user = current_user["user"]
+    user = current_user
 
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")

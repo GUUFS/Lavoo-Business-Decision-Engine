@@ -5,7 +5,8 @@ This file contains all ORM models for the application.
 """
 
 from pydantic import BaseModel, ConfigDict, EmailStr
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL, Enum
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL, Enum, Numeric, Index
+from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.sql.sqltypes import VARCHAR
@@ -55,6 +56,13 @@ class User(Base):
     referral_code = Column(String, unique=True, index=True)
     referrer_code = Column(String, nullable=True)
 
+    # User profile fields
+    department = Column(String(100), nullable=True)
+    location = Column(String(100), nullable=True)
+    bio = Column(Text, nullable=True)
+    two_factor_enabled = Column(Boolean, default=False)
+    email_notifications = Column(Boolean, default=True)
+
     # Relationships
     subscriptions = relationship("Subscriptions", back_populates="user")
     tickets = relationship("Ticket", back_populates="user")
@@ -64,6 +72,10 @@ class User(Base):
     pinned_alerts = relationship("UserPinnedAlert", back_populates="user")
     referrals = relationship("Referral", foreign_keys="Referral.referrer_id", back_populates="referrer")
     referred_by = relationship("Referral", foreign_keys="Referral.referred_user_id", back_populates="referred_user")
+    commissions_earned = relationship("Commission", foreign_keys="Commission.user_id", back_populates="user")
+    payouts = relationship("Payout", back_populates="user")
+    payout_account = relationship("PayoutAccount", back_populates="user", uselist=False)
+    commission_summaries = relationship("CommissionSummary", back_populates="user")
 
 class AITool(Base):
     """
@@ -331,8 +343,13 @@ class AuthResponse(BaseModel):
     role: str
     subscription_status: str | None = None
     subscription_plan: str | None = None
-    referral_code: Optional[str] = None
     referral_code: str | None = None
+    department: str | None = None
+    location: str | None = None
+    bio: str | None = None
+    two_factor_enabled: bool | None = None
+    email_notifications: bool | None = None
+    created_at: datetime | None = None
 
 
 # Paypal payment gateway
@@ -366,6 +383,7 @@ class Subscriptions(Base):
     end_date = Column(DateTime(timezone=True), nullable=False)
 
     user = relationship("User", back_populates="subscriptions")
+    commission = relationship("Commission", back_populates="subscription", uselist=False)
 
 
 # Models for the stripe payment gateway
@@ -608,6 +626,117 @@ class Referral(Base):
 
     referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
     referred_user = relationship("User",foreign_keys=[referred_user_id], back_populates="referred_by")
+
+
+'''Commissions Table'''
+class Commission(Base):
+    __tablename__ = "commissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    referred_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    subscription_id = Column(Integer, ForeignKey("subscriptions.id"), nullable=True)
+    amount = Column(Numeric(precision=10, scale=2), nullable=False)
+    original_amount = Column(Numeric(precision=10, scale=2), nullable=True)
+    currency = Column(String(10), nullable=True)
+    commission_rate = Column(Numeric(precision=5, scale=2), nullable=True)
+    status = Column(String, nullable=False)  # pending, processing, paid, failed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=False)
+    payout_id = Column(Integer, nullable=True)
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+    referred_user = relationship("User", foreign_keys=[referred_user_id])
+    subscription = relationship("Subscriptions", foreign_keys=[subscription_id])
+
+
+'''Payouts Table'''
+class Payout(Base):
+    __tablename__ = "payouts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amount = Column(Numeric(precision=10, scale=2), nullable=False)
+    currency = Column(String(10), default="USD")
+    status = Column(String, nullable=False)  # pending, processing, completed, failed
+    provider = Column(String(50), nullable=True)  # stripe, paypal, etc.
+    provider_payout_id = Column(String(255), nullable=True)
+    provider_response = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+
+'''Payout Account Table'''
+class PayoutAccount(Base):
+    __tablename__ = "payout_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    payment_method = Column(String(50), nullable=False)  # stripe, flutterwave, paypal
+
+    # Stripe fields
+    stripe_account_id = Column(String(255), nullable=True)
+
+    # Flutterwave/Bank fields
+    bank_name = Column(String(255), nullable=True)
+    account_number = Column(String(100), nullable=True)
+    account_name = Column(String(255), nullable=True)
+
+    # PayPal fields
+    paypal_email = Column(String(255), nullable=True)
+
+    # Legacy fields (for backward compatibility)
+    provider = Column(String(50), nullable=True)
+    account_id = Column(String(255), nullable=True)
+    account_details = Column(JSON, nullable=True)
+
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class CommissionSummary(Base):
+    """
+    Monthly summary of commissions per user (for reporting and analytics)
+    """
+    __tablename__ = "commission_summaries"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    
+    # Period
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+    
+    # Summary metrics
+    total_commissions = Column(Numeric(10, 2), default=0.00)
+    paid_commissions = Column(Numeric(10, 2), default=0.00)
+    pending_commissions = Column(Numeric(10, 2), default=0.00)
+    commission_count = Column(Integer, default=0)
+    
+    # Currency
+    currency = Column(String(10), nullable=False, default='USD')
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationship
+    user = relationship("User", back_populates="commission_summaries")
+    
+    # Unique constraint and indexes
+    __table_args__ = (
+        Index('idx_commission_summary_user_period', 'user_id', 'year', 'month', unique=True),
+    )
+
 
 class ReferralResponse(BaseModel):
     id: int
@@ -914,9 +1043,38 @@ class PayoutResponse(BaseModel):
         from_attributes = True
 
 
+'''Commission and Payout Pydantic Models'''
 class ApproveCommissionsRequest(BaseModel):
-    payment_method: Optional[str] = None  # Optional filter by payment method   
-    amount: Optional[Decimal] = None
+    """Request model for approving commissions"""
+    commission_ids: List[int]
+    
+    class Config:
+        from_attributes = True
+
+
+class CommissionResponse(BaseModel):
+    id: int
+    amount: float
+    currency: str
+    status: str
+    created_at: datetime
+    referred_user_id: int
+    subscription_id: int
+    
+    class Config:
+        from_attributes = True
+
+
+class CommissionSummary(BaseModel):
+    month: str
+    revenue: float
+    transactions: int
+
+
+class PayoutAccountCreate(BaseModel):
+    provider: str  # stripe, paypal, bank_transfer
+    account_id: Optional[str] = None
+    account_details: Optional[dict] = None
 
 
 '''Security Architecture Tables'''
@@ -1107,4 +1265,111 @@ class SecurityMetricsResponse(BaseModel):
     lastSecurityScan: str
 
     model_config = ConfigDict(from_attributes=True)
->>>>>>> 816ca52881d9c9cabdd4a76accfaa7ac71f7b3b3
+
+
+class CommissionResponse(BaseModel):
+    """Response model for commission data"""
+    id: int
+    user_id: int
+    referred_user_id: Optional[int]
+    subscription_id: Optional[int]
+    amount: float
+    currency: Optional[str]
+    status: str
+    created_at: datetime
+    approved_at: Optional[datetime]
+    paid_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PayoutResponse(BaseModel):
+    """Response model for payout data"""
+    id: int
+    user_id: int
+    amount: float
+    currency: str
+    status: str
+    provider: Optional[str]
+    provider_payout_id: Optional[str]
+    created_at: datetime
+    processed_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class CommissionSummary(BaseModel):
+    """Summary model for commission statistics"""
+    total_commissions: float
+    paid_commissions: float
+    pending_commissions: float
+    commission_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class PayoutAccountCreate(BaseModel):
+    """Request model for creating/updating payout account"""
+    payment_method: str  # stripe, flutterwave, paypal
+    stripe_account_id: Optional[str] = None
+    bank_name: Optional[str] = None
+    account_number: Optional[str] = None
+    account_name: Optional[str] = None
+    paypal_email: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PayoutRequest(BaseModel):
+    """Request model for requesting a payout"""
+    amount: float
+    payment_method: str  # stripe, flutterwave, paypal
+
+    class Config:
+        from_attributes = True
+
+
+'''System Settings Table'''
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # General
+    site_name = Column(String(255), default="AI Business Analyst")
+    support_email = Column(String(255), default="support@aitugo.com")
+    default_language = Column(String(10), default="en")
+    timezone = Column(String(50), default="UTC")
+
+    # Limits
+    max_analyses_basic = Column(Integer, default=5)
+    max_analyses_pro = Column(Integer, default=50)
+    max_analyses_premium = Column(Integer, default=500)
+
+    # AI Settings
+    primary_ai_model = Column(String(100), default="gpt-4")
+    analysis_timeout = Column(Integer, default=120)  # seconds
+    max_tokens = Column(Integer, default=2000)
+    temperature = Column(Float, default=0.7)
+    enable_predictive_analytics = Column(Boolean, default=True)
+    generate_recommendations = Column(Boolean, default=True)
+    include_confidence_scores = Column(Boolean, default=True)
+    enable_experimental_features = Column(Boolean, default=False)
+
+    # Security
+    require_mfa_admin = Column(Boolean, default=False)
+    force_password_reset_90 = Column(Boolean, default=False)
+    lock_accounts_after_failed_attempts = Column(Boolean, default=True)
+    data_retention_days = Column(Integer, default=90)
+    backup_frequency = Column(String(50), default="daily")
+
+    # Billing
+    monthly_price = Column(Float, default=29.99)
+    yearly_price = Column(Float, default=299.99)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

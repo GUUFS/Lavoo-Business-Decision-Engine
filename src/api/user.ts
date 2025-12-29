@@ -24,7 +24,7 @@ export const useCurrentUser = () => {
       if (!token) return null; // Prevent 401 if not logged in
 
       try {
-        const res = await axios.get("http://localhost:8000/me", {
+        const res = await axios.get("http://localhost:8000/api/me", {
           withCredentials: true,
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
@@ -33,12 +33,12 @@ export const useCurrentUser = () => {
         if (err.response?.status === 401) {
           try {
             await axios.post(
-              "http://localhost:8000/refresh",
+              "http://localhost:8000/api/refresh",
               {},
               { withCredentials: true } // send refresh_token cookie
             );
 
-            const retryRes = await axios.get("http://localhost:8000/me", {
+            const retryRes = await axios.get("http://localhost:8000/api/me", {
               withCredentials: true,
               headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
