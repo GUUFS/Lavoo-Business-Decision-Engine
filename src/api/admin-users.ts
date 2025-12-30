@@ -6,47 +6,71 @@ import { instance } from "../lib/axios";
 
 // ==================== TYPE DEFINITIONS ====================
 
-export interface UserItem {
+export interface User {
   id: number;
   name: string;
   email: string;
   plan: string;
-  status: string;
-  isAdmin: boolean;
+  status: 'active' | 'suspended' | 'inactive';
   joinDate: string;
   lastActive: string;
   analyses: number;
-  totalChops: number;
   avatar: string;
+}
+
+export interface UserDetails extends User {
+  subscription_status: string;
+  subscription_plan: string;
+  total_chops: number;
+  referral_chops: number;
+  alert_reading_chops: number;
+  insight_reading_chops: number;
+  referral_count: number;
+  referrals: string[];
+  insight_sharing_chops: number;
+  alert_sharing_chops: number;
+  days_remaining: number;
+  referral_code: string;
+  is_active: boolean;
 }
 
 export interface UserStats {
   total: number;
-  active: number;
+  pro: number;
+  free: number;
+  deactivated: number;
   inactive: number;
+  active?: number;
 }
 
 export interface GetUsersResponse {
-  users: UserItem[];
+  users: User[];
   total: number;
-  stats: UserStats;
-  pagination: {
-    currentPage: number;
-    totalPages: number;
-    hasNext: boolean;
-    hasPrev: boolean;
-  };
+  totalPages: number;
 }
 
-export interface UserDetailResponse extends UserItem {
-  referralCount: number;
-}
+// ==================== API HOOKS ====================
 
-// ==================== API FUNCTIONS ====================
+/**
+ * Hook to fetch user stats
+ * Cached for 2 minutes
+ */
+export const useUserStats = () => {
+  return useQuery({
+    queryKey: ["admin", "users", "stats"],
+    queryFn: async (): Promise<UserStats> => {
+      const response = await instance.get<UserStats>("/api/control/users/stats");
+      return response.data;
+    },
+    staleTime: 2 * 60 * 1000, // 2 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    refetchOnWindowFocus: true,
+  });
+};
 
 /**
  * Get paginated users with filters (admin only)
- * Hook with 3-minute cache for user management data
+ * Hook with 2-minute cache for user management data
  */
 export const useUsers = (params: {
   page?: number;
@@ -57,100 +81,59 @@ export const useUsers = (params: {
   const { page = 1, limit = 10, status = "all", search = "" } = params;
 
   return useQuery({
-    queryKey: ["admin", "users", page, limit, status, search],
+    queryKey: ["admin", "users", "list", page, limit, status, search],
     queryFn: async (): Promise<GetUsersResponse> => {
+      const queryParams = new URLSearchParams({
+        page: page.toString(),
+        limit: limit.toString(),
+        search,
+        status
+      });
       const response = await instance.get<GetUsersResponse>(
-        `/admin/users?page=${page}&limit=${limit}&status=${status}&search=${encodeURIComponent(search)}`
+        `/api/control/users?${queryParams}`
       );
       return response.data;
     },
-    // 3-minute cache for user data (changes moderately)
-    staleTime: 3 * 60 * 1000, // 3 minutes
+    staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes
+    refetchOnWindowFocus: true,
   });
 };
 
 /**
- * Legacy function - kept for backward compatibility
- * @deprecated Use useUsers hook instead
- */
-export const getUsers = async (params: {
-  page?: number;
-  limit?: number;
-  status?: string;
-  search?: string;
-}): Promise<GetUsersResponse> => {
-  const { page = 1, limit = 10, status = "all", search = "" } = params;
-
-  const response = await instance.get<GetUsersResponse>(
-    `/admin/users?page=${page}&limit=${limit}&status=${status}&search=${encodeURIComponent(search)}`
-  );
-  return response.data;
-};
-
-/**
  * Get detailed user information (admin only)
- * Hook with 5-minute cache for user details
+ * Hook with 3-minute cache for user details
  */
-export const useUserDetail = (userId: number) => {
+export const useUserDetail = (userId: number | null) => {
   return useQuery({
     queryKey: ["admin", "user-detail", userId],
-    queryFn: async (): Promise<UserDetailResponse> => {
-      const response = await instance.get<UserDetailResponse>(`/admin/users/${userId}`);
+    queryFn: async (): Promise<UserDetails> => {
+      const response = await instance.get<UserDetails>(`/api/control/users/${userId}`);
       return response.data;
     },
-    // 5-minute cache for user details (rarely changes)
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 15 * 60 * 1000, // 15 minutes
+    staleTime: 3 * 60 * 1000, // 3 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
     enabled: !!userId, // Only fetch if userId is provided
   });
 };
 
 /**
- * Legacy function - kept for backward compatibility
- * @deprecated Use useUserDetail hook instead
- */
-export const getUserDetail = async (userId: number): Promise<UserDetailResponse> => {
-  const response = await instance.get<UserDetailResponse>(`/admin/users/${userId}`);
-  return response.data;
-};
-
-/**
- * Update user status (admin only)
+ * Toggle user status (admin only)
  * Mutation hook with automatic cache invalidation
  */
-export const useUpdateUserStatus = () => {
+export const useToggleUserStatus = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({
-      userId,
-      status,
-    }: {
-      userId: number;
-      status: "active" | "inactive";
-    }): Promise<{ success: boolean; message: string }> => {
-      const response = await instance.patch(`/admin/users/${userId}/status`, { status });
+    mutationFn: async (userId: number): Promise<{ is_active: boolean }> => {
+      const response = await instance.patch(`/api/control/users/${userId}/status`);
       return response.data;
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (_, userId) => {
       // Invalidate user list cache to refetch with updated data
       queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
-
       // Invalidate specific user detail cache
-      queryClient.invalidateQueries({ queryKey: ["admin", "user-detail", variables.userId] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "user-detail", userId] });
     },
   });
-};
-
-/**
- * Legacy function - kept for backward compatibility
- * @deprecated Use useUpdateUserStatus hook instead
- */
-export const updateUserStatus = async (
-  userId: number,
-  status: "active" | "inactive"
-): Promise<{ success: boolean; message: string }> => {
-  const response = await instance.patch(`/admin/users/${userId}/status`, { status });
-  return response.data;
 };

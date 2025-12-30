@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
 import axios from 'axios';
-import { useCurrentUser  } from '../../../api/user';
+import { useCurrentUser, useUserChops, updateChopsAfterAction } from '../../../api/user';
 import { useAIInsights } from '../../../api/analysis';
+import { useQueryClient } from '@tanstack/react-query';
 
 const API_BASE_URL = '/api';
 
@@ -37,6 +38,8 @@ const FREE_USER_LIMIT = 3;
 
 export default function DashboardInsights() {
   const { data: user } = useCurrentUser();
+  const { data: chopsData, invalidateChops } = useUserChops();
+  const queryClient = useQueryClient();
   const referral_code = user?.referral_code || ' ';
 
   // TanStack Query hook for cached insights
@@ -96,6 +99,16 @@ export default function DashboardInsights() {
     }
   }, [cachedInsightsData, insightsLoading]);
 
+  // Sync chops data
+  useEffect(() => {
+    if (chopsData) {
+      setUserStats(prev => ({
+        ...prev,
+        total_chops: chopsData.total_chops,
+        total_insight_chops: chopsData.insight_reading_chops + chopsData.insight_sharing_chops
+      }));
+    }
+  }, [chopsData]);
 
   // Fetch insights from backend - used as fallback
   const fetchInsights = async (page: number = 1) => {
@@ -197,6 +210,9 @@ export default function DashboardInsights() {
       showToastMessage(
         `You earned ${response.data.chops_earned} chop${response.data.chops_earned > 1 ? 's' : ''} for reading this insight!`
       );
+
+      // Update chops across all tabs and components
+      await updateChopsAfterAction(queryClient);
     } else {
       // Even if no chops earned (already read), update the UI state
       setInsights(prev =>
@@ -259,6 +275,9 @@ export default function DashboardInsights() {
         showToastMessage(
           `You earned ${response.data.chops_earned} chops for sharing this insight!`
         );
+
+        // Update chops across all tabs and components
+        await updateChopsAfterAction(queryClient);
       }
     } catch (error: any) {
       console.error('Error sharing insight:', error);

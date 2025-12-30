@@ -24,7 +24,7 @@ def upgrade() -> None:
     connection = op.get_bind()
     inspector = sa.inspect(connection)
     existing_columns = {col['name'] for col in inspector.get_columns('users')}
-    
+
     # Add new user profile fields if they don't exist
     if 'department' not in existing_columns:
         op.add_column('users', sa.Column('department', sa.String(100), nullable=True))

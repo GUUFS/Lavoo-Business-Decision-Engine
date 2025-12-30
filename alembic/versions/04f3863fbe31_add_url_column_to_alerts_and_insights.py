@@ -24,13 +24,13 @@ def upgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     alerts_columns = [col['name'] for col in inspector.get_columns('alerts')]
-    
+
     if 'url' not in alerts_columns:
         op.add_column('alerts', sa.Column('url', sa.String(), nullable=True))
-    
+
     # Check if url column exists before adding to insights
     insights_columns = [col['name'] for col in inspector.get_columns('insights')]
-    
+
     if 'url' not in insights_columns:
         op.add_column('insights', sa.Column('url', sa.String(), nullable=True))
 
@@ -41,12 +41,12 @@ def downgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
     insights_columns = [col['name'] for col in inspector.get_columns('insights')]
-    
+
     if 'url' in insights_columns:
         op.drop_column('insights', 'url')
-    
+
     # Check if url column exists before dropping from alerts
     alerts_columns = [col['name'] for col in inspector.get_columns('alerts')]
-    
+
     if 'url' in alerts_columns:
         op.drop_column('alerts', 'url')

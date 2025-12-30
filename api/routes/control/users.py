@@ -2,13 +2,50 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from db.pg_connections import get_db
 from db.pg_models import User, Subscriptions, BusinessAnalysis
 from api.routes.dependencies import admin_required
 
 router = APIRouter(prefix="/api/control/users", tags=["admin-users"])
+
+def format_relative_time(dt: datetime) -> str:
+    """Format datetime as relative time (e.g., '2 hours ago')"""
+    if not dt:
+        return "Never"
+
+    now = datetime.utcnow()
+    # Handle timezone-aware datetimes
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+
+    diff = now - dt
+    seconds = int(diff.total_seconds())
+
+    if seconds < 60:
+        return f"{seconds} sec{'s' if seconds != 1 else ''} ago"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes} min{'s' if minutes != 1 else ''} ago"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours} hr{'s' if hours != 1 else ''} ago"
+    else:
+        days = seconds // 86400
+        return f"{days} day{'s' if days != 1 else ''} ago"
+
+def is_user_inactive(user: User) -> bool:
+    """Check if user is inactive (no login for 30 days)"""
+    if not user.last_login and not user.updated_at:
+        return True
+
+    last_activity = user.last_login or user.updated_at
+    if last_activity.tzinfo is not None:
+        last_activity = last_activity.replace(tzinfo=None)
+
+    cutoff = datetime.utcnow() - timedelta(days=30)
+    return last_activity < cutoff
 
 
 @router.get("/stats")
@@ -17,29 +54,33 @@ async def get_user_stats(
     db: Session = Depends(get_db)
 ):
     """Get user statistics"""
-    
+
     try:
         total_users = db.query(func.count(User.id)).scalar()
-        
+
         # Pro Users: subscription_status == 'active'
         pro_users = db.query(func.count(User.id)).filter(
             User.subscription_status == 'active'
         ).scalar()
-        
+
         # Free Users: subscription_status != 'active' (covers free, null, etc.)
         free_users = db.query(func.count(User.id)).filter(
             or_(User.subscription_status != 'active', User.subscription_status.is_(None))
         ).scalar()
-        
-        # Deactivated Users
+
+        # Deactivated Users (admin manually deactivated)
         deactivated_users = db.query(func.count(User.id)).filter(User.is_active == False).scalar()
 
-        # Inactive Users (Dormant > 90 days)
-        cutoff_date = datetime.utcnow() - timedelta(days=90)
+        # Inactive Users (no login for 30 days) - use last_login field
+        cutoff_date = datetime.utcnow() - timedelta(days=30)
         inactive_users = db.query(func.count(User.id)).filter(
-            or_(User.updated_at < cutoff_date, User.updated_at.is_(None))
+            User.is_active == True,  # Only count active users as "inactive" due to dormancy
+            or_(
+                User.last_login < cutoff_date,
+                User.last_login.is_(None)
+            )
         ).scalar()
-        
+
         return {
             "total": total_users,
             "pro": pro_users,
@@ -47,7 +88,7 @@ async def get_user_stats(
             "deactivated": deactivated_users,
             "inactive": inactive_users
         }
-        
+
     except Exception as e:
         print(f"Error in user stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -59,11 +100,11 @@ async def get_user_details(
     db: Session = Depends(get_db)
 ):
     """Get full user details for modal"""
-    
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     # Calculate days remaining
     days_remaining = 0
     if user.subscriptions:
@@ -72,29 +113,42 @@ async def get_user_details(
         if active_sub and active_sub.end_date:
              delta = active_sub.end_date.replace(tzinfo=None) - datetime.utcnow()
              days_remaining = max(0, delta.days)
-    
+
     # Get Referrals from the user (names)
-    # referral.referrer_id = user.id
-    # We want referred_user.name
     from db.pg_models import Referral
     referrals = db.query(Referral).filter(Referral.referrer_id == user.id).all()
     referral_names = [ref.referred_user.name for ref in referrals if ref.referred_user]
-    
+
+    # Determine user status: deactivated (admin), inactive (30 days no login), or active
+    if not user.is_active:
+        status = "suspended"  # Admin deactivated
+    elif is_user_inactive(user):
+        status = "inactive"  # Dormant > 30 days
+    else:
+        status = "active"
+
+    # Format last active as relative time
+    last_active_dt = user.last_login or user.updated_at
+    last_active = format_relative_time(last_active_dt)
+
     return {
         "id": user.id,
         "name": user.name,
         "email": user.email,
+        "avatar": ''.join([n[0] for n in user.name.split(' ')[:2]]).upper(),
         "joinDate": user.created_at.isoformat(),
+        "lastActive": last_active,
+        "status": status,
         "subscription_status": user.subscription_status,
-        "subscription_plan": user.subscription_plan,
-        "total_chops": user.total_chops,
-        "referral_chops": user.referral_chops,
-        "alert_reading_chops": user.alert_reading_chops,
-        "insight_reading_chops": user.insight_reading_chops,
-        "referral_count": user.referral_count,
+        "subscription_plan": user.subscription_plan or "Free",
+        "total_chops": user.total_chops or 0,
+        "referral_chops": user.referral_chops or 0,
+        "alert_reading_chops": user.alert_reading_chops or 0,
+        "insight_reading_chops": user.insight_reading_chops or 0,
+        "insight_sharing_chops": user.insight_sharing_chops or 0,
+        "alert_sharing_chops": user.alert_sharing_chops or 0,
+        "referral_count": user.referral_count or 0,
         "referrals": referral_names,
-        "insight_sharing_chops": user.insight_sharing_chops,
-        "alert_sharing_chops": user.alert_sharing_chops,
         "days_remaining": days_remaining,
         "referral_code": user.referral_code,
         "is_active": user.is_active
@@ -105,57 +159,78 @@ async def get_users(
     limit: int = 10,
     page: int = 1,
     search: str = None,
-    status: str = None, # 'active', 'inactive', 'suspended'
+    status: str = None, # 'active', 'inactive', 'suspended', 'free', 'pro'
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db)
 ):
     """Get users with pagination and filtering"""
-    
+
     offset = (page - 1) * limit
-    
+
     query = db.query(User)
-    
+
     # Search
     if search:
         search_term = f"%{search}%"
         query = query.filter(
-            (User.name.ilike(search_term)) | 
+            (User.name.ilike(search_term)) |
             (User.email.ilike(search_term))
         )
-    
+
     # Status Filter
+    cutoff_date = datetime.utcnow() - timedelta(days=30)
+
     if status and status != 'all':
         if status == 'active':
-            query = query.filter(User.is_active == True)
-        elif status == 'inactive': # Dormant users (3 months)
-             cutoff_date = datetime.utcnow() - timedelta(days=90)
-             query = query.filter(or_(User.updated_at < cutoff_date, User.updated_at.is_(None)))
-        elif status == 'suspended':
-             query = query.filter(User.is_active == False)
-        # Handle explicitly 'deactivated' if passed, mapping to suspended logic
-        elif status == 'deactivated':
-             query = query.filter(User.is_active == False)
+            # Active: is_active=True AND logged in within 30 days
+            query = query.filter(
+                User.is_active == True,
+                or_(
+                    User.last_login >= cutoff_date,
+                    User.last_login.is_(None)  # New users without login yet
+                )
+            )
+        elif status == 'inactive':
+            # Inactive: is_active=True but no login for 30+ days
+            query = query.filter(
+                User.is_active == True,
+                or_(
+                    User.last_login < cutoff_date,
+                    User.last_login.is_(None)
+                )
+            )
+        elif status == 'suspended' or status == 'deactivated':
+            # Deactivated by admin
+            query = query.filter(User.is_active == False)
         elif status == 'free':
-             query = query.filter(or_(User.subscription_status != 'active', User.subscription_status.is_(None)))
+            query = query.filter(
+                or_(User.subscription_status != 'active', User.subscription_status.is_(None))
+            )
         elif status == 'pro':
-             query = query.filter(User.subscription_status == 'active')
-    
+            query = query.filter(User.subscription_status == 'active')
+
     total = query.count()
     users = query.order_by(desc(User.created_at)).offset(offset).limit(limit).all()
-    
+
     result = []
     for user in users:
         # Get Analysis Count
         analysis_count = db.query(func.count(BusinessAnalysis.id)).filter(
             BusinessAnalysis.user_id == user.id
         ).scalar()
-        
+
         # Determine status string
         if not user.is_active:
-             user_status = 'suspended' # or 'inactive'
+            user_status = 'suspended'  # Admin deactivated
+        elif is_user_inactive(user):
+            user_status = 'inactive'  # Dormant > 30 days
         else:
-             user_status = 'active'
-        
+            user_status = 'active'
+
+        # Format last active as relative time
+        last_active_dt = user.last_login or user.updated_at
+        last_active = format_relative_time(last_active_dt)
+
         result.append({
             "id": user.id,
             "name": user.name,
@@ -163,11 +238,11 @@ async def get_users(
             "plan": user.subscription_plan or "Free",
             "status": user_status,
             "joinDate": user.created_at.strftime("%Y-%m-%d"),
-            "lastActive": user.updated_at.strftime("%Y-%m-%d %H:%M") if user.updated_at else "Never", # Fallback
+            "lastActive": last_active,
             "analyses": analysis_count,
-            "avatar": ''.join([n[0] for n in user.name.split(' ')[:2]]).upper() # Initials
+            "avatar": ''.join([n[0] for n in user.name.split(' ')[:2]]).upper()
         })
-        
+
     return {
         "users": result,
         "total": total,
@@ -183,30 +258,120 @@ async def update_user_status(
     db: Session = Depends(get_db)
 ):
     """Toggle user active status (Deactivate/Activate)"""
-    
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     # Prevent deactivating self if admin
     user_id_from_token = None
     if isinstance(current_user, dict):
         user_id_from_token = current_user.get("id") or current_user.get("user", {}).get("id")
     else:
         user_id_from_token = current_user.id
-        
+
     if user.id == user_id_from_token:
         raise HTTPException(status_code=400, detail="Cannot deactivate your own admin account")
-    
+
     # Toggle
     user.is_active = not user.is_active
     db.commit()
-    
+
     action = "activated" if user.is_active else "deactivated"
     start_status = "active" if user.is_active else "suspended"
-    
+
     return {
-        "status": "success", 
+        "status": "success",
         "message": f"User {user.email} has been {action}",
         "new_status": start_status
+    }
+
+
+@router.post("/generate-referral-codes")
+async def generate_missing_referral_codes(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db)
+):
+    """Generate referral codes for all users who don't have one"""
+    import random
+    import string
+
+    def generate_referral_code(length=8):
+        chars = string.ascii_uppercase + string.digits
+        return ''.join(random.choice(chars) for _ in range(length))
+
+    # Find users without referral codes
+    users_without_codes = db.query(User).filter(
+        or_(User.referral_code.is_(None), User.referral_code == '')
+    ).all()
+
+    updated_count = 0
+    for user in users_without_codes:
+        # Generate unique code
+        new_code = generate_referral_code()
+        while db.query(User).filter(User.referral_code == new_code).first():
+            new_code = generate_referral_code()
+
+        user.referral_code = new_code
+        updated_count += 1
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": f"Generated referral codes for {updated_count} users",
+        "updated_count": updated_count
+    }
+
+
+@router.post("/sync-subscriptions")
+async def sync_subscription_statuses(
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db)
+):
+    """
+    Sync subscription statuses for all users:
+    - Check if subscription has expired and revert to Free
+    - Update subscription_status based on active subscriptions
+    """
+
+    users = db.query(User).all()
+    updated_count = 0
+
+    for user in users:
+        original_status = user.subscription_status
+        original_plan = user.subscription_plan
+
+        # Check if user has active subscription
+        active_sub = None
+        if user.subscriptions:
+            for sub in user.subscriptions:
+                if sub.status == 'active' and sub.end_date:
+                    end_date = sub.end_date.replace(tzinfo=None) if sub.end_date.tzinfo else sub.end_date
+                    if end_date > datetime.utcnow():
+                        active_sub = sub
+                        break
+                    else:
+                        # Subscription expired - mark as expired
+                        sub.status = 'expired'
+
+        # Update user status based on subscription
+        if active_sub:
+            user.subscription_status = 'active'
+            user.subscription_plan = active_sub.plan_type or 'Pro'
+        else:
+            # No active subscription - revert to Free
+            user.subscription_status = 'Free'
+            user.subscription_plan = 'Free'
+
+        # Track if we made changes
+        if user.subscription_status != original_status or user.subscription_plan != original_plan:
+            updated_count += 1
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": f"Synced subscription statuses for {updated_count} users",
+        "updated_count": updated_count
     }

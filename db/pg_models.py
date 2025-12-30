@@ -75,7 +75,6 @@ class User(Base):
     commissions_earned = relationship("Commission", foreign_keys="Commission.user_id", back_populates="user")
     payouts = relationship("Payout", back_populates="user")
     payout_account = relationship("PayoutAccount", back_populates="user", uselist=False)
-    commission_summaries = relationship("CommissionSummary", back_populates="user")
 
 class AITool(Base):
     """
@@ -708,30 +707,30 @@ class CommissionSummary(Base):
     Monthly summary of commissions per user (for reporting and analytics)
     """
     __tablename__ = "commission_summaries"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
+
     # Period
     year = Column(Integer, nullable=False)
     month = Column(Integer, nullable=False)
-    
+
     # Summary metrics
     total_commissions = Column(Numeric(10, 2), default=0.00)
     paid_commissions = Column(Numeric(10, 2), default=0.00)
     pending_commissions = Column(Numeric(10, 2), default=0.00)
     commission_count = Column(Integer, default=0)
-    
+
     # Currency
     currency = Column(String(10), nullable=False, default='USD')
-    
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     # Relationship
-    user = relationship("User", back_populates="commission_summaries")
-    
+    user = relationship("User")
+
     # Unique constraint and indexes
     __table_args__ = (
         Index('idx_commission_summary_user_period', 'user_id', 'year', 'month', unique=True),
@@ -1038,7 +1037,7 @@ class PayoutResponse(BaseModel):
     status: str
     payment_method: str
     requested_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -1047,7 +1046,7 @@ class PayoutResponse(BaseModel):
 class ApproveCommissionsRequest(BaseModel):
     """Request model for approving commissions"""
     commission_ids: List[int]
-    
+
     class Config:
         from_attributes = True
 
@@ -1060,7 +1059,7 @@ class CommissionResponse(BaseModel):
     created_at: datetime
     referred_user_id: int
     subscription_id: int
-    
+
     class Config:
         from_attributes = True
 
@@ -1245,7 +1244,7 @@ class SecurityMetricsSummary(Base):
     Used for retrieving aggregate security data.
     """
     __tablename__ = "security_metrics_summary"
-    
+
     # Views don't have PKs, but SQLAlchemy requires one
     # Using total_events_24h as a dummy PK since it's likely unique enough for reading
     total_events_24h = Column(Integer, primary_key=True)

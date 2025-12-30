@@ -1,39 +1,24 @@
 import { useState, useEffect, useRef } from 'react';
-// import { Link } from 'react-router-dom';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
-import { getAuthHeaders } from '../../../utils/auth';
-
-interface Conversation {
-  user_id: number;
-  user_name: string;
-  user_email: string;
-  unread_count: number;
-  last_message: string;
-  last_message_at: string;
-  status: string;
-}
-
-interface Message {
-  id: number;
-  sender_role: 'admin' | 'user' | 'system';
-  message: string;
-  created_at: string;
-  ticket_id: number;
-  sender_name?: string;
-}
+import {
+  useAdminConversations,
+  useResolveUserTickets,
+  type Conversation,
+  type Message
+} from '../../../api/admin-reports';
+import { useQueryClient } from '@tanstack/react-query';
+import { instance } from '../../../lib/axios';
 
 export default function AdminReports() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   // Modal State
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState("");
-  // const [sendingReply, setSendingReply] = useState(false);
 
   // Confirmation Modal State
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -46,11 +31,27 @@ export default function AdminReports() {
   const ws = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  // Use TanStack Query for conversations
+  const { data: conversationsData, isLoading: loading, refetch } = useAdminConversations();
+  const [conversations, setConversations] = useState<Conversation[]>([]);
 
+  // Use mutation for resolving tickets
+  const resolveTicketsMutation = useResolveUserTickets();
+
+  // Sync conversations from query to local state (for WebSocket updates)
   useEffect(() => {
-    fetchConversations();
-  }, []);
+    if (conversationsData?.conversations) {
+      // Remove duplicates by user_id
+      const uniqueConversations = conversationsData.conversations.reduce((acc: Conversation[], conv: Conversation) => {
+        const exists = acc.find(c => c.user_id === conv.user_id);
+        if (!exists) {
+          acc.push(conv);
+        }
+        return acc;
+      }, []);
+      setConversations(uniqueConversations);
+    }
+  }, [conversationsData]);
 
   // Update modal ref when state changes
   useEffect(() => {
@@ -65,7 +66,7 @@ export default function AdminReports() {
     if (isModalOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, isModalOpen]);
+  }, [localMessages, isModalOpen]);
 
   // Update sidebar badge when conversations change
   useEffect(() => {
@@ -74,33 +75,6 @@ export default function AdminReports() {
       detail: { count: unreadUsersCount }
     }));
   }, [conversations]);
-
-  const fetchConversations = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/customer-service/admin/conversations`, {
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        const data = await response.json();
-
-        // Remove duplicates by user_id
-        const uniqueConversations = data.conversations.reduce((acc: Conversation[], conv: Conversation) => {
-          const exists = acc.find(c => c.user_id === conv.user_id);
-          if (!exists) {
-            acc.push(conv);
-          }
-          return acc;
-        }, []);
-
-        setConversations(uniqueConversations);
-      }
-    } catch (error) {
-      console.error('Error fetching conversations:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleOpenConversation = async (conv: Conversation) => {
     setSelectedConversation(conv);
@@ -112,15 +86,10 @@ export default function AdminReports() {
       c.user_id === conv.user_id ? { ...c, unread_count: 0 } : c
     ));
 
-    // Fetch messages
+    // Fetch messages using the cached hook pattern but manually for modal
     try {
-      const response = await fetch(`${API_BASE_URL}/api/customer-service/admin/users/${conv.user_id}/messages`, {
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setMessages(data.messages);
-      }
+      const response = await instance.get(`/api/customer-service/admin/users/${conv.user_id}/messages`);
+      setLocalMessages(response.data.messages || []);
     } catch (error) {
       console.error("Error fetching messages:", error);
     }
@@ -129,7 +98,7 @@ export default function AdminReports() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedConversation(null);
-    setMessages([]);
+    setLocalMessages([]);
     setIsConfirmModalOpen(false);
     currentUserIdRef.current = null;
   };
@@ -138,27 +107,24 @@ export default function AdminReports() {
     if (!selectedConversation) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/customer-service/admin/users/${selectedConversation.user_id}/resolve_all`, {
-        method: 'POST',
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        // Update local conversation status
-        setConversations(prev => prev.map(c =>
-          c.user_id === selectedConversation.user_id ? { ...c, status: 'resolved', unread_count: 0 } : c
-        ));
+      await resolveTicketsMutation.mutateAsync(selectedConversation.user_id);
 
-        // Update selected conversation
-        setSelectedConversation(prev => prev ? { ...prev, status: 'resolved' } : null);
+      // Update local conversation status
+      setConversations(prev => prev.map(c =>
+        c.user_id === selectedConversation.user_id ? { ...c, status: 'resolved', unread_count: 0 } : c
+      ));
 
-        setIsConfirmModalOpen(false);
-      }
+      // Update selected conversation
+      setSelectedConversation(prev => prev ? { ...prev, status: 'resolved' } : null);
+
+      setIsConfirmModalOpen(false);
     } catch (e) {
       console.error(e);
       alert('Failed to resolve tickets');
     }
   };
 
+  // WebSocket connection for real-time updates
   useEffect(() => {
     const connectWebSocket = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -180,12 +146,10 @@ export default function AdminReports() {
             const modalOpen = isModalOpenRef.current;
             const viewingUserId = currentUserIdRef.current;
 
-            // Check if this message is for the currently open conversation
             const isForCurrentConversation = modalOpen && viewingUserId === msg.user_id;
 
             if (isForCurrentConversation) {
-              // User is viewing this conversation - add to messages, no unread
-              setMessages(prev => {
+              setLocalMessages(prev => {
                 const exists = prev.find(m => m.id === msg.id);
                 if (exists) return prev;
 
@@ -199,7 +163,6 @@ export default function AdminReports() {
                 }];
               });
 
-              // Move to top, update last message, NO unread increment
               setConversations(prev => {
                 const otherConvs = prev.filter(c => c.user_id !== msg.user_id);
                 const currentConv = prev.find(c => c.user_id === msg.user_id);
@@ -209,13 +172,12 @@ export default function AdminReports() {
                     ...currentConv,
                     last_message: msg.content,
                     last_message_at: msg.created_at,
-                    unread_count: 0 // Ensure it stays 0
+                    unread_count: 0
                   }, ...otherConvs];
                 }
-                return prev; // Should be in list if we are viewing it
+                return prev;
               });
             } else {
-              // Not viewing - move to top AND increment unread
               setConversations(prev => {
                 const otherConvs = prev.filter(c => c.user_id !== msg.user_id);
                 const existingConv = prev.find(c => c.user_id === msg.user_id);
@@ -229,26 +191,22 @@ export default function AdminReports() {
                     status: 'active'
                   }, ...otherConvs];
                 } else {
-                  // New conversation - fetch all to get it (or simpler: let fetch happen)
-                  fetchConversations();
+                  refetch();
                   return prev;
                 }
               });
             }
           }
 
-          // Handle admin message sent (from another admin or other tab)
+          // Handle admin message sent
           if (data.type === 'admin_message_sent' && data.message) {
             const msg = data.message;
-
-            // Get current user ID to check if this is our own message
             const currentAdminId = parseInt(localStorage.getItem('user_id') || '0');
             const modalOpen = isModalOpenRef.current;
             const viewingUserId = currentUserIdRef.current;
 
-            // Only add if NOT sent by current user AND viewing this conversation
             if (data.sender_id !== currentAdminId && modalOpen && viewingUserId === msg.user_id) {
-              setMessages(prev => {
+              setLocalMessages(prev => {
                 const exists = prev.find(m => m.id === msg.id);
                 if (exists) return prev;
 
@@ -263,7 +221,6 @@ export default function AdminReports() {
               });
             }
 
-            // Update conversation list - Move to top regardless
             setConversations(prev => {
               const otherConvs = prev.filter(c => c.user_id !== msg.user_id);
               const currentConv = prev.find(c => c.user_id === msg.user_id);
@@ -285,9 +242,8 @@ export default function AdminReports() {
             const modalOpen = isModalOpenRef.current;
             const viewingUserId = currentUserIdRef.current;
 
-            // If viewing this conversation, add system message
             if (modalOpen && viewingUserId === payload.user_id) {
-              setMessages(prev => {
+              setLocalMessages(prev => {
                 const exists = prev.find(m => m.id === payload.message.id);
                 if (exists) return prev;
 
@@ -301,14 +257,12 @@ export default function AdminReports() {
               });
             }
 
-            // Update conversation status
             setConversations(prev => prev.map(c =>
               c.user_id === payload.user_id
                 ? { ...c, status: 'resolved', unread_count: 0 }
                 : c
             ));
 
-            // Update selected conversation if it's the one being resolved
             if (selectedConversation?.user_id === payload.user_id) {
               setSelectedConversation(prev => prev ? { ...prev, status: 'resolved' } : null);
             }
@@ -342,20 +296,18 @@ export default function AdminReports() {
         ws.current.close();
       }
     };
-  }, [selectedConversation]);
+  }, [selectedConversation, refetch]);
 
   const handleReply = async () => {
-    if (!newMessage.trim() || !messages.length) return;
+    if (!newMessage.trim() || !localMessages.length) return;
 
-    const validMsgs = messages.filter(m => m.sender_role !== 'system');
+    const validMsgs = localMessages.filter(m => m.sender_role !== 'system');
     if (!validMsgs.length) return;
 
     const lastMsg = validMsgs[validMsgs.length - 1];
     const ticketId = lastMsg.ticket_id;
     const messageText = newMessage.trim();
 
-    // Don't set sendingReply(true) to keep UI interactive (optimistic)
-    // setSendingReply(true); 
     setNewMessage("");
 
     const textarea = document.querySelector('textarea');
@@ -363,7 +315,7 @@ export default function AdminReports() {
 
     // Add message optimistically
     const optimisticMsg: Message = {
-      id: Date.now(), // Temporary ID
+      id: Date.now(),
       sender_role: 'admin',
       message: messageText,
       created_at: new Date().toISOString(),
@@ -371,7 +323,7 @@ export default function AdminReports() {
       sender_name: 'You'
     };
 
-    setMessages(prev => [...prev, optimisticMsg]);
+    setLocalMessages(prev => [...prev, optimisticMsg]);
 
     // Move to top immediately
     setConversations(prev => {
@@ -383,33 +335,25 @@ export default function AdminReports() {
           ...currentConv,
           last_message: messageText,
           last_message_at: new Date().toISOString(),
-          unread_count: 0 // Ensure read
+          unread_count: 0
         }, ...otherConvs];
       }
       return prev;
     });
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/customer-service/admin/tickets/${ticketId}/reply`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify({ message: messageText, ticket_id: ticketId })
+      await instance.post(`/api/customer-service/admin/tickets/${ticketId}/reply`, {
+        message: messageText,
+        ticket_id: ticketId
       });
-
-      if (!response.ok) {
-        // Revert on failure (simple alert for now)
-        alert("Failed to send reply. Please refresh.");
-      }
+      // Invalidate cache after successful send
+      queryClient.invalidateQueries({ queryKey: ['admin', 'reports', 'conversations'] });
     } catch (error) {
       console.error("Error sending reply:", error);
       alert("Error sending reply");
     }
   };
 
-  // Check if current conversation has been resolved
   const isCurrentTicketResolved = selectedConversation?.status === 'resolved';
 
   return (
@@ -429,6 +373,9 @@ export default function AdminReports() {
                 <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">Customer Reports</h1>
                 <p className="text-gray-600">Manage user support tickets and conversations</p>
               </div>
+              <button onClick={() => refetch()} className="p-2 text-gray-500 hover:text-red-600 transition-colors" title="Refresh">
+                <i className="ri-refresh-line text-xl"></i>
+              </button>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -518,7 +465,7 @@ export default function AdminReports() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-              {messages.map((msg, index) => (
+              {localMessages.map((msg, index) => (
                 <div key={msg.id || index}>
                   {msg.sender_role === 'system' ? (
                     <div className="flex justify-center my-4">
@@ -602,9 +549,10 @@ export default function AdminReports() {
               </button>
               <button
                 onClick={handleResolveTicket}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                disabled={resolveTicketsMutation.isPending}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
               >
-                Yes, Resolve
+                {resolveTicketsMutation.isPending ? 'Resolving...' : 'Yes, Resolve'}
               </button>
             </div>
           </div>

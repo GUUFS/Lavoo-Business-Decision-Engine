@@ -64,7 +64,8 @@ const getAuthHeaders = () => {
 
 /**
  * Hook to fetch dashboard stats
- * Cached for 2 minutes, refetches in background every 2 minutes
+ * Cached for 30 seconds, refetches in background every 30 seconds
+ * Invalidates immediately when chops are earned
  */
 export const useDashboardStats = (userId: number | null) => {
   return useQuery({
@@ -140,18 +141,19 @@ export const useDashboardStats = (userId: number | null) => {
       };
     },
     enabled: !!userId,
-    staleTime: 2 * 60 * 1000, // 2 minutes
-    gcTime: 10 * 60 * 1000, // 10 minutes
-    refetchOnWindowFocus: false,
-    refetchInterval: 2 * 60 * 1000, // Auto-refresh every 2 minutes in background
+    staleTime: 30 * 1000, // 30 seconds
+    gcTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnWindowFocus: true,
+    refetchInterval: 30 * 1000, // Auto-refresh every 30 seconds in background
   });
 };
 
 /**
  * Hook to fetch urgent alerts
+ * Shows the same 3 alerts as the opportunity alerts tab (no re-sorting)
  * Cached for 1 minute, refetches in background every 1 minute
  */
-export const useUrgentAlerts = (userId: number | null, limit = 5) => {
+export const useUrgentAlerts = (userId: number | null, limit = 3) => {
   return useQuery({
     queryKey: ["dashboard", "urgent-alerts", userId, limit],
     queryFn: async (): Promise<Alert[]> => {
@@ -168,17 +170,9 @@ export const useUrgentAlerts = (userId: number | null, limit = 5) => {
       const alerts = await response.json();
       const alertsArray = Array.isArray(alerts) ? alerts : [];
 
-      // Sort by priority and score, take top N
-      return alertsArray
-        .sort((a: Alert, b: Alert) => {
-          const priorityOrder = { High: 3, Medium: 2, Low: 1 };
-          const aPriority = priorityOrder[a.priority] || 0;
-          const bPriority = priorityOrder[b.priority] || 0;
-
-          if (aPriority !== bPriority) return bPriority - aPriority;
-          return b.score - a.score;
-        })
-        .slice(0, limit);
+      // Return the first N alerts in the same order as the alerts tab
+      // (already sorted by pinned first, then by created_at desc from the API)
+      return alertsArray.slice(0, limit);
     },
     enabled: !!userId,
     staleTime: 1 * 60 * 1000, // 1 minute
@@ -192,7 +186,7 @@ export const useUrgentAlerts = (userId: number | null, limit = 5) => {
  * Hook to fetch top insights
  * Cached for 5 minutes
  */
-export const useTopInsights = (limit = 6) => {
+export const useTopInsights = (limit = 3) => {
   return useQuery({
     queryKey: ["dashboard", "top-insights", limit],
     queryFn: async (): Promise<Insight[]> => {

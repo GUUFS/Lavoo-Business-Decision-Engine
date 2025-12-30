@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Button from '../../components/base/Button';
-import { useCurrentUser } from '../../api/user';
+import { useCurrentUser, useUserChops } from '../../api/user';
 import {
     useDashboardStats,
     useUrgentAlerts,
@@ -39,6 +39,7 @@ export default function Dashboard() {
 
     // Use TanStack Query hooks for all data fetching with caching
     const { data: currentUser, isLoading: isLoadingUser } = useCurrentUser();
+    const { data: chopsData, isLoading: isLoadingChops } = useUserChops();
     const userId = currentUser?.id || null;
 
     const { data: stats, isLoading: isLoadingStats } = useDashboardStats(userId);
@@ -47,7 +48,7 @@ export default function Dashboard() {
     const { data: recentReviews = [], isLoading: isLoadingReviews } = useRecentReviews();
 
     // Combined loading state
-    const loading = isLoadingUser || isLoadingStats || isLoadingAlerts || isLoadingInsights || isLoadingReviews;
+    const loading = isLoadingUser || isLoadingChops || isLoadingStats || isLoadingAlerts || isLoadingInsights || isLoadingReviews;
 
     // Redirect to login if no user
     useEffect(() => {
@@ -105,7 +106,7 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm text-gray-600 mb-1">Total Chops</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_chops || 0}</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{chopsData?.total_chops || 0}</p>
                             </div>
                             <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                                 <i className="ri-coin-line text-green-600 text-lg md:text-xl"></i>
@@ -296,7 +297,7 @@ export default function Dashboard() {
                                         <h4 className="font-medium text-gray-900 text-sm md:text-base">Total Chops</h4>
                                         <i className="ri-coin-line text-green-600 text-xl"></i>
                                     </div>
-                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{stats?.total_chops || 0}</div>
+                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{chopsData?.total_chops || 0}</div>
                                     <div className="text-sm text-gray-500">All-time earnings</div>
                                 </div>
 

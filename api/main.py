@@ -142,7 +142,7 @@ async def startup_event():
             # Postgres supports adding multiple columns in one statement
             try:
                 db.execute(text("""
-                    ALTER TABLE users 
+                    ALTER TABLE users
                     ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE,
                     ADD COLUMN IF NOT EXISTS department VARCHAR(100),
                     ADD COLUMN IF NOT EXISTS location VARCHAR(100) DEFAULT 'Nigeria',
@@ -150,16 +150,16 @@ async def startup_event():
                     ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE,
                     ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN DEFAULT TRUE;
                 """))
-                
+
                 db.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS is_attended BOOLEAN DEFAULT FALSE"))
-                
+
                 # Security table fixes
                 try:
                     # Rename attempt_time to created_at if it exists
                     db.execute(text("""
                         DO $$
                         BEGIN
-                            IF EXISTS (SELECT 1 FROM information_schema.columns 
+                            IF EXISTS (SELECT 1 FROM information_schema.columns
                                        WHERE table_name='failed_login_attempts' AND column_name='attempt_time') THEN
                                 ALTER TABLE failed_login_attempts RENAME COLUMN attempt_time TO created_at;
                             END IF;
@@ -173,7 +173,7 @@ async def startup_event():
                     db.execute(text("ALTER TABLE firewall_rules ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
                 except Exception as e:
                     logger.warning(f"Failed to add is_active to firewall_rules: {e}")
-            
+
             except Exception as e:
                 # If batch fails (e.g. SQLite doesn't support multiple ADD COLUMN), fall back to individual or log
                 logger.warning(f"Batch migration warning (will attempt individual if critical): {e}")
@@ -191,12 +191,12 @@ async def startup_event():
 
         # Schema migrations
         logger.info("Running schema migrations...")
-        
+
         # Add email column to ip_blacklist if it doesn't exist
         db = SessionLocal() # Create a new session for this migration
         try:
             db.execute(text("""
-                ALTER TABLE ip_blacklist 
+                ALTER TABLE ip_blacklist
                 ADD COLUMN IF NOT EXISTS email VARCHAR(255);
             """))
             db.commit()
@@ -215,11 +215,11 @@ async def startup_event():
             if os.path.exists(sql_file):
                 with open(sql_file, "r") as f:
                     sql_content = f.read()
-                
+
                 db = SessionLocal()
                 try:
                     from sqlalchemy import text
-                    
+
                     # First, drop security_metrics_summary if it exists as a table (not a view)
                     # This allows us to recreate it as a view
                     try:
@@ -229,13 +229,13 @@ async def startup_event():
                     except Exception as drop_error:
                         logger.debug(f"No table to drop: {drop_error}")
                         db.rollback()
-                    
+
                     # Execute the entire SQL file as one block to preserve function definitions
                     # PostgreSQL can handle multiple statements in one execute call
                     db.execute(text(sql_content))
                     db.commit()
                     logger.info("✓ Security views and triggers initialized from security_setup.sql")
-                    
+
                     # Initialize firewall rules
                     try:
                         from api.security.firewall import initialize_default_firewall_rules, firewall_manager
@@ -244,7 +244,7 @@ async def startup_event():
                         logger.info("✓ Firewall rules initialized")
                     except Exception as fw_error:
                         logger.warning(f"Firewall initialization: {fw_error}")
-                    
+
                 except Exception as e:
                     logger.error(f"Failed to execute security setup SQL: {e}")
                     db.rollback()
@@ -271,15 +271,6 @@ async def shutdown_event():
 origins = ["http://localhost:3000",
            "http://localhost:5173",
     "http://localhost:8080"]
-
-# Enable CORS for (React form requests)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
 
 # Path to the React build
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

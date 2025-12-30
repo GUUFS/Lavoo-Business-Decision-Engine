@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useOpportunityAlerts } from '../../../api/analysis';
-import { useCurrentUser } from '../../../api/user';
+import { useCurrentUser, useUserChops, updateChopsAfterAction } from '../../../api/user';
+import { useQueryClient } from '@tanstack/react-query';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -122,6 +123,8 @@ interface SocialButton {
 export default function AlertsPage() {
     // --- TANSTACK QUERY HOOKS FOR CACHING ---
     const { data: user } = useCurrentUser();
+    const { data: chopsData, invalidateChops } = useUserChops();
+    const queryClient = useQueryClient();
     const {
         data: cachedAlerts = [],
         isLoading: alertsLoading,
@@ -196,15 +199,17 @@ export default function AlertsPage() {
     useEffect(() => {
         if (user) {
             setUserId(user.id);
-            setUserChops(user.total_chops || user.chops || 0);
             setSubscriptionStatus(user.subscription_status || 'free');
             setReferralCount(user.referral_count || 0);
-            setReadingChops(user.alert_reading_chops || 0);
-            setSharingChops(user.alert_sharing_chops || 0);
-            setReferralChops(user.referral_chops || 0);
             localStorage.setItem('userId', user.id.toString());
         }
-    }, [user]);
+        if (chopsData) {
+            setUserChops(chopsData.total_chops);
+            setReadingChops(chopsData.alert_reading_chops);
+            setSharingChops(chopsData.alert_sharing_chops);
+            setReferralChops(chopsData.referral_chops);
+        }
+    }, [user, chopsData]);
 
     // --- USE EFFECTS (UPDATED) ---
 
@@ -501,6 +506,11 @@ export default function AlertsPage() {
                     if (data.chops_earned > 0) {
                         showToastNotification(`You earned ${data.chops_earned} Chops for viewing this alert!`);
                     }
+
+                    // Update chops across all tabs and components
+                    await updateChopsAfterAction(queryClient);
+                    invalidateChops();
+
                     console.log(`✅ ACTION_VIEW: View recorded for alert ${alertId}.`);
                 } else {
                     console.error(`❌ ACTION_VIEW: Failed to record view. Status: ${response.status}`);
@@ -675,6 +685,10 @@ export default function AlertsPage() {
         if (data.chops_earned > 0) {
             showToastNotification(`You earned ${data.chops_earned} Chops for sharing!`);
         }
+
+        // 7. Update chops across all tabs and components
+        await updateChopsAfterAction(queryClient);
+        invalidateChops();
 
         console.log(`Successfully shared alert ${selectedAlert.id}`);
 

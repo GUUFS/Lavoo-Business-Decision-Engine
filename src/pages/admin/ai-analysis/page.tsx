@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import { Link } from 'react-router-dom';
-import { getAnalyses, type AnalysisItem, type AnalysisStats } from '../../../api/admin-analysis';
+import { useAnalyses, type AnalysisStats } from '../../../api/admin-analysis';
 import { toast } from 'react-toastify';
 
 export default function AdminAIAnalysis() {
@@ -12,47 +12,28 @@ export default function AdminAIAnalysis() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  // API state
-  const [analyses, setAnalyses] = useState<AnalysisItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [stats, setStats] = useState<AnalysisStats>({
+  // Use TanStack Query hook with automatic caching (2-minute cache)
+  const { data, isLoading: loading, error } = useAnalyses({
+    page: currentPage,
+    limit: itemsPerPage,
+    status: filterStatus === 'all' ? undefined : filterStatus,
+    type: filterType === 'all' ? undefined : filterType
+  });
+
+  // Extract data from response
+  const analyses = data?.analyses || [];
+  const totalPages = data?.pagination?.totalPages || 1;
+  const total = data?.total || 0;
+  const stats: AnalysisStats = data?.stats || {
     completed: 0,
     failed: 0,
     avgConfidence: 0
-  });
+  };
 
-  // Fetch analyses from API
-  useEffect(() => {
-    const fetchAnalyses = async () => {
-      setLoading(true);
-      try {
-        const data = await getAnalyses({
-          page: currentPage,
-          limit: itemsPerPage,
-          status: filterStatus === 'all' ? undefined : filterStatus,
-          type: filterType === 'all' ? undefined : filterType
-        });
-
-        setAnalyses(data.analyses);
-        setTotalPages(data.pagination.totalPages);
-        setTotal(data.total);
-        setStats({
-          completed: data.stats.completed,
-          failed: data.stats.failed,
-          avgConfidence: data.stats.avgConfidence
-        });
-      } catch (error: any) {
-        console.error('Failed to fetch analyses:', error);
-        toast.error('Failed to load analyses');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchAnalyses();
-  }, [currentPage, filterStatus, filterType]);
+  // Show error toast if query fails
+  if (error) {
+    toast.error('Failed to load analyses');
+  }
 
   // Reset to page 1 when filters change
   const handleFilterChange = (setter: (value: string) => void, value: string) => {

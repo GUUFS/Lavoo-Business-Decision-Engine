@@ -42,7 +42,7 @@ def get_user_stats(
     """Get user statistics including chops breakdown"""
     if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
+
     user = current_user
 
     # Get total insights
@@ -115,7 +115,7 @@ async def get_insights(
     try:
         if not current_user:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        
+
         user = current_user
 
         # Try to get from cache first (5 minute TTL for insights)
