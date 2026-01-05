@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
 import FlutterwaveCheckout from './flutterwave';
 import StripeCheckout from './stripe';
 
@@ -189,7 +190,7 @@ export default function UpgradePage() {
           account_name: data.account_name
         }));
         setAccountVerifyError('');
-        alert(`✅ Account verified: ${data.account_name}`);
+        toast.success(`Account verified: ${data.account_name}`);
       } else {
         const errorMsg = data.detail || 'Account verification failed';
         setAccountVerifyError(errorMsg);
@@ -206,7 +207,7 @@ export default function UpgradePage() {
 
   const saveBankDetails = async () => {
     if (!bankDetails.bank_name || !bankDetails.account_number || !bankDetails.account_name) {
-      alert('Please fill in all required fields and verify your account');
+      toast.error('Please fill in all required fields and verify your account');
       return;
     }
 
@@ -230,7 +231,7 @@ export default function UpgradePage() {
       });
 
       if (response.ok) {
-        alert('✅ Bank details saved successfully!');
+        toast.success('Bank details saved successfully!');
         setShowPayoutSetup(false);
         setPayoutMethod(null);
         fetchPayoutAccount();
@@ -244,11 +245,11 @@ export default function UpgradePage() {
         setAccountVerifyError('');
       } else {
         const errorData = await response.json();
-        alert(`❌ Failed to save: ${errorData.detail || 'Unknown error'}`);
+        toast.error(`Failed to save: ${errorData.detail || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error saving bank details:', error);
-      alert('Failed to save bank details');
+      toast.error('Failed to save bank details');
     } finally {
       setSavingBankDetails(false);
     }
@@ -713,7 +714,15 @@ export default function UpgradePage() {
               )}
 
               {/* Payment Component */}
-              {paymentMethod === 'stripe' && userData ? (
+              {userData.subscription_status === 'active' ? (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                  <i className="ri-information-line text-blue-600 text-2xl mb-2 block"></i>
+                  <p className="text-blue-800 font-medium">You already have an active subscription!</p>
+                  <p className="text-blue-600 text-sm mt-1">
+                    Your current {userData.subscription_plan} plan is active. You can only upgrade or renew once your current plan expires.
+                  </p>
+                </div>
+              ) : paymentMethod === 'stripe' && userData ? (
                 <StripeCheckout
                   key={`stripe-checkout-${selectedPlan}`}
                   amount={plans[selectedPlan].price}

@@ -12,7 +12,7 @@ from subscriptions.commission_service import CommissionService
 from subscriptions.payout_service import PayoutService
 import json
 
-router = APIRouter(prefix="/api/control/revenue", tags=["admin-revenue"])
+router = APIRouter(prefix="/control/revenue", tags=["admin-revenue"])
 
 
 def verify_admin(current_user):

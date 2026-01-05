@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import axios from 'axios';
+import { toast } from 'react-toastify';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import AdminHeader from '../../../components/feature/AdminHeader';
 import { getAuthToken } from '../../../utils/auth';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 // Create axios instance with auth
 const api = axios.create({
@@ -18,18 +19,20 @@ const api = axios.create({
 api.interceptors.request.use((config) => {
   const token = getAuthToken();
   if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+    config.headers.Authorization = `Bearer ${token} `;
   }
   return config;
 });
 
 export default function AdminSecurity() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [showAdminDropdown, setShowAdminDropdown] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [scanPage, setScanPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [totalEvents, setTotalEvents] = useState(0);
+  const [totalScans, setTotalScans] = useState(0);
   const itemsPerPage = 10;
 
   // State for REAL data
@@ -46,62 +49,73 @@ export default function AdminSecurity() {
   const [firewallRules, setFirewallRules] = useState<any[]>([]);
   const [vulnerabilityScans, setVulnerabilityScans] = useState<any[]>([]);
 
-  const handleLogout = () => {
-    // Clear all auth tokens
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    document.cookie = 'access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-    document.cookie = 'refresh_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
 
-    // Redirect to login
-    window.location.href = '/login';
-  };
 
-  const fetchSecurityData = async (isInitial = false) => {
+  const fetchSecurityData = async (isInitial = false, isAuto = false) => {
     try {
       if (isInitial) setLoading(true);
       else setRefreshing(true);
 
       // Fetch metrics
-      const metricsRes = await api.get('/security/metrics');
-      setSecurityMetrics(metricsRes.data);
+      const metricsRes = await api.get('/api/security/metrics');
+      const safeMetrics = {
+        threatLevel: metricsRes.data.threatLevel || 'Low',
+        blockedAttacks: Number(metricsRes.data.blockedAttacks) || 0,
+        failedLogins: Number(metricsRes.data.failedLogins) || 0,
+        suspiciousActivity: Number(metricsRes.data.suspiciousActivity) || 0,
+        activeFirewallRules: Number(metricsRes.data.activeFirewallRules) || 0,
+        lastSecurityScan: metricsRes.data.lastSecurityScan || 'Never'
+      };
+      setSecurityMetrics(safeMetrics);
 
       // Fetch security events
-      const eventsRes = await api.get('/security/events?limit=50');
+      const eventsOffset = (currentPage - 1) * itemsPerPage;
+      const eventsRes = await api.get(`/api/security/events?limit=${itemsPerPage}&offset=${eventsOffset}`);
       setSecurityEvents(eventsRes.data.events || []);
+      setTotalEvents(eventsRes.data.total || 0);
 
       // Fetch firewall rules
-      const rulesRes = await api.get('/security/firewall-rules');
+      const rulesRes = await api.get('/api/security/firewall-rules');
       setFirewallRules(rulesRes.data.rules || []);
 
       // Fetch vulnerability scans
-      const scansRes = await api.get('/security/vulnerability-scans');
+      const scansOffset = (scanPage - 1) * itemsPerPage;
+      const scansRes = await api.get(`/api/security/vulnerability-scans?limit=${itemsPerPage}&offset=${scansOffset}`);
       setVulnerabilityScans(scansRes.data.scans || []);
+      setTotalScans(scansRes.data.total || 0);
 
       setLoading(false);
       setRefreshing(false);
+      if (!isInitial && !isAuto) toast.success('Security data refreshed');
     } catch (err: any) {
       console.error('Failed to fetch security data:', err);
-      setError(err.response?.data?.error || 'Failed to load security data');
+      // Only set error on first load to avoid disrupting UI on background refresh
+      if (isInitial) setError(err.response?.data?.error || 'Failed to load security data');
+
       setLoading(false);
       setRefreshing(false);
+      if (!isInitial && !isAuto) toast.error('Failed to refresh data');
     }
   };
+
+
 
   // Fetch all security data
   useEffect(() => {
     fetchSecurityData(true);
 
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(() => fetchSecurityData(false), 30000);
+    // Auto-refresh every 10 seconds
+    const interval = setInterval(() => fetchSecurityData(false, true), 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentPage, scanPage]);
 
   // Pagination calculations
-  const totalPages = Math.ceil(securityEvents.length / itemsPerPage);
+  const totalPages = Math.ceil(totalEvents / itemsPerPage);
+  const totalScanPages = Math.ceil(totalScans / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const currentEvents = securityEvents.slice(startIndex, endIndex);
+  const currentEvents = securityEvents; // Backend handles slice
+
+  const scanStartIndex = (scanPage - 1) * itemsPerPage;
 
   const getSeverityColor = (severity: string) => {
     switch (severity?.toLowerCase()) {
@@ -205,58 +219,7 @@ export default function AdminSecurity() {
       />
 
       <div className="flex-1 ml-0 flex flex-col">
-        {/* Admin Header */}
-        <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center">
-              <button
-                className="md:hidden p-2 text-gray-600 hover:text-gray-900 mr-3"
-                onClick={() => setIsMobileMenuOpen(true)}
-              >
-                <i className="ri-menu-line text-xl"></i>
-              </button>
-              <h2 className="text-lg font-semibold text-gray-900">Admin User</h2>
-            </div>
-            <div className="relative">
-              <button
-                onClick={() => setShowAdminDropdown(!showAdminDropdown)}
-                className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-gray-900 transition-colors"
-              >
-                <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
-                  <i className="ri-user-line text-orange-600"></i>
-                </div>
-                <span className="font-medium">Admin</span>
-                <i className="ri-arrow-down-s-line"></i>
-              </button>
-
-              {showAdminDropdown && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setShowAdminDropdown(false)}
-                  ></div>
-                  <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-gray-200 py-2 z-50">
-                    <Link
-                      to="/admin/profile"
-                      className="w-full flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 transition-colors"
-                      onClick={() => setShowAdminDropdown(false)}
-                    >
-                      <i className="ri-user-line mr-3"></i>
-                      Profile
-                    </Link>
-                    <button
-                      onClick={handleLogout}
-                      className="w-full flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 transition-colors"
-                    >
-                      <i className="ri-logout-box-line mr-3"></i>
-                      Logout
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+        <AdminHeader setIsMobileMenuOpen={setIsMobileMenuOpen} />
 
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
@@ -267,12 +230,15 @@ export default function AdminSecurity() {
                 <p className="text-gray-600">Real-time security monitoring and threat detection</p>
               </div>
               <button
-                onClick={() => fetchSecurityData(false)}
+                onClick={() => fetchSecurityData(false, false)}
                 disabled={refreshing}
-                className={`px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2 transition-all ${refreshing ? 'opacity-75 cursor-wait' : ''}`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${refreshing
+                  ? 'bg-red-500 text-white cursor-wait'
+                  : 'bg-red-600 text-white hover:bg-red-700 shadow-sm hover:shadow'
+                  }`}
               >
                 <i className={`ri-refresh-line ${refreshing ? 'animate-spin' : ''}`}></i>
-                {refreshing ? 'Refreshing...' : 'Refresh'}
+                {refreshing ? 'Refreshing...' : 'Refresh Data'}
               </button>
             </div>
 
@@ -376,7 +342,7 @@ export default function AdminSecurity() {
                 <div className="px-4 py-4 border-t border-gray-200">
                   <div className="flex items-center justify-between flex-wrap gap-4">
                     <div className="text-sm text-gray-600">
-                      Showing {startIndex + 1} to {Math.min(endIndex, securityEvents.length)} of {securityEvents.length} events
+                      Showing {startIndex + 1} to {Math.min(startIndex + securityEvents.length, totalEvents)} of {totalEvents} events
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -453,7 +419,7 @@ export default function AdminSecurity() {
                     <p className="text-center text-gray-500 py-8">No scans performed yet</p>
                   ) : (
                     <div className="space-y-4">
-                      {vulnerabilityScans.slice(0, 3).map((scan) => (
+                      {vulnerabilityScans.map((scan) => (
                         <div key={scan.id} className="border border-gray-200 rounded-lg p-4">
                           <div className="flex items-center justify-between mb-2">
                             <h4 className="font-medium text-gray-900">{scan.scan_type}</h4>
@@ -471,13 +437,39 @@ export default function AdminSecurity() {
                           </div>
                           <div className="flex items-center justify-between text-xs text-gray-500 mt-2">
                             <span>{formatDate(scan.started_at)}</span>
-                            <span>{scan.duration_seconds ? `${scan.duration_seconds}s` : 'Running...'}</span>
+                            <span>{scan.duration_seconds ? `${scan.duration_seconds} s` : 'Running...'}</span>
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
+                {/* Scan Pagination */}
+                {totalScanPages > 1 && (
+                  <div className="px-4 py-4 border-t border-gray-200">
+                    <div className="flex items-center justify-between flex-wrap gap-4">
+                      <div className="text-sm text-gray-600 font-medium">
+                        Page {scanPage} of {totalScanPages}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setScanPage(prev => Math.max(1, prev - 1))}
+                          disabled={scanPage === 1}
+                          className="px-3 py-1 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <i className="ri-arrow-left-s-line"></i>
+                        </button>
+                        <button
+                          onClick={() => setScanPage(prev => Math.min(totalScanPages, prev + 1))}
+                          disabled={scanPage === totalScanPages}
+                          className="px-3 py-1 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <i className="ri-arrow-right-s-line"></i>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -168,7 +168,8 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db: Anno
                     payment_provider="Flutterwave",
                     currency=currency,
                     subscription_plan=current_plan,
-                    status="active",
+                    status="successful",
+                    subscription_status="active",
                     start_date=start_date,
                     end_date=end_date
                 )

@@ -662,7 +662,8 @@ class Subscriptions(Base):
     tx_ref = Column(String, unique=True, index=True, nullable=False)
     amount = Column(DECIMAL(10, 2), nullable=False)
     currency = Column(VARCHAR(10), nullable=False)
-    status = Column(VARCHAR(20), nullable=False)
+    status = Column(VARCHAR(20), nullable=False) # Original payment status
+    subscription_status = Column(VARCHAR(20), nullable=True) # Lifecycle status: active, expired, Payment failed
     payment_provider = Column(VARCHAR(20), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -813,6 +814,25 @@ class Conversation(Base):
 
     # Relationships
     review = relationship("Review", back_populates="conversations")
+
+
+class DisplayedReview(Base):
+    """
+    Stores reviews selected by admin to be displayed on the homepage.
+    This allows dynamic control of which reviews appear to visitors.
+    """
+    __tablename__ = "displayed_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    review_id = Column(Integer, ForeignKey("reviews.id", ondelete="CASCADE"), unique=True, nullable=False)
+    display_order = Column(Integer, default=0, nullable=False)  # Lower number = higher priority
+    added_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    added_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))  # FIX: Changed from UUID to Integer
+
+    # Relationships
+    review = relationship("Review", backref="display_info")
+    admin = relationship("User", foreign_keys=[added_by])
+
 
 
 class ReviewCreate(BaseModel):

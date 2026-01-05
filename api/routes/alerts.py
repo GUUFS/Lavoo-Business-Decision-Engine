@@ -236,9 +236,9 @@ def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_use
         )
         
         # Award chops
-        user.total_chops += chops_to_award
-        user.alert_reading_chops += chops_to_award
-        chops_earned = chops_to_award
+        # user.total_chops += chops_to_award
+        # user.alert_reading_chops += chops_to_award
+        chops_earned = 0
         
         # Update alert view count
         alert.total_views += 1
@@ -265,9 +265,9 @@ def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_use
         user_alert.chops_earned_from_view = chops_to_award
         
         # Award chops
-        user.total_chops += chops_to_award
-        user.alert_reading_chops += chops_to_award
-        chops_earned = chops_to_award
+        # user.total_chops += chops_to_award
+        # user.alert_reading_chops += chops_to_award
+        chops_earned = 0
         
         # Update alert view count
         alert.total_views += 1
@@ -334,9 +334,9 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
         )
         
         # Award chops
-        user.total_chops += chops_to_award
-        user.alert_sharing_chops += chops_to_award
-        chops_earned = chops_to_award
+        # user.total_chops += chops_to_award
+        # user.alert_sharing_chops += chops_to_award
+        chops_earned = 0
         
         # Update alert share count
         alert.total_shares += 1
@@ -363,9 +363,9 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
         user_alert.chops_earned_from_share = chops_to_award
         
         # Award chops
-        user.total_chops += chops_to_award
-        user.alert_sharing_chops += chops_to_award
-        chops_earned = chops_to_award
+        # user.total_chops += chops_to_award
+        # user.alert_sharing_chops += chops_to_award
+        chops_earned = 0
         
         # Update alert share count
         alert.total_shares += 1

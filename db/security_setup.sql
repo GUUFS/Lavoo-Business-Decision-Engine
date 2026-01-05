@@ -23,7 +23,7 @@ CREATE OR REPLACE VIEW security_metrics_summary AS
 SELECT
     (SELECT COUNT(*) FROM security_events WHERE created_at > NOW() - INTERVAL '24 hours') as total_events_24h,
     (SELECT COUNT(*) FROM security_events WHERE severity = 'high' AND created_at > NOW() - INTERVAL '24 hours') as high_severity_events_24h,
-    (SELECT COUNT(*) FROM security_events WHERE type = 'blocked_attack' AND created_at > NOW() - INTERVAL '24 hours') as blocked_attacks_24h,
+    (SELECT COUNT(*) FROM security_events WHERE type IN ('blocked_attack', 'ip_blocked') AND created_at > NOW() - INTERVAL '24 hours') as blocked_attacks_24h,
     (SELECT COUNT(*) FROM failed_login_attempts WHERE created_at > NOW() - INTERVAL '24 hours') as failed_logins_24h,
     (SELECT COUNT(*) FROM ip_blacklist WHERE is_active = true) as active_blacklisted_ips,
     (SELECT COUNT(*) FROM firewall_rules WHERE is_active = true) as active_firewall_rules;
@@ -72,8 +72,8 @@ BEGIN
           AND type = 'failed_login'
           AND created_at > NOW() - INTERVAL '15 minutes';
           
-        -- If more than 3 failed attempts, block the IP
-        IF failed_count >= 3 THEN
+        -- If more than 5 failed attempts, block the IP
+        IF failed_count >= 5 THEN
             -- Get the email from the most recent failed login attempt
             SELECT email INTO attempt_email
             FROM failed_login_attempts
@@ -82,9 +82,9 @@ BEGIN
             LIMIT 1;
             
             INSERT INTO ip_blacklist (ip_address, reason, email, expires_at)
-            VALUES (NEW.ip_address, 'Brute force protection: Multiple failed logins', attempt_email, NOW() + INTERVAL '24 hours')
+            VALUES (NEW.ip_address, 'Brute force protection: Multiple failed logins', attempt_email, NULL)
             ON CONFLICT (ip_address) DO UPDATE 
-            SET expires_at = NOW() + INTERVAL '24 hours', is_active = true, email = EXCLUDED.email;
+            SET expires_at = NULL, is_active = true, email = EXCLUDED.email;
             
             -- Log the block event
             INSERT INTO security_events (type, severity, description, ip_address, status)

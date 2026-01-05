@@ -1,10 +1,11 @@
 
 import { useState } from 'react';
+import { toast } from 'react-toastify';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import AdminHeader from '../../../components/feature/AdminHeader';
 
 export default function AdminContentManagement() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('insights');
 
   // Form states for each tab
@@ -51,7 +52,7 @@ export default function AdminContentManagement() {
       whyItMatters: '',
       actionToTake: ''
     });
-    alert('Insight uploaded successfully!');
+    toast.success('Insight uploaded successfully!');
   };
 
   const handleAlertSubmit = (e: React.FormEvent) => {
@@ -67,7 +68,7 @@ export default function AdminContentManagement() {
       industry: '',
       score: ''
     });
-    alert('Alert uploaded successfully!');
+    toast.success('Alert uploaded successfully!');
   };
 
   const handleTrendSubmit = (e: React.FormEvent) => {
@@ -96,50 +97,13 @@ export default function AdminContentManagement() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebar 
-        isMobileMenuOpen={isMobileMenuOpen} 
-        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      <AdminSidebar
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
       />
-      
+
       <div className="flex-1 ml-0 flex flex-col">
-        {/* Admin Header */}
-        <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100"
-            >
-              <i className="ri-menu-line text-xl"></i>
-            </button>
-            <div className="flex-1"></div>
-            <div className="relative">
-              <button 
-                onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                  <i className="ri-user-line text-red-600"></i>
-                </div>
-                <span className="font-medium text-gray-900">Admin User</span>
-                <i className="ri-arrow-down-s-line text-gray-400"></i>
-              </button>
-              
-              {/* Profile Dropdown */}
-              {isProfileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-                  <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3">
-                    <i className="ri-user-line text-gray-500"></i>
-                    Profile
-                  </button>
-                  <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3">
-                    <i className="ri-logout-box-line text-gray-500"></i>
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <AdminHeader setIsMobileMenuOpen={setIsMobileMenuOpen} />
 
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-4xl mx-auto">
@@ -157,11 +121,10 @@ export default function AdminContentManagement() {
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${
-                        activeTab === tab.id
-                          ? 'border-red-500 text-red-600'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
+                      className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === tab.id
+                        ? 'border-red-500 text-red-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
                     >
                       <i className={`${tab.icon} text-lg`}></i>
                       {tab.label}
@@ -182,7 +145,7 @@ export default function AdminContentManagement() {
                         <input
                           type="text"
                           value={insightForm.title}
-                          onChange={(e) => setInsightForm({...insightForm, title: e.target.value})}
+                          onChange={(e) => setInsightForm({ ...insightForm, title: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                           placeholder="Enter insight title"
                           required
@@ -194,7 +157,7 @@ export default function AdminContentManagement() {
                         </label>
                         <select
                           value={insightForm.industry}
-                          onChange={(e) => setInsightForm({...insightForm, industry: e.target.value})}
+                          onChange={(e) => setInsightForm({ ...insightForm, industry: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-8"
                           required
                         >
@@ -219,7 +182,7 @@ export default function AdminContentManagement() {
                       </label>
                       <select
                         value={insightForm.priority}
-                        onChange={(e) => setInsightForm({...insightForm, priority: e.target.value})}
+                        onChange={(e) => setInsightForm({ ...insightForm, priority: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-8"
                       >
                         <option value="low">Low</option>
@@ -235,7 +198,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={insightForm.whatChanged}
-                        onChange={(e) => setInsightForm({...insightForm, whatChanged: e.target.value})}
+                        onChange={(e) => setInsightForm({ ...insightForm, whatChanged: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="Describe what has changed in the industry or market"
@@ -249,7 +212,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={insightForm.whyItMatters}
-                        onChange={(e) => setInsightForm({...insightForm, whyItMatters: e.target.value})}
+                        onChange={(e) => setInsightForm({ ...insightForm, whyItMatters: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="Explain why this change is significant and its impact"
@@ -263,7 +226,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={insightForm.actionToTake}
-                        onChange={(e) => setInsightForm({...insightForm, actionToTake: e.target.value})}
+                        onChange={(e) => setInsightForm({ ...insightForm, actionToTake: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="Recommend specific actions businesses should take"
@@ -292,7 +255,7 @@ export default function AdminContentManagement() {
                         </label>
                         <select
                           value={alertForm.priority}
-                          onChange={(e) => setAlertForm({...alertForm, priority: e.target.value})}
+                          onChange={(e) => setAlertForm({ ...alertForm, priority: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-8"
                         >
                           <option value="low">Low</option>
@@ -308,7 +271,7 @@ export default function AdminContentManagement() {
                         <input
                           type="text"
                           value={alertForm.title}
-                          onChange={(e) => setAlertForm({...alertForm, title: e.target.value})}
+                          onChange={(e) => setAlertForm({ ...alertForm, title: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                           placeholder="Enter alert title"
                           required
@@ -323,7 +286,7 @@ export default function AdminContentManagement() {
                         </label>
                         <select
                           value={alertForm.industry}
-                          onChange={(e) => setAlertForm({...alertForm, industry: e.target.value})}
+                          onChange={(e) => setAlertForm({ ...alertForm, industry: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-8"
                           required
                         >
@@ -347,7 +310,7 @@ export default function AdminContentManagement() {
                         <input
                           type="number"
                           value={alertForm.score}
-                          onChange={(e) => setAlertForm({...alertForm, score: e.target.value})}
+                          onChange={(e) => setAlertForm({ ...alertForm, score: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                           placeholder="Enter score (0-100)"
                           min="0"
@@ -363,7 +326,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={alertForm.whyActNow}
-                        onChange={(e) => setAlertForm({...alertForm, whyActNow: e.target.value})}
+                        onChange={(e) => setAlertForm({ ...alertForm, whyActNow: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="Explain the urgency and time-sensitive nature"
@@ -377,7 +340,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={alertForm.potentialReward}
-                        onChange={(e) => setAlertForm({...alertForm, potentialReward: e.target.value})}
+                        onChange={(e) => setAlertForm({ ...alertForm, potentialReward: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="Describe the potential benefits and rewards"
@@ -391,7 +354,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={alertForm.actionRequired}
-                        onChange={(e) => setAlertForm({...alertForm, actionRequired: e.target.value})}
+                        onChange={(e) => setAlertForm({ ...alertForm, actionRequired: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="Specify the exact actions that need to be taken"
@@ -421,7 +384,7 @@ export default function AdminContentManagement() {
                         <input
                           type="text"
                           value={trendForm.title}
-                          onChange={(e) => setTrendForm({...trendForm, title: e.target.value})}
+                          onChange={(e) => setTrendForm({ ...trendForm, title: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                           placeholder="Enter trend title"
                           required
@@ -433,7 +396,7 @@ export default function AdminContentManagement() {
                         </label>
                         <select
                           value={trendForm.industry}
-                          onChange={(e) => setTrendForm({...trendForm, industry: e.target.value})}
+                          onChange={(e) => setTrendForm({ ...trendForm, industry: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-8"
                           required
                         >
@@ -459,7 +422,7 @@ export default function AdminContentManagement() {
                         </label>
                         <select
                           value={trendForm.nature}
-                          onChange={(e) => setTrendForm({...trendForm, nature: e.target.value})}
+                          onChange={(e) => setTrendForm({ ...trendForm, nature: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-8"
                           required
                         >
@@ -481,7 +444,7 @@ export default function AdminContentManagement() {
                         <input
                           type="number"
                           value={trendForm.score}
-                          onChange={(e) => setTrendForm({...trendForm, score: e.target.value})}
+                          onChange={(e) => setTrendForm({ ...trendForm, score: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                           placeholder="Enter viral score (0-100)"
                           min="0"
@@ -499,7 +462,7 @@ export default function AdminContentManagement() {
                         <input
                           type="text"
                           value={trendForm.hashtags}
-                          onChange={(e) => setTrendForm({...trendForm, hashtags: e.target.value})}
+                          onChange={(e) => setTrendForm({ ...trendForm, hashtags: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                           placeholder="#hashtag1 #hashtag2 #hashtag3"
                         />
@@ -511,7 +474,7 @@ export default function AdminContentManagement() {
                         <input
                           type="text"
                           value={trendForm.searchVolume}
-                          onChange={(e) => setTrendForm({...trendForm, searchVolume: e.target.value})}
+                          onChange={(e) => setTrendForm({ ...trendForm, searchVolume: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                           placeholder="e.g., 1.2M searches/month"
                           required
@@ -526,7 +489,7 @@ export default function AdminContentManagement() {
                       <input
                         type="text"
                         value={trendForm.opportunity}
-                        onChange={(e) => setTrendForm({...trendForm, opportunity: e.target.value})}
+                        onChange={(e) => setTrendForm({ ...trendForm, opportunity: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="e.g., 85% opportunity score"
                         required
@@ -539,7 +502,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={trendForm.description}
-                        onChange={(e) => setTrendForm({...trendForm, description: e.target.value})}
+                        onChange={(e) => setTrendForm({ ...trendForm, description: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="Describe the trend, its origin, and why it's gaining popularity"
@@ -553,7 +516,7 @@ export default function AdminContentManagement() {
                       </label>
                       <textarea
                         value={trendForm.actionItems}
-                        onChange={(e) => setTrendForm({...trendForm, actionItems: e.target.value})}
+                        onChange={(e) => setTrendForm({ ...trendForm, actionItems: e.target.value })}
                         rows={4}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                         placeholder="List specific action items businesses can take to leverage this trend"

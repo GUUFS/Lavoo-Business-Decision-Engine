@@ -5,7 +5,7 @@ from datetime import datetime
 
 from db.pg_connections import get_db
 from db.pg_models import (User, Insight, UserInsight, UserResponse, UserCreate, InsightResponse, InsightCreate,
-                            ViewInsightRequest, ShareInsightRequest, UserPinnedInsight, ChopsBreakdown, PinInsightRequest)
+                            ViewInsightRequest, ShareInsightRequest, UserPinnedInsight, ChopsBreakdown, PinInsightRequest, BusinessAnalysis)
 from api.routes.login import get_current_user
 from api.routes.alerts import is_pro_user
 
@@ -45,32 +45,20 @@ def get_user_stats(
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
+    # Get total analyses count for user
+    total_analyses = db.query(BusinessAnalysis).filter(BusinessAnalysis.user_id == user.id).count()
+
     # Get total insights
     total_insights = db.query(Insight).filter(Insight.is_active == True).count()
     insight_reading_chops = user.insight_reading_chops or 0
     insight_sharing_chops = user.insight_sharing_chops or 0
     total_insight_chops = insight_reading_chops + insight_sharing_chops
 
-    # Get read today count
-    ''''
-    from datetime import date
-    today = date.today()
-    read_today = db.query(UserInsight).filter(
-        UserInsight.user_id == user.id,
-        UserInsight.has_viewed == True,
-        UserInsight.viewed_at >= today
-    ).count()
-    
-    # Get shared count
-    shared_count = db.query(UserInsight).filter(
-        UserInsight.user_id == user.id,
-        UserInsight.has_shared == True
-    ).count()'''
-    
     return {
         "total_chops": user.total_chops,
         "is_pro": is_pro_user(user.subscription_status),
         "total_insights": total_insights,
+        "total_analyses": total_analyses, # Added this
         "viewed_insight_chops": insight_reading_chops,
         "shared_insight_chops": insight_sharing_chops,
         "total_insight_chops": total_insight_chops

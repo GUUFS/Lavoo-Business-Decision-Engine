@@ -1,6 +1,7 @@
 
 import Button from '../../components/base/Button';
 import { useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { getUserAnalyses, getAnalysisById, type BusinessAnalysisResult } from '../../api/business-analyzer';
 
@@ -230,7 +231,7 @@ export default function Results() {
         if (index % 2 === 0 && index > 0) yPos += 40;
 
         const [r, g, b] = metric.color;
-        doc.setFillColor(r, g, b );
+        doc.setFillColor(r, g, b);
         doc.roundedRect(xPos, yPos, 80, 30, 3, 3, 'F');
 
         doc.setTextColor(255, 255, 255);
@@ -471,7 +472,7 @@ export default function Results() {
 
     } catch (error) {
       console.error('Error generating PDF:', error);
-      alert('Error generating PDF report. Please try again.');
+      toast.error('Error generating PDF report. Please try again.');
     } finally {
       setIsGeneratingPDF(false);
       setCustomWatermark('');
@@ -893,12 +894,11 @@ export default function Results() {
                     key={tool.id}
                     className="py-3 px-4 text-gray-600"
                   >
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      tool.comparison?.learningCurve === 'Easy' ? 'bg-green-100 text-green-800' :
-                      tool.comparison?.learningCurve === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
-                      tool.comparison?.learningCurve === 'Hard' ? 'bg-red-100 text-red-800' :
-                      'bg-gray-100 text-gray-800'
-                    }`}>
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${tool.comparison?.learningCurve === 'Easy' ? 'bg-green-100 text-green-800' :
+                        tool.comparison?.learningCurve === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
+                          tool.comparison?.learningCurve === 'Hard' ? 'bg-red-100 text-red-800' :
+                            'bg-gray-100 text-gray-800'
+                      }`}>
                       {tool.comparison?.learningCurve || 'N/A'}
                     </span>
                   </td>
@@ -1027,34 +1027,34 @@ export default function Results() {
 
       <div className="bg-gradient-to-br from-orange-50 to-white">
 
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
-        <p className="text-gray-600 mt-2 text-right">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 space-y-4 sm:space-y-0">
+            <p className="text-gray-600 mt-2 text-right">
               Generated on {new Date().toLocaleDateString()}
-        </p>
-      </div>
-      <div className="flex space-x-3 justify-end items-start relative">
-        <div className='relative'>
-        <button
-              onClick={() => generatePDFReport()}
-              onMouseEnter={() => setShowWatermarkForm(true)}
-              onMouseLeave={() => !customWatermark && setShowWatermarkForm(false)}
-              disabled={isGeneratingPDF}
-              className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isGeneratingPDF ? (
-          <>
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-              <span>Generating...</span>
-          </>
-        ) : (
-          <>
-          <i className="ri-download-line"></i>
-          <span>Download Report</span>
-          </>)}
-        </button>
+            </p>
+          </div>
+          <div className="flex space-x-3 justify-end items-start relative">
+            <div className='relative'>
+              <button
+                onClick={() => generatePDFReport()}
+                onMouseEnter={() => setShowWatermarkForm(true)}
+                onMouseLeave={() => !customWatermark && setShowWatermarkForm(false)}
+                disabled={isGeneratingPDF}
+                className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isGeneratingPDF ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <i className="ri-download-line"></i>
+                    <span>Download Report</span>
+                  </>)}
+              </button>
 
-        {/* Watermark Customization Dropdown */}
+              {/* Watermark Customization Dropdown */}
               {showWatermarkForm && (
                 <div
                   className="absolute top-full left-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-50"
@@ -1097,15 +1097,15 @@ export default function Results() {
               )}
             </div>
 
-        <button
-          onClick={() => navigate('/analysis-history')}
-          className="bg-white text-gray-700 border border-gray-300 px-6 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2 whitespace-nowrap"
-        >
-          <i className="ri-history-line"></i>
-          <span>Analysis History</span>
-        </button>
-      </div>
-              </div>
+            <button
+              onClick={() => navigate('/analysis-history')}
+              className="bg-white text-gray-700 border border-gray-300 px-6 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2 whitespace-nowrap"
+            >
+              <i className="ri-history-line"></i>
+              <span>Analysis History</span>
+            </button>
+          </div>
+        </div>
 
         {/* Hero Section */}
         <section className="bg-gradient-to-br from-orange-50 to-white pt-10 sm:pt-12 md:pt-8">
@@ -1127,7 +1127,7 @@ export default function Results() {
         </section>
 
 
-       {/* Navigation Tabs */}
+        {/* Navigation Tabs */}
         <div className="bg-white rounded-lg shadow-sm mb-8">
           <div className="border-b border-gray-200">
             <nav className="flex space-x-8 px-6">
@@ -1141,11 +1141,10 @@ export default function Results() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 whitespace-nowrap ${
-                    activeTab === tab.id
+                  className={`flex items-center space-x-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors duration-200 whitespace-nowrap ${activeTab === tab.id
                       ? 'border-orange-500 text-orange-600'
                       : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
+                    }`}
                 >
                   <i className={tab.icon}></i>
                   <span>{tab.label}</span>
@@ -1176,11 +1175,10 @@ export default function Results() {
                             #{index + 1}
                           </span>
                           <span
-                            className={`text-xs font-semibold px-2 py-1 rounded ${
-                              bottleneck.priority === 'HIGH'
+                            className={`text-xs font-semibold px-2 py-1 rounded ${bottleneck.priority === 'HIGH'
                                 ? 'bg-red-100 text-red-800'
                                 : 'bg-yellow-100 text-yellow-800'
-                            }`}
+                              }`}
                           >
                             {bottleneck.priority} PRIORITY
                           </span>
@@ -1194,8 +1192,8 @@ export default function Results() {
                         </div>
                       </div>
                       <div className="ml-4">
-                          <i className="ri-arrow-right-line text-orange-600 text-xl"></i>
-                        </div>
+                        <i className="ri-arrow-right-line text-orange-600 text-xl"></i>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1203,7 +1201,7 @@ export default function Results() {
             </div>
           )}
 
-         {/* Solutions Tab */}
+          {/* Solutions Tab */}
           {activeTab === 'solutions' && (
             <div>
               <div className="flex items-center justify-between mb-6">
@@ -1393,11 +1391,10 @@ export default function Results() {
                                 <button
                                   onClick={() => toggleImplementationDropdown(tool.id)}
                                   disabled={implementedSolutions.has(tool.id + 100)}
-                                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors duration-200 whitespace-nowrap ${
-                                    implementedSolutions.has(tool.id + 100)
+                                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors duration-200 whitespace-nowrap ${implementedSolutions.has(tool.id + 100)
                                       ? 'bg-green-100 text-green-700 cursor-not-allowed'
                                       : 'bg-orange-500 text-white hover:bg-orange-600'
-                                  }`}
+                                    }`}
                                 >
                                   {implementedSolutions.has(tool.id + 100) ? (
                                     <span className="flex items-center justify-center space-x-1">
@@ -1436,11 +1433,10 @@ export default function Results() {
                                     </div>
                                     <div className="bg-white p-3 rounded-lg border border-blue-200">
                                       <div className="text-sm font-medium text-blue-800 mb-1">Difficulty</div>
-                                      <div className={`font-semibold ${
-                                        tool.implementation?.difficulty === 'Easy' ? 'text-green-600' :
-                                        tool.implementation?.difficulty === 'Medium' ? 'text-yellow-600' :
-                                        'text-red-600'
-                                      }`}>
+                                      <div className={`font-semibold ${tool.implementation?.difficulty === 'Easy' ? 'text-green-600' :
+                                          tool.implementation?.difficulty === 'Medium' ? 'text-yellow-600' :
+                                            'text-red-600'
+                                        }`}>
                                         {tool.implementation?.difficulty || 'N/A'}
                                       </div>
                                     </div>
@@ -1735,31 +1731,31 @@ export default function Results() {
 
         </div>
 
-           {/* CTA Section */}
-      <section className="py-10 sm:py-12 md:py-16 bg-gradient-to-br from-orange-50 to-white">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-4 sm:mb-6 text-black">
-            Ready to Get Started?
-          </h2>
-          <p className="text-base sm:text-lg md:text-xl mb-6 sm:mb-8 text-gray-600 px-4">
-            Our team of AI implementation experts is ready to help you bring these recommendations to life.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
-            <Button variant="primary" size="lg" className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8"
-              onClick={() => navigate('/dashboard/customer-service')}>
-              <i className="ri-calendar-line mr-2"></i>
-              Contact us
-            </Button>
-            <Button onClick={generatePDFReport}
-              disabled={isGeneratingPDF}
-              variant="outline" size="lg" className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8">
-              <i className="ri-download-line mr-2"></i>
-              Download Report
-            </Button>
+        {/* CTA Section */}
+        <section className="py-10 sm:py-12 md:py-16 bg-gradient-to-br from-orange-50 to-white">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-4 sm:mb-6 text-black">
+              Ready to Get Started?
+            </h2>
+            <p className="text-base sm:text-lg md:text-xl mb-6 sm:mb-8 text-gray-600 px-4">
+              Our team of AI implementation experts is ready to help you bring these recommendations to life.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
+              <Button variant="primary" size="lg" className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8"
+                onClick={() => navigate('/dashboard/customer-service')}>
+                <i className="ri-calendar-line mr-2"></i>
+                Contact us
+              </Button>
+              <Button onClick={generatePDFReport}
+                disabled={isGeneratingPDF}
+                variant="outline" size="lg" className="w-full sm:w-auto text-base sm:text-lg px-6 sm:px-8">
+                <i className="ri-download-line mr-2"></i>
+                Download Report
+              </Button>
+            </div>
           </div>
-        </div>
-      </section>
-        </div>
+        </section>
+      </div>
 
     </div>
   );

@@ -40,8 +40,8 @@ export const useAdmin = () => {
       // Save token to cookies (30-minute expiry)
       Cookies.set("access_token", data.access_token, {
         expires: 1 / 48, // 30 minutes = 1/48 of a day
-        secure: true,
-        sameSite: "strict",
+        secure: window.location.protocol === "https:",
+        sameSite: "lax",
       });
       toast.success("Admin Login successful!");
     },
@@ -78,8 +78,8 @@ export const useLogin = () => {
       // Save token to cookies (30-minute expiry)
       Cookies.set("access_token", data.access_token, {
         expires: 1 / 48, // 30 minutes = 1/48 of a day
-        secure: true,
-        sameSite: "strict",
+        secure: window.location.protocol === "https:",
+        sameSite: "lax",
       });
 
       toast.success("Login successful!");

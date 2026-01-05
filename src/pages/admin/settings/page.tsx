@@ -142,10 +142,8 @@ export default function AdminSettings() {
   const tabs = [
     { id: 'general', label: 'General', icon: 'ri-settings-line' },
     { id: 'ai', label: 'AI Configuration', icon: 'ri-robot-line' },
-    { id: 'security', label: 'Security', icon: 'ri-shield-line' },
     { id: 'billing', label: 'Billing', icon: 'ri-money-dollar-circle-line' },
-    { id: 'integrations', label: 'Integrations', icon: 'ri-plug-line' },
-    { id: 'maintenance', label: 'Maintenance', icon: 'ri-tools-line' }
+    { id: 'integrations', label: 'Integrations', icon: 'ri-plug-line' }
   ];
 
   return (
@@ -310,48 +308,7 @@ export default function AdminSettings() {
                       </div>
                     )}
 
-                    {/* Security Settings */}
-                    {activeTab === 'security' && (
-                      <div className="space-y-6">
-                        <div>
-                          <h3 className="text-lg font-semibold text-gray-900 mb-4">Authentication Policy</h3>
-                          <div className="space-y-2 p-4 bg-gray-50 rounded-lg mb-4">
-                            <div className="flex items-center">
-                              <i className={`ri-checkbox-${settings.require_mfa_admin ? 'circle-fill text-green-500' : 'blank-circle-line text-gray-400'} mr-2`}></i>
-                              <span>Require MFA for Admins</span>
-                            </div>
-                            <div className="flex items-center">
-                              <i className={`ri-checkbox-${settings.force_password_reset_90 ? 'circle-fill text-green-500' : 'blank-circle-line text-gray-400'} mr-2`}></i>
-                              <span>Force 90-day Password Reset</span>
-                            </div>
-                            <div className="flex items-center">
-                              <i className={`ri-checkbox-${settings.lock_accounts_after_failed_attempts ? 'circle-fill text-green-500' : 'blank-circle-line text-gray-400'} mr-2`}></i>
-                              <span>Lock After Failed Attempts</span>
-                            </div>
-                          </div>
-                          <h3 className="text-lg font-semibold text-gray-900 mb-4">Data Policy</h3>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-gray-50 rounded-lg">
-                            <div>
-                              <label className="block text-sm font-medium text-gray-500 mb-1">Retention Period</label>
-                              <p className="text-gray-900 font-medium">{settings.data_retention_days} days</p>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-500 mb-1">Backup Freq</label>
-                              <p className="text-gray-900 font-medium capitalize">{settings.backup_frequency}</p>
-                            </div>
-                          </div>
-                        </div>
 
-                        <div className="flex justify-end">
-                          <button
-                            onClick={() => handleOpenModal('security')}
-                            className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors whitespace-nowrap"
-                          >
-                            Edit System
-                          </button>
-                        </div>
-                      </div>
-                    )}
 
                     {/* Billing Settings */}
                     {activeTab === 'billing' && (
@@ -538,38 +495,7 @@ export default function AdminSettings() {
                 </>
               )}
 
-              {editSection === 'security' && (
-                <>
-                  <div className="space-y-3 mb-6">
-                    <label className="flex items-center">
-                      <input type="checkbox" checked={formData.require_mfa_admin} onChange={e => handleChange('require_mfa_admin', e.target.checked)} className="rounded text-red-600" />
-                      <span className="ml-2">Require MFA for Admins</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input type="checkbox" checked={formData.force_password_reset_90} onChange={e => handleChange('force_password_reset_90', e.target.checked)} className="rounded text-red-600" />
-                      <span className="ml-2">Force 90-day Password Reset</span>
-                    </label>
-                    <label className="flex items-center">
-                      <input type="checkbox" checked={formData.lock_accounts_after_failed_attempts} onChange={e => handleChange('lock_accounts_after_failed_attempts', e.target.checked)} className="rounded text-red-600" />
-                      <span className="ml-2">Lock Accounts After Failed Attempts</span>
-                    </label>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Data Retention (Days)</label>
-                      <input type="number" value={formData.data_retention_days} onChange={e => handleChange('data_retention_days', parseInt(e.target.value))} className="w-full px-3 py-2 border rounded-lg" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Backup Frequency</label>
-                      <select value={formData.backup_frequency} onChange={e => handleChange('backup_frequency', e.target.value)} className="w-full px-3 py-2 border rounded-lg">
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="monthly">Monthly</option>
-                      </select>
-                    </div>
-                  </div>
-                </>
-              )}
+
             </div>
 
             <div className="p-6 border-t border-gray-200 flex justify-end gap-3">

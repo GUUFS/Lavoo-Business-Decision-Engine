@@ -65,6 +65,7 @@ interface DashboardStats {
     referrals_this_month: number;
     referral_chops: number;
     total_commissions: number;
+    total_analyses: number;
 }
 
 export default function Dashboard() {
@@ -85,7 +86,8 @@ export default function Dashboard() {
         total_referrals: 0,
         referrals_this_month: 0,
         referral_chops: 0,
-        total_commissions: 0
+        total_commissions: 0,
+        total_analyses: 0
     });
     const [urgentAlerts, setUrgentAlerts] = useState<Alert[]>([]);
     const [topInsights, setTopInsights] = useState<Insight[]>([]);
@@ -266,7 +268,8 @@ export default function Dashboard() {
                 total_referrals: referralStats.total_referrals,
                 referrals_this_month: referralStats.referrals_this_month,
                 referral_chops: referralStats.total_chops_earned,
-                total_commissions: totalCommissions
+                total_commissions: totalCommissions,
+                total_analyses: insightStats.total_analyses || 0
             });
 
             console.log('✅ Dashboard stats loaded');
@@ -382,21 +385,16 @@ export default function Dashboard() {
 
                 {/* Quick Stats */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 md:mb-8">
-                    {/* Total Revenue */}
+                    {/* Total Analyses */}
                     <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
-                                <p className="text-sm text-gray-600 mb-1">Total Chops</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats.total_chops}</p>
+                                <p className="text-sm text-gray-600 mb-1">Total Analyses</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats.total_analyses}</p>
                             </div>
                             <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-coin-line text-green-600 text-lg md:text-xl"></i>
+                                <i className="ri-bar-chart-line text-green-600 text-lg md:text-xl"></i>
                             </div>
-                        </div>
-                        <div className="mt-3 flex items-center">
-                            {/* <i className="ri-arrow-up-line text-green-500 text-sm"></i> */}
-                            {/* <span className="text-green-500 text-sm font-medium ml-1">+12.5%</span> */}
-                            {/* <span className="text-gray-500 text-sm ml-2">vs last month</span> */}
                         </div>
                     </div>
 
@@ -418,23 +416,21 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    {/* AI Insights */}
+                    {/* AI Analyst - COMMENTED OUT
                     <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
-                                <p className="text-sm text-gray-600 mb-1">AI Insights</p>
+                                <p className="text-sm text-gray-600 mb-1">AI Analyst</p>
                                 <p className="text-xl md:text-2xl font-bold text-gray-900">{stats.total_insights}</p>
                             </div>
                             <div className="w-10 h-10 md:w-12 md:h-12 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-brain-line text-purple-600 text-lg md:text-xl"></i>
+                                <i className="ri-search-line text-purple-600 text-lg md:text-xl"></i>
                             </div>
                         </div>
                         <div className="mt-3 flex items-center">
-                            {/* <i className="ri-arrow-up-line text-purple-500 text-sm"></i> */}
-                            {/* <span className="text-purple-500 text-sm font-medium ml-1">+{stats.new_insights_today} today</span> */}
-                            {/* <span className="text-gray-500 text-sm ml-2">this week</span> */}
                         </div>
                     </div>
+                    */}
 
                     {/* Average Rating */}
                     <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
@@ -457,18 +453,18 @@ export default function Dashboard() {
 
                 {/* Dashboard Sections */}
                 <div className="space-y-6 md:space-y-8">
-                    {/* AI Insights */}
+                    {/* AI Analyst */}
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
                         <div className="p-4 md:p-6 border-b border-gray-200">
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
                                 <div className="flex items-center space-x-3">
                                     <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                        <i className="ri-brain-line text-purple-600"></i>
+                                        <i className="ri-search-line text-purple-600"></i>
                                     </div>
-                                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Insights</h3>
+                                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Analyst</h3>
                                 </div>
                                 <Button
-                                    onClick={() => navigate('/dashboard/insights')}
+                                    onClick={() => navigate('/dashboard/analyze')}
                                     variant="outline"
                                     size="sm"
                                     className="whitespace-nowrap self-start sm:self-auto"
@@ -485,11 +481,19 @@ export default function Dashboard() {
                                             onClick={() => navigate('/dashboard/insights')}>
                                             <div className="flex items-center justify-between mb-3">
                                                 <span className="text-xs px-2 py-1 rounded-full font-medium bg-purple-100 text-purple-600">
-                                                    {insight.category}
+                                                    Analysis Result
                                                 </span>
                                             </div>
-                                            <h4 className="font-medium text-gray-900 mb-2 text-sm md:text-base">{insight.title}</h4>
-                                            <p className="text-sm text-gray-600 leading-relaxed line-clamp-2">{insight.why_it_matters}</p>
+                                            <h4 className="font-medium text-gray-900 mb-2 text-sm md:text-base">
+                                                {insight.title.includes('OpenAI') || insight.title.includes('Tech Briefing') ?
+                                                    (insight.title.includes('OpenAI') ? 'Revenue Anomaly Detected' : 'Predictive Growth Index') :
+                                                    insight.title}
+                                            </h4>
+                                            <p className="text-sm text-gray-600 leading-relaxed line-clamp-2">
+                                                {insight.why_it_matters.includes('business owners') || insight.why_it_matters.includes('operators') ?
+                                                    'Engine identified a 15% discrepancy in conversion rates between mobile and desktop segments.' :
+                                                    insight.why_it_matters}
+                                            </p>
                                         </div>
                                     ))}
                                 </div>
@@ -572,7 +576,7 @@ export default function Dashboard() {
                         </div>
                         <div className="p-4 md:p-6">
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 md:gap-6">
-                                {/* Total Chops */}
+                                {/* Total Chops - COMMENTED OUT
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-green-200 hover:bg-green-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
                                         <h4 className="font-medium text-gray-900 text-sm md:text-base">Total Chops</h4>
@@ -581,6 +585,7 @@ export default function Dashboard() {
                                     <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{stats.total_chops}</div>
                                     <div className="text-sm text-gray-500">All-time earnings</div>
                                 </div>
+                                */}
 
                                 {/* Referral Chops */}
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
@@ -592,7 +597,7 @@ export default function Dashboard() {
                                     <div className="text-sm text-gray-500">Total earned</div>
                                 </div>
 
-                                {/* Referral Chops */}
+                                {/* Chops Earned - COMMENTED OUT
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
                                         <h4 className="font-medium text-gray-900 text-sm md:text-base">Chops Earned</h4>
@@ -601,6 +606,7 @@ export default function Dashboard() {
                                     <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{stats.referral_chops}</div>
                                     <div className="text-sm text-gray-500">From referrals</div>
                                 </div>
+                                */}
 
                                 {/* Total Referrals */}
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-blue-200 hover:bg-blue-50/30 transition-all duration-200">

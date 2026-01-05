@@ -68,11 +68,24 @@ class FirewallManager:
         Returns None if allowed, dict with error if blocked
         """
         try:
-            client_ip = request.client.host if request.client else "unknown"
+            client_ip = self._get_client_ip(request)
             user_agent = request.headers.get("user-agent", "unknown")
             path = request.url.path
             method = request.method
             
+            # Identify if request has body (POST/PUT/PATCH)
+            body_content = ""
+            if method in ["POST", "PUT", "PATCH"]:
+                try:
+                    # We need to read the body without consuming it permanently for the endpoint
+                    # This is tricky in FastAPI/Starlette. 
+                    # The Middleware calling this must handle the body restoration.
+                    # Here we assume request.state.body has been set by middleware if available
+                    if hasattr(request.state, "body"):
+                        body_content = request.state.body.decode("utf-8", errors="ignore")
+                except Exception as e:
+                    logger.debug(f"Could not read body for WAF: {e}")
+
             # Reload rules periodically (every 100 requests)
             if not hasattr(self, '_request_count'):
                 self._request_count = 0
@@ -80,13 +93,20 @@ class FirewallManager:
             if self._request_count % 100 == 0:
                 self.load_rules(db)
             
-            # Process each rule
+            # 1. Behavior Analysis (Auto-Detection)
+            behavior_block = self._analyze_behavior(client_ip, path, method)
+            if behavior_block:
+                 return behavior_block
+
+            # 2. Process each configured rule
             for rule in self.rules:
                 should_block = self._evaluate_rule(rule, {
                     'ip': client_ip,
                     'user_agent': user_agent,
                     'path': path,
-                    'method': method
+                    'method': method,
+                    'body': body_content,
+                    'query_params': dict(request.query_params)
                 })
                 
                 if should_block:
@@ -119,6 +139,69 @@ class FirewallManager:
         except Exception as e:
             logger.error(f"Firewall processing error: {e}")
             return None  # Don't block on errors
+
+    def _get_client_ip(self, request: Request) -> str:
+        """
+        Extract the true Public IP from request headers.
+        Prioritizes X-Forwarded-For to handle proxies/load balancers.
+        Ignores private/internal IPs if a valid public IP is found.
+        """
+        try:
+            # 1. Check X-Forwarded-For (standard proxy header)
+            x_forwarded_for = request.headers.get("X-Forwarded-For")
+            if x_forwarded_for:
+                # Header format: client, proxy1, proxy2
+                # We want the FIRST valid public IP
+                ips = [ip.strip() for ip in x_forwarded_for.split(",")]
+                for ip_str in ips:
+                    if self._is_public_ip(ip_str):
+                        return ip_str
+            
+            # 2. Fallback to direct client host
+            return request.client.host if request.client else "unknown"
+        except Exception:
+            return request.client.host if request.client else "unknown"
+
+    def _is_public_ip(self, ip_str: str) -> bool:
+        """Check if IP is public (IPv4 or IPv6)"""
+        import ipaddress
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            return not ip.is_private and not ip.is_loopback and not ip.is_link_local
+        except ValueError:
+            return False
+
+    def _analyze_behavior(self, ip: str, path: str, method: str) -> Optional[dict]:
+        """
+        Analyze request behavior for suspicious patterns.
+        Currently implements: rapid request flood detection.
+        """
+        # Simple memory-based rate tracking (reset every minute by _check_rate_limit cleanup or logic)
+        # For this demo, we'll check if a single IP hits > 20 req/sec (aggressive flood)
+        # Note: Proper behavior analysis requires Redis or persistent state, using volatile dict for now.
+        
+        now = datetime.now()
+        key = f"behavior:{ip}"
+        
+        if not hasattr(self, '_behavior_tracking'):
+            self._behavior_tracking = {}
+            
+        if key not in self._behavior_tracking:
+            self._behavior_tracking[key] = {'count': 1, 'start': now}
+        else:
+            data = self._behavior_tracking[key]
+            # Reset if window > 1 second
+            if (now - data['start']).total_seconds() > 1:
+                self._behavior_tracking[key] = {'count': 1, 'start': now}
+            else:
+                data['count'] += 1
+                if data['count'] > 5: # Blocking threshold: >5 reqs/sec
+                    return {
+                        'error': 'Access denied', 
+                        'message': 'Suspicious behavior detected (Request Flood)'
+                    }
+        return None
+
     
     def _evaluate_rule(self, rule: FirewallRule, context: dict) -> bool:
         """Evaluate a single firewall rule"""
@@ -180,11 +263,27 @@ class FirewallManager:
             
             # Check path
             if regex.search(context['path']):
+                logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered by pattern '{pattern}' in path: '{context['path']}'")
                 return True
             
             # Check user agent
             if regex.search(context['user_agent']):
+                logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered by pattern '{pattern}' in User-Agent: '{context['user_agent']}'")
                 return True
+                
+            # Check Body (New)
+            if context.get('body'):
+                if regex.search(context['body']):
+                    logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered by pattern '{pattern}' in body: '{context['body'][:100]}...'")
+                    return True
+
+            # Check Query Parameters
+            if context.get('query_params'):
+                for key, value in context['query_params'].items():
+                     if regex.search(str(value)):
+                         logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered by pattern '{pattern}' in query param '{key}': '{value}'")
+                         return True
+
             
         except re.error as e:
             logger.error(f"Invalid regex pattern in WAF rule: {e}")
@@ -220,67 +319,132 @@ class FirewallManager:
         except Exception as e:
             logger.error(f"Failed to increment rule hits: {e}")
 
+# Import BaseHTTPMiddleware for the Firewall Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from db.pg_connections import SessionLocal
+
+class FirewallMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # 1. Skip firewall for specific paths (metrics, health, static, auth)
+        if request.url.path.startswith(("/health", "/docs", "/openapi.json", "/assets", "/api/me", "/users/me")):
+             return await call_next(request)
+
+        # 2. Read and Buffer Body for Inspection
+        body = b""
+        if request.method in ["POST", "PUT", "PATCH"]:
+            try:
+                body = await request.body()
+                # logger.info(f"FirewallMiddleware: Read {len(body)} bytes")
+                # Attach to request state for FirewallManager to use
+                request.state.body = body
+                
+                # Re-seed the stream so endpoints can read it again
+                async def receive():
+                    return {"type": "http.request", "body": body, "more_body": False}
+                request._receive = receive
+                
+                # logger.info(f"Body buffered: {body[:50]}...")
+            except Exception as e:
+                logger.error(f"FirewallMiddleware Body Error: {e}")
+                pass
+
+        # 3. Check Firewall
+        db = SessionLocal()
+        try:
+           # Pass request to manager
+           block_result = await firewall_manager.process_request(request, db)
+           if block_result:
+               return JSONResponse(
+                   status_code=403, 
+                   content=block_result
+               )
+        except Exception as e:
+            # log error but don't crash app
+            logger.error(f"Firewall middleware error: {e}")
+        finally:
+            db.close()
+
+        # 4. Proceed
+        response = await call_next(request)
+        return response
+
+
 
 # Global firewall manager instance
 firewall_manager = FirewallManager()
 
 
 def initialize_default_firewall_rules(db: Session):
-    """Initialize default firewall rules if none exist"""
+    """Initialize default firewall rules or update existing ones with latest patterns"""
     try:
-        result = db.execute(text("SELECT COUNT(*) as count FROM firewall_rules"))
-        count = result.fetchone()[0]
-        
-        if count > 0:
-            logger.info("Firewall rules already initialized")
-            return
-        
-        logger.info("Creating default firewall rules")
-        
-        # Rule 1: SQL Injection Protection
-        db.execute(text("""
-            INSERT INTO firewall_rules (name, type, is_active, priority, description, rule_config, hits)
-            VALUES (:name, :type, true, :priority, :desc, :config, 0)
-        """), {
-            'name': 'SQL Injection Protection',
-            'type': 'waf_rule',
-            'priority': 'high',
-            'desc': 'Detect and block SQL injection attempts',
-            'config': json.dumps({
-                'pattern': r'(\bSELECT\b|\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b|\bUNION\b|--|/\*|;)'
-            })
-        })
-        
-        # Rule 2: XSS Protection
-        db.execute(text("""
-            INSERT INTO firewall_rules (name, type, is_active, priority, description, rule_config, hits)
-            VALUES (:name, :type, true, :priority, :desc, :config, 0)
-        """), {
-            'name': 'XSS Attack Protection',
-            'type': 'waf_rule',
-            'priority': 'high',
-            'desc': 'Detect and block cross-site scripting attempts',
-            'config': json.dumps({
-                'pattern': r'(<script|javascript:|onerror=|onload=|<iframe)'
-            })
-        })
-        
-        # Rule 3: Block Malicious Bots
-        db.execute(text("""
-            INSERT INTO firewall_rules (name, type, is_active, priority, description, rule_config, hits)
-            VALUES (:name, :type, true, :priority, :desc, :config, 0)
-        """), {
-            'name': 'Block Malicious Bots',
-            'type': 'pattern_match',
-            'priority': 'medium',
-            'desc': 'Block requests from known malicious bots',
-            'config': json.dumps({
-                'blocked_user_agents': ['sqlmap', 'nikto', 'masscan', 'nmap']
-            })
-        })
+        default_rules = [
+            {
+                'name': 'SQL Injection Protection',
+                'type': 'waf_rule',
+                'priority': 'high',
+                'description': 'Detect and block SQL injection attempts in URL and Body',
+                'rule_config': {
+                    'pattern': r'(?:\bUNION\s+ALL\s+SELECT\b|\bUNION\s+SELECT\b|\bSELECT\b.*\bFROM\b|\bINSERT\b.*\bINTO\b|\bUPDATE\b.*\bSET\b|\bDELETE\b.*\bFROM\b|\bDROP\b.*\bTABLE\b|\' OR \'|\" OR \"|\' OR 1=1|\' OR \'1\'=\'1|OR 1=1|--|#|\/\*)'
+                }
+            },
+            {
+                'name': 'XSS Attack Protection',
+                'type': 'waf_rule',
+                'priority': 'high',
+                'description': 'Detect and block cross-site scripting attempts',
+                'rule_config': {
+                    'pattern': r'(<script|javascript:|onerror=|onload=|<iframe)'
+                }
+            },
+            {
+                'name': 'Block Malicious Bots',
+                'type': 'pattern_match',
+                'priority': 'medium',
+                'description': 'Block requests from known malicious bots',
+                'rule_config': {
+                    'blocked_user_agents': ['sqlmap', 'nikto', 'masscan', 'nmap']
+                }
+            }
+        ]
+
+        for rule in default_rules:
+            # Check if rule exists by name
+            existing = db.execute(text("SELECT id FROM firewall_rules WHERE name = :name"), {"name": rule['name']}).fetchone()
+            
+            if existing:
+                # Update existing rule
+                db.execute(text("""
+                    UPDATE firewall_rules 
+                    SET type = :type, 
+                        priority = :priority, 
+                        description = :desc, 
+                        rule_config = :config,
+                        updated_at = NOW()
+                    WHERE name = :name
+                """), {
+                    'name': rule['name'],
+                    'type': rule['type'],
+                    'priority': rule['priority'],
+                    'desc': rule['description'],
+                    'config': json.dumps(rule['rule_config'])
+                })
+            else:
+                # Insert new rule
+                db.execute(text("""
+                    INSERT INTO firewall_rules (name, type, is_active, priority, description, rule_config, hits)
+                    VALUES (:name, :type, true, :priority, :desc, :config, 0)
+                """), {
+                    'name': rule['name'],
+                    'type': rule['type'],
+                    'priority': rule['priority'],
+                    'desc': rule['description'],
+                    'config': json.dumps(rule['rule_config'])
+                })
         
         db.commit()
-        logger.info("Default firewall rules created successfully")
+        logger.info("✓ Firewall rules synchronized successfully")
         
     except Exception as e:
         logger.error(f"Failed to initialize firewall rules: {e}")

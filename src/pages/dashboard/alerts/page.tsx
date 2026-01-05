@@ -730,13 +730,13 @@ export default function AlertsPage() {
                     </h1>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{
+                        {/* <div style={{
                             backgroundColor: '#fff7ed', padding: '8px 16px', borderRadius: '20px',
                             fontSize: '14px', fontWeight: '600', color: '#ea580c', display: 'flex', alignItems: 'center', gap: '6px'
                         }}>
                             <i className="ri-coin-line" style={{ fontSize: '16px' }}></i>
                             {userChops} Chops
-                        </div>
+                        </div> */}
                         {/* {viewportWidth >= 640 && ( */}
                         {/* <div style={{  */}
                         {/* backgroundColor: '#f3f4f6', padding: '8px 16px', borderRadius: '20px', */}
@@ -749,7 +749,7 @@ export default function AlertsPage() {
                 </header>
 
                 {/* Summary Cards */}
-                <div style={{
+                {/* <div style={{
                     display: 'grid',
                     gridTemplateColumns: viewportWidth >= 1024 ? 'repeat(5, 1fr)' : viewportWidth >= 640 ? 'repeat(2, 1fr)' : '1fr',
                     gap: '16px', marginBottom: '32px'
@@ -774,7 +774,7 @@ export default function AlertsPage() {
                             </div>
                         </div>
                     ))}
-                </div>
+                </div> */}
 
                 {/* Alerts List */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '32px' }}>
@@ -857,7 +857,7 @@ export default function AlertsPage() {
                                 </button>
                                 <button onClick={() => handleViewDetails(alert)} style={{ flex: 1, backgroundColor: viewedAlerts.has(alert.id.toString()) ? '#f97316' : 'transparent', color: viewedAlerts.has(alert.id.toString()) ? '#fff' : '#6b7280', padding: '14px 20px', borderRadius: '10px', border: viewedAlerts.has(alert.id.toString()) ? 'none' : '2px solid #d1d5db', fontSize: '15px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <i className={viewedAlerts.has(alert.id.toString()) ? 'ri-check-line' : 'ri-external-link-line'} style={{ marginRight: '8px' }}></i>
-                                    {viewedAlerts.has(alert.id.toString()) ? 'Viewed' : `View Details (+${isPro ? 5 : 1} Chops)`}
+                                    {viewedAlerts.has(alert.id.toString()) ? 'Viewed' : `View Details`} {/* (+${isPro ? 5 : 1} Chops) */}
                                 </button>
                             </div>
                         </div>

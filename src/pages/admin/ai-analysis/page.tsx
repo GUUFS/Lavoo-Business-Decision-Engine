@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import AdminHeader from '../../../components/feature/AdminHeader';
+import { toast } from 'react-toastify';
 
 
 const API_BASE_URL = 'http://localhost:8000';
@@ -239,7 +240,7 @@ export default function AdminAIAnalysis() {
         setIsModalOpen(true);
       } else {
         console.error('Failed to fetch detail');
-        alert('Could not load analysis details');
+        toast.error('Could not load analysis details');
       }
     } catch (error) {
       console.error("Error loading detail:", error);
@@ -329,7 +330,7 @@ export default function AdminAIAnalysis() {
 
     } catch (e) {
       console.error("PDF Generate Error", e);
-      alert("Failed to generate PDF");
+      toast.error("Failed to generate PDF");
     } finally {
       setIsDownloading(false);
     }
@@ -386,32 +387,8 @@ export default function AdminAIAnalysis() {
         setIsMobileMenuOpen={setIsMobileMenuOpen}
       />
 
-      <div className="flex-1 ml-0 flex flex-col">
-        {/* Admin Header */}
-        <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center">
-              <button
-                className="md:hidden p-2 text-gray-600 hover:text-gray-900 mr-3"
-                onClick={() => setIsMobileMenuOpen(true)}
-              >
-                <i className="ri-menu-line text-xl"></i>
-              </button>
-            </div>
-            <div className="relative">
-              <button
-                onClick={() => setShowAdminDropdown(!showAdminDropdown)}
-                className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-gray-900 transition-colors"
-              >
-                <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
-                  <i className="ri-user-line text-orange-600"></i>
-                </div>
-                <span className="font-medium">Admin User</span>
-                <i className="ri-arrow-down-s-line"></i>
-              </button>
-            </div>
-          </div>
-        </div>
+      <div className="flex-1 flex flex-col">
+        <AdminHeader setIsMobileMenuOpen={setIsMobileMenuOpen} />
 
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">

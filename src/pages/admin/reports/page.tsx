@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
 import { getAuthHeaders } from '../../../utils/auth';
+import { toast } from 'react-toastify';
 
 interface Conversation {
   user_id: number;
@@ -155,7 +156,7 @@ export default function AdminReports() {
       }
     } catch (e) {
       console.error(e);
-      alert('Failed to resolve tickets');
+      toast.error('Failed to resolve tickets');
     }
   };
 
@@ -401,11 +402,11 @@ export default function AdminReports() {
 
       if (!response.ok) {
         // Revert on failure (simple alert for now)
-        alert("Failed to send reply. Please refresh.");
+        toast.error("Failed to send reply. Please refresh.");
       }
     } catch (error) {
       console.error("Error sending reply:", error);
-      alert("Error sending reply");
+      toast.error("Error sending reply");
     }
   };
 

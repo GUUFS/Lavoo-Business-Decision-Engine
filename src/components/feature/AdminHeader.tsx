@@ -1,13 +1,54 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { getAuthToken } from '../../utils/auth';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
 interface AdminHeaderProps {
     setIsMobileMenuOpen: (isOpen: boolean) => void;
 }
 
+interface AdminUser {
+    name: string;
+    email: string;
+    role: string;
+}
+
 export default function AdminHeader({ setIsMobileMenuOpen }: AdminHeaderProps) {
     const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+    const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
+    const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
+
+    // Fetch admin user data on component mount
+    useEffect(() => {
+        const fetchAdminData = async () => {
+            try {
+                const token = getAuthToken();
+                if (!token) {
+                    navigate('/login');
+                    return;
+                }
+
+                const response = await axios.get(`${API_BASE}/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                setAdminUser(response.data);
+            } catch (error) {
+                console.error('Failed to fetch admin data:', error);
+                // Fallback to default if fetch fails
+                setAdminUser({ name: 'Admin', email: '', role: 'admin' });
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchAdminData();
+    }, [navigate]);
 
     const handleLogout = () => {
         // Clear cookies
@@ -27,6 +68,20 @@ export default function AdminHeader({ setIsMobileMenuOpen }: AdminHeaderProps) {
         window.location.reload();
     };
 
+    // Extract first name from full name
+    const getFirstName = (fullName: string): string => {
+        return fullName.split(' ')[0] || 'Admin';
+    };
+
+    // Get initials for avatar
+    const getInitials = (fullName: string): string => {
+        const names = fullName.split(' ');
+        if (names.length >= 2) {
+            return `${names[0][0]}${names[1][0]}`.toUpperCase();
+        }
+        return fullName.substring(0, 2).toUpperCase();
+    };
+
     return (
         <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4 sticky top-0 z-30">
             <div className="flex items-center justify-between">
@@ -43,9 +98,17 @@ export default function AdminHeader({ setIsMobileMenuOpen }: AdminHeaderProps) {
                         className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
                     >
                         <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                            <i className="ri-user-line text-red-600"></i>
+                            {loading ? (
+                                <i className="ri-loader-4-line text-red-600 animate-spin"></i>
+                            ) : (
+                                <span className="text-xs font-semibold text-red-600">
+                                    {adminUser ? getInitials(adminUser.name) : 'AD'}
+                                </span>
+                            )}
                         </div>
-                        <span className="font-medium text-gray-900">Lavoo</span>
+                        <span className="font-medium text-gray-900">
+                            {loading ? 'Loading...' : (adminUser ? getFirstName(adminUser.name) : 'Admin')}
+                        </span>
                         <i className="ri-arrow-down-s-line text-gray-400"></i>
                     </button>
 

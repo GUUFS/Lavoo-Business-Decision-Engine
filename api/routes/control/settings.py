@@ -7,7 +7,7 @@ from db.pg_connections import get_db
 from db.pg_models import SystemSettings, User
 from api.routes.login import get_current_user
 
-router = APIRouter(prefix="/api/control/settings", tags=["settings"])
+router = APIRouter(prefix="/control/settings", tags=["settings"])
 
 class SettingsUpdate(BaseModel):
     # General

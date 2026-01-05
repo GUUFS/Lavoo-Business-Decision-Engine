@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
+import AdminHeader from '../../../components/feature/AdminHeader';
 
 export default function AdminAnalytics() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -44,62 +45,13 @@ export default function AdminAnalytics() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <AdminSidebar 
-        isMobileMenuOpen={isMobileMenuOpen} 
-        setIsMobileMenuOpen={setIsMobileMenuOpen} 
+      <AdminSidebar
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
       />
-      
-      <div className="flex-1 ml-0 flex flex-col">
-        {/* Admin Header */}
-        <div className="bg-white border-b border-gray-200 px-4 md:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100"
-            >
-              <i className="ri-menu-line text-xl"></i>
-            </button>
-            <div className="flex-1"></div>
-            <div className="relative">
-              <button 
-                onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
-                  <i className="ri-user-line text-red-600"></i>
-                </div>
-                <span className="font-medium text-gray-900">Admin User</span>
-                <i className="ri-arrow-down-s-line text-gray-400"></i>
-              </button>
-              
-              {/* Backdrop for click outside to close */}
-              {isProfileDropdownOpen && (
-                <div 
-                  className="fixed inset-0 z-40" 
-                  onClick={() => setIsProfileDropdownOpen(false)}
-                ></div>
-              )}
-              
-              {/* Profile Dropdown */}
-              {isProfileDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-                  <Link 
-                    to="/admin/profile"
-                    onClick={() => setIsProfileDropdownOpen(false)}
-                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3"
-                  >
-                    <i className="ri-user-line text-gray-500"></i>
-                    Profile
-                  </Link>
-                  <button className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3">
-                    <i className="ri-logout-box-line text-gray-500"></i>
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+
+      <div className="flex-1 flex flex-col">
+        <AdminHeader setIsMobileMenuOpen={setIsMobileMenuOpen} />
 
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
@@ -208,8 +160,8 @@ export default function AdminAnalytics() {
                           <span className="text-sm text-gray-600">{item.count}</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
-                          <div 
-                            className="bg-red-500 h-2 rounded-full" 
+                          <div
+                            className="bg-red-500 h-2 rounded-full"
                             style={{ width: `${item.percentage}%` }}
                           ></div>
                         </div>
@@ -228,9 +180,8 @@ export default function AdminAnalytics() {
                   <div key={index} className="text-center">
                     <div className="text-2xl font-bold text-gray-900 mb-1">{metric.value}</div>
                     <div className="text-sm text-gray-600 mb-2">{metric.metric}</div>
-                    <div className={`text-sm font-medium ${
-                      metric.trend === 'up' ? 'text-green-600' : 'text-red-600'
-                    }`}>
+                    <div className={`text-sm font-medium ${metric.trend === 'up' ? 'text-green-600' : 'text-red-600'
+                      }`}>
                       <i className={`ri-arrow-${metric.trend === 'up' ? 'up' : 'down'}-line mr-1`}></i>
                       {metric.change}
                     </div>

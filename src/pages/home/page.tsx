@@ -3,19 +3,67 @@ import { useNavigate } from 'react-router-dom';
 import Header from '../../components/feature/Header';
 import Footer from '../../components/feature/Footer';
 import Button from '../../components/base/Button';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import axios from 'axios';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+// Interface for review data
+interface Review {
+  id: number;
+  user_name: string;
+  business_name: string;
+  review_title: string;
+  rating: number;
+  review_text: string;
+  date_submitted: string;
+  verified: boolean;
+}
 
 export default function Home() {
   const navigate = useNavigate();
   const [currentSlide, setCurrentSlide] = useState(0);
-  const [businessPrompt, setBusinessPrompt] = useState("")
+  const [businessPrompt, setBusinessPrompt] = useState("");
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(true);
+  const [totalSlides, setTotalSlides] = useState(2); // Will be updated based on reviews count
+
+  // Fetch displayed reviews from API
+  useEffect(() => {
+    const fetchDisplayedReviews = async () => {
+      try {
+        const response = await axios.get(`${API_BASE}/api/reviews/displayed`);
+        setReviews(response.data);
+        // Calculate number of slides based on reviews count (3 per slide)
+        const slides = Math.ceil(response.data.length / 3) || 1;
+        setTotalSlides(slides);
+      } catch (error) {
+        console.error('Failed to fetch reviews:', error);
+        // Keep empty array if fetch fails
+        setReviews([]);
+      } finally {
+        setLoadingReviews(false);
+      }
+    };
+
+    fetchDisplayedReviews();
+  }, []);
+
+  // Get initials from name
+  const getInitials = (name: string): string => {
+    const names = name.split(' ');
+    if (names.length >= 2) {
+      return `${names[0][0]}${names[1][0]}`.toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
 
   const nextSlide = () => {
-    setCurrentSlide((prev) => (prev + 1) % 2);
+    setCurrentSlide((prev) => (prev + 1) % totalSlides);
   };
 
   const prevSlide = () => {
-    setCurrentSlide((prev) => (prev - 1 + 2) % 2);
+    setCurrentSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
   };
 
   return (
@@ -142,9 +190,9 @@ export default function Home() {
       </section>
 
 
-      {/* Reviews Section */}
+      {/* Reviews Section - Now Dynamic! */}
       <section className="py-12 sm:py-16 md:py-20 bg-gradient-to-br from-orange-50 to-white" >
-        <div style={{ maxWidth: '1280px', margin: '0 auto' }}>
+        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 16px' }}>
           <div style={{ textAlign: 'center', marginBottom: '48px' }}>
             <h2 style={{ fontSize: window.innerWidth >= 768 ? '40px' : '32px', fontWeight: 'bold', color: '#111827', marginBottom: '16px' }}>
               What Our Customers Say
@@ -152,231 +200,122 @@ export default function Home() {
             <p style={{ fontSize: '20px', color: '#4b5563', maxWidth: '768px', margin: '0 auto 16px' }}>
               Join thousands of businesses that trust our AI analyst for data-driven insights
             </p>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '16px' }}>
-              <div style={{ display: 'flex' }}>
-                {[...Array(5)].map((_, i) => (
-                  <i key={i} className="ri-star-fill" style={{ color: '#fbbf24', fontSize: '20px' }}></i>
-                ))}
+            {reviews.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '16px' }}>
+                <div style={{ display: 'flex' }}>
+                  {[...Array(5)].map((_, i) => (
+                    <i key={i} className="ri-star-fill" style={{ color: '#fbbf24', fontSize: '20px' }}></i>
+                  ))}
+                </div>
+                <span style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>4.9/5</span>
+                <span style={{ color: '#4b5563' }}>({reviews.length}+ reviews)</span>
               </div>
-              <span style={{ fontSize: '18px', fontWeight: '600', color: '#111827' }}>4.9/5</span>
-              <span style={{ color: '#4b5563' }}>(2,847+ reviews)</span>
-            </div>
+            )}
           </div>
 
-          <div style={{ position: 'relative' }}>
-            {/* Reviews Container */}
-            <div style={{ overflow: 'hidden' }}>
-              <div style={{ display: 'flex', transition: 'transform 0.5s ease-in-out', transform: `translateX(-${currentSlide * 100}%)` }}>
-                {/* Slide 1 */}
-                <div style={{ width: '100%', flexShrink: 0 }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth >= 768 ? 'repeat(3, 1fr)' : '1fr', gap: '32px' }}>
-                    <div style={{
-                      backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
-                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                        <div style={{
-                          width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center', marginRight: '16px'
-                        }}>
-                          <span style={{ color: '#dc2626', fontWeight: '600' }}>SJ</span>
-                        </div>
-                        <div>
-                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Sarah Johnson</h4>
-                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>CEO, TechStart Inc.</p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', marginBottom: '16px' }}>
-                        {[...Array(5)].map((_, i) => (
-                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
+          {loadingReviews ? (
+            <div style={{ textAlign: 'center', padding: '60px 0' }}>
+              <i className="ri-loader-4-line" style={{ fontSize: '48px', color: '#f97316', animation: 'spin 1s linear infinite' }}></i>
+              <p style={{ marginTop: '16px', color: '#6b7280' }}>Loading reviews...</p>
+            </div>
+          ) : reviews.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '60px 0' }}>
+              <i className="ri-chat-smile-3-line" style={{ fontSize: '64px', color: '#d1d5db', marginBottom: '16px' }}></i>
+              <p style={{ fontSize: '18px', color: '#6b7280' }}>No reviews yet. Be the first to share your experience!</p>
+            </div>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              {/* Reviews Carousel */}
+              <div style={{ overflow: 'hidden' }}>
+                <div style={{ display: 'flex', transition: 'transform 0.5s ease-in-out', transform: `translateX(-${currentSlide * 100}%)` }}>
+                  {Array.from({ length: totalSlides }).map((_, slideIndex) => (
+                    <div key={slideIndex} style={{ width: '100%', flexShrink: 0 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: window.innerWidth >= 768 ? 'repeat(3, 1fr)' : '1fr', gap: '32px' }}>
+                        {reviews.slice(slideIndex * 3, slideIndex * 3 + 3).map((review) => (
+                          <div key={review.id} style={{
+                            backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
+                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+                              <div style={{
+                                width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%', display: 'flex',
+                                alignItems: 'center', justifyContent: 'center', marginRight: '16px'
+                              }}>
+                                <span style={{ color: '#dc2626', fontWeight: '600' }}>{getInitials(review.user_name)}</span>
+                              </div>
+                              <div>
+                                <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>{review.user_name}</h4>
+                                <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>{review.business_name}</p>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', marginBottom: '16px' }}>
+                              {[...Array(5)].map((_, i) => (
+                                <i key={i} className={`ri-star-${i < review.rating ? 'fill' : 'line'}`} style={{ color: '#fbbf24' }}></i>
+                              ))}
+                            </div>
+                            <h5 style={{ fontWeight: '600', color: '#111827', marginBottom: '8px' }}>{review.review_title}</h5>
+                            <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
+                              "{review.review_text}"
+                            </p>
+                            {review.verified && (
+                              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '4px', color: '#10b981' }}>
+                                <i className="ri-checkbox-circle-fill"></i>
+                                <span style={{ fontSize: '12px', fontWeight: '500' }}>Verified Customer</span>
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
-                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
-                        "This AI analyst transformed our decision-making process. We increased revenue by 34% in just 3 months using the insights provided. Absolutely game-changing!"
-                      </p>
                     </div>
-                    <div style={{
-                      backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
-                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                        <div style={{
-                          width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px'
-                        }}>
-                          <span style={{ color: '#dc2626', fontWeight: '600' }}>MC</span>
-                        </div>
-                        <div>
-                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Michael Chen</h4>
-                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Marketing Director, GrowthCorp</p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', marginBottom: '16px' }}>
-                        {[...Array(5)].map((_, i) => (
-                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
-                        ))}
-                      </div>
-                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
-                        "The predictive analytics helped us identify market trends before our competitors. Our marketing ROI improved by 150%. Best investment we've made!"
-                      </p>
-                    </div>
-                    <div style={{
-                      backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
-                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                        <div style={{
-                          width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px'
-                        }}>
-                          <span style={{ color: '#dc2626', fontWeight: '600' }}>ER</span>
-                        </div>
-                        <div>
-                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Emily Rodriguez</h4>
-                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Operations Manager, LogiFlow</p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', marginBottom: '16px' }}>
-                        {[...Array(4)].map((_, i) => (
-                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
-                        ))}
-                        <i className="ri-star-line" style={{ color: '#fbbf24' }}></i>
-                      </div>
-                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
-                        "Streamlined our operations and reduced costs by 28%. The AI recommendations are incredibly accurate and easy to implement. Highly recommended!"
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                {/* Slide 2 */}
-                <div style={{ width: '100%', flexShrink: 0 }}>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: window.innerWidth >= 768 ? 'repeat(3, 1fr)' : '1fr',
-                    gap: '32px'
-                  }}>
-                    <div style={{
-                      backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
-                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                        <div style={{
-                          width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center', marginRight: '16px'
-                        }}>
-                          <span style={{ color: '#dc2626', fontWeight: '600' }}>DK</span>
-                        </div>
-                        <div>
-                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>David Kim</h4>
-                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>CFO, FinanceFirst</p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', marginBottom: '16px' }}>
-                        {[...Array(5)].map((_, i) => (
-                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
-                        ))}
-                      </div>
-                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
-                        "The financial risk analysis saved us from a potentially disastrous investment. The AI's accuracy in predicting market volatility is remarkable."
-                      </p>
-                    </div>
-
-                    <div style={{
-                      backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
-                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                        <div style={{
-                          width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px'
-                        }}>
-                          <span style={{ color: '#dc2626', fontWeight: '600' }}>LT</span>
-                        </div>
-                        <div>
-                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>Lisa Thompson</h4>
-                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Product Manager, InnovateTech</p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', marginBottom: '16px' }}>
-                        {[...Array(5)].map((_, i) => (
-                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
-                        ))}
-                      </div>
-                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
-                        "Customer behavior insights helped us redesign our product strategy. User engagement increased by 89% and customer satisfaction scores are at an all-time high."
-                      </p>
-                    </div>
-
-                    <div style={{
-                      backgroundColor: '#ffffff', borderRadius: '12px', padding: '24px',
-                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', border: '1px solid #e5e7eb'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
-                        <div style={{
-                          width: '48px', height: '48px', backgroundColor: '#fef2f2', borderRadius: '50%',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', marginRight: '16px'
-                        }}>
-                          <span style={{ color: '#dc2626', fontWeight: '600' }}>JW</span>
-                        </div>
-                        <div>
-                          <h4 style={{ fontWeight: '600', color: '#111827', margin: 0 }}>James Wilson</h4>
-                          <p style={{ fontSize: '14px', color: '#4b5563', margin: 0 }}>Founder, StartupSuccess</p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', marginBottom: '16px' }}>
-                        {[...Array(5)].map((_, i) => (
-                          <i key={i} className="ri-star-fill" style={{ color: '#fbbf24' }}></i>
-                        ))}
-                      </div>
-                      <p style={{ color: '#374151', lineHeight: '1.6', margin: 0 }}>
-                        "As a startup, we needed enterprise-level insights without the enterprise budget. This AI analyst delivered exactly that and helped us secure Series A funding."
-                      </p>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
-            </div>
 
-            {/* Navigation Arrows */}
-            <button
-              onClick={prevSlide}
-              style={{
-                position: 'absolute', left: '-16px', top: '50%', transform: 'translateY(-50%)', width: '48px', height: '48px', backgroundColor: '#ffffff', borderRadius: '50%',
-                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563',
-                border: 'none', cursor: 'pointer', zIndex: 10, transition: 'color 0.3s ease'
-              }}
-              onMouseOver={(e) => e.currentTarget.style.color = '#dc2626'}
-              onMouseOut={(e) => e.currentTarget.style.color = '#4b5563'}
-            >
-              <i className="ri-arrow-left-line" style={{ fontSize: '20px' }}></i>
-            </button>
-            <button
-              onClick={nextSlide}
-              style={{
-                position: 'absolute', right: '-16px', top: '50%', transform: 'translateY(-50%)', width: '48px', height: '48px', backgroundColor: '#ffffff', borderRadius: '50%',
-                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#4b5563', border: 'none', cursor: 'pointer', zIndex: 10, transition: 'color 0.3s ease'
-              }}
-              onMouseOver={(e) => e.currentTarget.style.color = '#dc2626'}
-              onMouseOut={(e) => e.currentTarget.style.color = '#4b5563'}
-            >
-              <i className="ri-arrow-right-line" style={{ fontSize: '20px' }}></i>
-            </button>
+              {/* Navigation Arrows - Only show if more than 1 slide */}
+              {totalSlides > 1 && (
+                <>
+                  <button
+                    onClick={prevSlide}
+                    style={{
+                      position: 'absolute', left: '-16px', top: '50%', transform: 'translateY(-50%)', width: '48px', height: '48px', backgroundColor: '#ffffff', borderRadius: '50%',
+                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4b5563',
+                      border: 'none', cursor: 'pointer', zIndex: 10, transition: 'color 0.3s ease'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.color = '#dc2626'}
+                    onMouseOut={(e) => e.currentTarget.style.color = '#4b5563'}
+                  >
+                    <i className="ri-arrow-left-line" style={{ fontSize: '20px' }}></i>
+                  </button>
+                  <button
+                    onClick={nextSlide}
+                    style={{
+                      position: 'absolute', right: '-16px', top: '50%', transform: 'translateY(-50%)', width: '48px', height: '48px', backgroundColor: '#ffffff', borderRadius: '50%',
+                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: '#4b5563', border: 'none', cursor: 'pointer', zIndex: 10, transition: 'color 0.3s ease'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.color = '#dc2626'}
+                    onMouseOut={(e) => e.currentTarget.style.color = '#4b5563'}
+                  >
+                    <i className="ri-arrow-right-line" style={{ fontSize: '20px' }}></i>
+                  </button>
 
-            {/* Slide Indicators */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '32px', gap: '8px' }}>
-              {[0, 1].map((slide) => (
-                <button
-                  key={slide}
-                  onClick={() => setCurrentSlide(slide)}
-                  style={{
-                    width: '12px', height: '12px', borderRadius: '50%', border: 'none', cursor: 'pointer',
-                    backgroundColor: currentSlide === slide ? '#dc2626' : '#d1d5db', transition: 'background-color 0.3s ease'
-                  }}
-                />
-              ))}
+                  {/* Slide Indicators */}
+                  <div style={{ display: 'flex', justifyContent: 'center', marginTop: '32px', gap: '8px' }}>
+                    {Array.from({ length: totalSlides }).map((_, slide) => (
+                      <button
+                        key={slide}
+                        onClick={() => setCurrentSlide(slide)}
+                        style={{
+                          width: '12px', height: '12px', borderRadius: '50%', border: 'none', cursor: 'pointer',
+                          backgroundColor: currentSlide === slide ? '#dc2626' : '#d1d5db', transition: 'background-color 0.3s ease'
+                        }}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-          </div>
+          )}
         </div>
       </section>
 

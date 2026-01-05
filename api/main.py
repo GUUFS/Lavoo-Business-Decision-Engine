@@ -18,7 +18,7 @@ from passlib.context import CryptContext
 
 try:
     from dotenv import load_dotenv
-
+    import asyncio
     # Try .env.local first (local development), fallback to .env
     if os.path.exists('.env.local'):
         load_dotenv('.env.local')
@@ -73,9 +73,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize and Register Firewall Middleware
+from api.security.firewall import FirewallMiddleware
+app.add_middleware(FirewallMiddleware)
+
 
 # Health check endpoint for monitoring (Railway, Render, DigitalOcean, etc.)
 @app.api_route("/health", methods=["GET", "HEAD"])
+@app.api_route("/api/health", methods=["GET", "HEAD"]) # Alias for consistency
 async def health_check():
     """
     Health check endpoint for cloud platform monitoring.
@@ -94,6 +99,24 @@ async def health_check():
 
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+async def run_scheduled_scans():
+    """Background task to run vulnerability scans every 15 minutes"""
+    from api.security.vulnerability_scanner import vulnerability_scanner
+    while True:
+        try:
+            # Wait 15 minutes between scans
+            await asyncio.sleep(15 * 60)
+            logger.info("Starting scheduled vulnerability scan...")
+            db = SessionLocal()
+            try:
+                await vulnerability_scanner.run_full_scan(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Scheduled scan failed: {e}")
+            await asyncio.sleep(60) # Wait a bit before retrying if it fails
+
 
 # try creating an admin user if not exists
 async def create_admin_user(db: Session=Depends(get_db)):
@@ -126,6 +149,8 @@ async def create_admin_user(db: Session=Depends(get_db)):
 @app.on_event("startup")
 async def startup_event():
     """Initialize database tables and caching on application startup"""
+    # Start scheduled scans task
+    asyncio.create_task(run_scheduled_scans())
     try:
         init_db()
         db_info = get_db_info()
@@ -152,6 +177,25 @@ async def startup_event():
                 """))
                 
                 db.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS is_attended BOOLEAN DEFAULT FALSE"))
+                
+                # Subscription table updates
+                db.execute(text("""
+                    ALTER TABLE subscriptions 
+                    ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20);
+                """))
+                
+                # Initialize subscription_status for existing records
+                # If end_date < now, it's expired. If status is not successful, it's 'Payment failed'.
+                # Otherwise it's active.
+                db.execute(text("""
+                    UPDATE subscriptions 
+                    SET subscription_status = CASE 
+                        WHEN end_date < NOW() THEN 'expired'
+                        WHEN status NOT IN ('completed', 'active', 'paid', 'successful') THEN 'Payment failed'
+                        ELSE 'active'
+                    END
+                    WHERE subscription_status IS NULL;
+                """))
                 
                 # Security table fixes
                 try:
@@ -277,7 +321,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -308,13 +352,13 @@ app.include_router(insights.router)  # Clinton's feature
 app.include_router(referrals.router)  # Clinton's feature
 app.include_router(earnings.router)
 app.include_router(commissions.router)
-app.include_router(revenue.router)
-app.include_router(settings.router) # Register settings router
+app.include_router(revenue.router, prefix="/api")
+app.include_router(settings.router, prefix="/api")
 app.include_router(stripe_connect.router)
 app.include_router(security.router, prefix="/api")
-app.include_router(firewall_scanner.router, prefix="/api")  # Firewall and vulnerability scanner
-app.include_router(users.router)
-app.include_router(dashboard.router)
+app.include_router(firewall_scanner.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)

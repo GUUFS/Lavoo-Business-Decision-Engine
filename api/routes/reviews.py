@@ -24,6 +24,40 @@ except ImportError as e:
 
 router = APIRouter(tags=["reviews"])
 
+# --------------------------
+# Public Endpoint for Homepage
+# --------------------------
+
+@router.get("/api/reviews/displayed")
+async def get_displayed_reviews(db: Session = Depends(get_db)):
+    """
+    Public endpoint: Get reviews selected by admin for homepage display.
+    No authentication required - this is for public visitors.
+    Returns reviews ordered by display_order.
+    """
+    from db.pg_models import DisplayedReview, Review, User
+    
+    # Get all displayed reviews ordered by display_order
+    displayed_reviews = db.query(DisplayedReview).order_by(DisplayedReview.display_order).all()
+    
+    results = []
+    for dr in displayed_reviews:
+        review = db.query(Review).filter(Review.id == dr.review_id).first()
+        if review:  # Show all reviews explicitly added to display
+            user = db.query(User).filter(User.id == review.user_id).first()
+            results.append({
+                "id": review.id,
+                "user_name": user.name if user else "Anonymous",
+                "business_name": review.business_name,
+                "review_title": review.review_title,
+                "rating": review.rating,
+                "review_text": review.review_text,
+                "date_submitted": review.date_submitted.isoformat() if review.date_submitted else None,
+                "verified": review.verified or False
+            })
+    
+    return results
+
 
 def get_current_user(
     authorization: Optional[str] = Header(None),
@@ -701,3 +735,124 @@ async def admin_get_user_reviews(
         "limit": limit,
         "totalPages": (total + limit - 1) // limit
     }
+
+
+# --------------------------
+# Displayed Reviews Endpoints (Homepage Management)
+# --------------------------
+
+@router.post("/api/admin/reviews/{review_id}/display")
+async def admin_add_review_to_display(
+    review_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Admin: Add a review to the homepage display collection.
+    This makes the review visible to all visitors on the home page.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Import here to avoid circular dependency
+    from db.pg_models import DisplayedReview
+    
+    # Check if review exists
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    
+    # Check if already displayed
+    existing = db.query(DisplayedReview).filter(DisplayedReview.review_id == review_id).first()
+    if existing:
+        return {"status": "already_displayed", "message": "Review is already in display collection"}
+    
+    # Get the next display order (highest + 1)
+    max_order = db.query(func.max(DisplayedReview.display_order)).scalar() or 0
+    
+    # Add to displayed reviews
+    displayed = DisplayedReview(
+        review_id=review_id,
+        display_order=max_order + 1,
+        added_by=current_user.id
+    )
+    db.add(displayed)
+    db.commit()
+    
+    return {
+        "status": "success",
+        "message": "Review added to homepage display",
+        "display_order": max_order + 1
+    }
+
+
+@router.delete("/api/admin/reviews/{review_id}/display")
+async def admin_remove_review_from_display(
+    review_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Admin: Remove a review from the homepage display collection.
+    This hides the review from visitors on the home page.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    from db.pg_models import DisplayedReview
+    
+    # Find and delete the displayed review entry
+    displayed = db.query(DisplayedReview).filter(DisplayedReview.review_id == review_id).first()
+    if not displayed:
+        raise HTTPException(status_code=404, detail="Review is not in display collection")
+    
+    db.delete(displayed)
+    db.commit()
+    
+    return {
+        "status": "success",
+        "message": "Review removed from homepage display"
+    }
+
+
+@router.get("/api/admin/reviews/displayed")
+async def admin_get_displayed_reviews(
+    page: int = 1,
+    limit: int = 10,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Admin: Get all reviews currently displayed on the homepage.
+    Returns reviews ordered by display_order (lower = higher priority).
+    """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    from db.pg_models import DisplayedReview
+    
+    # Query displayed reviews with their review data
+    query = db.query(DisplayedReview).order_by(DisplayedReview.display_order)
+    
+    total = query.count()
+    offset = (page - 1) * limit
+    displayed_reviews = query.offset(offset).limit(limit).all()
+    
+    # Format response with full review details
+    results = []
+    for dr in displayed_reviews:
+        review = db.query(Review).filter(Review.id == dr.review_id).first()
+        if review:
+            review_data = format_admin_review_response(review, db)
+            review_data['display_order'] = dr.display_order
+            review_data['added_at'] = dr.added_at.isoformat() if dr.added_at else None
+            results.append(review_data)
+    
+    return {
+        "reviews": results,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "totalPages": (total + limit - 1) // limit if total > 0 else 1
+    }
+

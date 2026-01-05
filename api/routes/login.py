@@ -1,8 +1,13 @@
 import os
 import secrets
 import uuid
+from email_validator import validate_email, EmailNotValidError
+import logging
 from datetime import datetime, timedelta
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie, Header, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -25,7 +30,47 @@ def log_debug(message):
 """Generating and storing the secret key"""
 
 class Settings(BaseSettings):
-    secret_key: str = os.getenv("SECRET_KEY") or secrets.token_hex(32)
+    secret_key: str = os.getenv("SECRET_KEY")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not self.secret_key:
+            print("⚠️  SECRET_KEY not found in environment. Generating a new one and saving it to .env...")
+            self.secret_key = secrets.token_hex(32)
+            self._save_to_env("SECRET_KEY", self.secret_key)
+    
+    def _save_to_env(self, key, value):
+        try:
+            env_path = os.path.join(os.getcwd(), ".env")
+            # Create .env if it doesn't exist
+            if not os.path.exists(env_path):
+                with open(env_path, "w") as f:
+                    f.write(f"{key}={value}\n")
+            else:
+                # Check if key exists
+                with open(env_path, "r") as f:
+                    lines = f.readlines()
+                
+                key_exists = False
+                with open(env_path, "w") as f:
+                    for line in lines:
+                        if line.startswith(f"{key}="):
+                            f.write(f"{key}={value}\n")
+                            key_exists = True
+                        else:
+                            f.write(line)
+                    
+                    if not key_exists:
+                        # Append if not found
+                        if lines and not lines[-1].endswith('\n'):
+                             f.write('\n')
+                        f.write(f"{key}={value}\n")
+                        
+            print(f"✅ Saved new {key} to {env_path}")
+            # Also update current process env
+            os.environ[key] = value
+        except Exception as e:
+            print(f"❌ Failed to save {key} to .env: {e}")
 
 settings = Settings()
 SECRET_KEY = settings.secret_key
@@ -108,12 +153,13 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
         log_debug(f"DEBUG AUTH: (get_current_user) User not found: {email}")
         raise credentials_exception
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive account",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # Sync Subscription Status (Strictly based on FIRST transaction)
+    try:
+        from api.utils.sub_utils import sync_user_subscription
+        user = sync_user_subscription(db, user)
+    except Exception as e:
+        logger.error(f"Error checking subscription status: {e}")
+        db.rollback()
 
     return user
 
@@ -295,7 +341,7 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
     # Check if the email is registered
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Email has not been registered!"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password."
         )
 
     # Get client IP address
@@ -316,24 +362,32 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
     
     # Verify password policy: Check password BEFORE is_active
     if not pwd_context.verify(request.password, user.password):
-        # Record failed login attempt
+        # Record failed login attempt - CRITICAL for security tracking
+        # This section records the failure in two places:
+        # 1. failed_login_attempts table (for tracking patterns)
+        # 2. security_events table (triggers auto-blocking after 3 attempts)
+        
+        client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
+        user_agent = fastapi_request.headers.get("user-agent", "unknown")
+        
+        # Convert integer user_id to UUID format for database compatibility
+        user_uuid = uuid.UUID(int=user.id) if isinstance(user.id, int) else user.id
+        
+        # Try to record failed attempt - don't let this block security event creation
         try:
-            # Get client IP
-            client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
-            user_agent = fastapi_request.headers.get("user-agent", "unknown")
-            
-            # Record in failed_login_attempts table
             failed_attempt = FailedLoginAttempt(
-                email=request.email,  # Store email for blacklist tracking
+                email=request.email,  # Store email for IP blacklist tracking
                 ip_address=client_ip,
                 user_agent=user_agent
             )
             db.add(failed_attempt)
-            
-            # Create security event
-            # Convert integer user_id to UUID format for database compatibility
-            user_uuid = uuid.UUID(int=user.id) if isinstance(user.id, int) else user.id
-            
+            db.flush()  # Flush but don't commit yet
+        except Exception as e:
+            logger.error(f"Error recording failed login attempt: {e}")
+            # Continue anyway - security event is more critical
+        
+        # ALWAYS create security event - this triggers the auto-block mechanism
+        try:
             event = SecurityEvent(
                 type="failed_login",
                 severity="medium",
@@ -343,13 +397,15 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
                 status="logged"
             )
             db.add(event)
-            db.commit()
+            db.commit()  # Commit both records together
+            logger.info(f"Recorded failed login for {user.email} from IP {client_ip}")
         except Exception as e:
-            print(f"Error recording failed login: {e}")
+            logger.error(f"CRITICAL: Failed to create security event: {e}")
             db.rollback()
+            # Even if recording fails, still reject the login
 
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Password is incorrect!"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password."
         )
 
     if not user.is_active:

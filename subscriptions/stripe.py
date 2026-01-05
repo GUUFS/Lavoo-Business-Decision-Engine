@@ -196,6 +196,7 @@ async def verify_payment(
             amount=Decimal(str(verification.get("amount", 0))),  # Already in dollars from Service
             currency=verification.get("currency", "USD").upper(),
             status="completed",  # Already succeeded
+            subscription_status="active",
             payment_provider="stripe",
             start_date=start_date,
             end_date=end_date
@@ -286,6 +287,7 @@ async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Hea
                         amount=Decimal(str(payment_intent.amount / 100)),
                         currency=payment_intent.currency.upper(),
                         status="completed",
+                        subscription_status="active",
                         payment_provider="stripe",
                         start_date=start_date,
                         end_date=end_date

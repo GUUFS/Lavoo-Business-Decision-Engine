@@ -341,7 +341,7 @@ export default function EarningsPage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm">
+          {/* <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm">
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-xs sm:text-sm font-medium text-gray-600">
@@ -359,11 +359,11 @@ export default function EarningsPage() {
                 <i className="ri-gift-line text-purple-600 text-lg sm:text-xl"></i>
               </div>
             </div>
-          </div>
+          </div> */}
         </div>
 
         {/* User Level Progress */}
-        {userLevelInfo && (
+        {/* {userLevelInfo && (
           <div className="bg-white rounded-lg sm:rounded-xl p-4 sm:p-6 border border-gray-200 shadow-sm mb-6 sm:mb-8">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
               <div className="flex items-center gap-3">
@@ -402,7 +402,7 @@ export default function EarningsPage() {
               </div>
             </div>
           </div>
-        )}
+        )} */}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
           {/* Monthly Metrics */}
@@ -465,12 +465,12 @@ export default function EarningsPage() {
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
-                      <div className="bg-white p-3 rounded-lg border border-gray-100">
+                      {/* <div className="bg-white p-3 rounded-lg border border-gray-100">
                         <p className="text-xs text-gray-600 mb-1">Referral Chops</p>
                         <p className="text-lg font-bold text-purple-600">
                           {(specificMonthData.referral_chops || 0).toLocaleString()}
                         </p>
-                      </div>
+                      </div> */}
 
                       <div className="bg-white p-3 rounded-lg border border-gray-100">
                         <p className="text-xs text-gray-600 mb-1">Total Referrals</p>
@@ -525,21 +525,21 @@ export default function EarningsPage() {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                  {/* <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
                       <i className="ri-money-dollar-circle-line text-green-600 text-lg"></i>
                     </div>
                     <div>
                       <p className="font-semibold text-gray-900">Total Chops</p>
                       <p className="text-sm text-gray-600">From referrals</p>
-                    </div>
+                    </div> 
                   </div>
                   {loadingState.referrals ? (
                     <LoadingSkeleton className="h-7 w-12" />
                   ) : (
                     <p className="text-xl font-bold text-green-600">{totalChopsEarned}</p>
-                  )}
-                </div>
+                  )} */}
+                </div> 
 
                 <div className="pt-4 border-t border-gray-200">
                   <button

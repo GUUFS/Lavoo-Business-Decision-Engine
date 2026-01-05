@@ -1,194 +1,171 @@
-
 # Security Testing Guidelines
 
 This document provides comprehensive step-by-step instructions to verify all security features implemented in the application.
 
-## 1. Failed Login Attempts & IP Blacklisting (3-Attempt Threshold)
+> [!IMPORTANT]
+> **Prerequisite**: Ensure your API server is running (`uvicorn api.main:app --reload`). 
+> If you recently updated WAF rules (via `fix_waf_regex.py`), **RESTART** your server to load the new rules immediately.
 
-### Test 1.1: Record Failed Login Attempts
-**Procedure**:
-1. Clear existing records: `DELETE FROM failed_login_attempts; DELETE FROM security_events WHERE type='failed_login';`
-2. Attempt login with valid email but wrong password
-3. Check database: `SELECT * FROM failed_login_attempts ORDER BY created_at DESC LIMIT 5;`
+## 1. SQL Injection Protection (WAF)
 
-**Expected Result**:
-- Entry in `failed_login_attempts` table with email, IP address, and user agent
-- Entry in `security_events` table with type='failed_login', severity='medium'
-- HTTP 401 Unauthorized response
+### Test 1.1: JSON Body Injection (Login)
+**Goal**: Verify that SQL injection attempts inside a JSON payload are blocked by the WAF.
 
-### Test 1.2: Automatic IP Blacklisting After 3 Failed Attempts
-**Procedure**:
-1. Clear blacklist: `DELETE FROM ip_blacklist;`
-2. Make 3 failed login attempts with the same email from the same IP
-3. Check blacklist: `SELECT * FROM ip_blacklist WHERE is_active=true;`
-4. Verify email is recorded: Check the `email` column in the blacklist entry
+**Command**:
+```bash
+curl -i -X POST http://localhost:8000/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin'\'' OR '\''1'\''='\''1", "password": "password"}'
+```
 
 **Expected Result**:
-- After 3rd attempt, IP is automatically added to `ip_blacklist`
-- `email` column contains the email from failed login attempts
-- `reason` is "Brute force protection: Multiple failed logins"
-- `expires_at` is set to 24 hours from now
-- `security_events` table has an 'ip_blocked' event
+- ✅ **HTTP 403 Forbidden**
+- Body: `{"error": "Access denied", "message": "Request blocked by firewall"}`
+- Log: `WARNING: Request blocked by firewall: rule=SQL Injection Protection`
 
-### Test 1.3: Block Login from Blacklisted IP
-**Procedure**:
-1. After IP is blacklisted (from Test 1.2), attempt to login again
-2. Try with both correct and incorrect passwords
+### Test 1.2: URL Parameter Injection
+**Goal**: Verify that SQL injection attempts in URL parameters are blocked.
 
-**Expected Result**:
-- HTTP 403 Forbidden response
-- Error message: "IP address blacklisted. Access denied."
-- Login blocked BEFORE password verification
-- No new entries in `failed_login_attempts` (blocked at IP check)
-
-### Test 1.4: Security Dashboard Updates
-**Procedure**:
-1. Navigate to `/admin/security`
-2. Check "Blocked Attacks" metric
-3. View "Recent Security Events" tab
+**Command**:
+```bash
+# Note: %20 is used for spaces
+curl -i "http://localhost:8000/api/users?search=UNION%20SELECT%20password"
+```
 
 **Expected Result**:
-- "Blocked Attacks" shows count of active blacklisted IPs
-- Recent events show failed_login and ip_blocked events
-- Email address displayed in blacklist table (if frontend updated)
+- ✅ **HTTP 403 Forbidden**
+- Body: `{"error": "Access denied", "message": "Request blocked by firewall"}`
 
-## 2. SQL Injection Protection
+---
 
-### Test 2.1: Detection
+## 2. Failed Login & IP Blacklisting
+
+### Test 2.1: Trigger Auto-Block
+**Goal**: Fail login 3 times and get blocked.
+
 **Procedure**:
-1. Send POST request to `/api/login` with payload:
-   ```json
-   {"email": "admin' OR '1'='1", "password": "anything"}
+1. Run this loop to fail login 5 times:
+   ```bash
+   for i in {1..5}; do 
+     echo "Attempt $i..."
+     curl -i -X POST http://localhost:8000/api/login \
+       -H "Content-Type: application/json" \
+       -d '{"email":"test@example.com","password":"wrongpassword"}'
+     echo "\n----------------"
+   done
    ```
-2. Check application logs
 
 **Expected Result**:
-- Request is logged with "Potential SQL injection detected" warning
-- No SQL injection occurs (ORM prevents it)
-- HTTP 401 or 404 response (user not found)
+- Attempts 1-3: **HTTP 401 Unauthorized** (`{"detail":"Incorrect email or password"}`)
+- Attempt 4+: **HTTP 403 Forbidden** (`{"detail":"IP address blacklisted. Access denied."}`)
 
-### Test 2.2: Blocking
-**Procedure**:
-1. Try various SQL injection patterns in different endpoints:
-   - `'; DROP TABLE users; --`
-   - `1' UNION SELECT * FROM users --`
-   - `admin'--`
+### Test 2.2: Verify Block in Database
+**Command**:
+```bash
+# Check raw DB content (requires psql installed, or use the python script provided below)
+python -c "from db.pg_connections import SessionLocal; from sqlalchemy import text; db=SessionLocal(); print(db.execute(text(\"SELECT ip_address, reason FROM ip_blacklist WHERE is_active=true ORDER BY blocked_at DESC LIMIT 1\")).fetchall()); db.close()"
+```
 
-**Expected Result**:
-- All attempts fail safely
-- Database remains intact
-- Security events logged
+---
 
 ## 3. XSS Protection
 
-### Test 3.1: Script Injection in User Input
-**Procedure**:
-1. Update user profile with bio: `<script>alert('XSS')</script>`
-2. View profile page
-3. Check database: `SELECT bio FROM users WHERE id=<user_id>;`
+### Test 3.1: Stored XSS (Profile Bio)
+**Goal**: Try to save a script tag in user profile.
+
+**Command** (Requires Login Token):
+```bash
+# 1. Login to get token (if not blocked)
+TOKEN=$(curl -s -X POST http://localhost:8000/api/login -H "Content-Type: application/json" -d '{"email":"admin@example.com","password":"adminpassword"}' | grep -o '"access_token":"[^"]*"' | awk -F':' '{print $2}' | tr -d '"')
+
+# 2. Update Profile with XSS payload
+curl -i -X PUT http://localhost:8000/api/users/me \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"bio": "<script>alert(\"XSS\")</script>"}'
+```
 
 **Expected Result**:
-- Script tags are sanitized or escaped
-- No JavaScript execution in browser
-- Database stores sanitized version
+- The server should validly save it OR sanitize it depending on implementation. 
+- **Verification**: Open the frontend Profile page. You should see the text `<script>...` displayed as plain text, **NOT** executed as a popup. React escapes content by default.
 
-### Test 3.2: XSS in URL Parameters
-**Procedure**:
-1. Navigate to: `/dashboard?search=<img src=x onerror=alert('XSS')>`
-2. Check browser console
+### Test 3.2: Reflected XSS (URL)
+**Goal**: Verify WAF blocks common XSS vectors in URL.
 
-**Expected Result**:
-- No alert popup
-- Input is escaped/sanitized
-
-## 4. Session Management & JWT Authentication
-
-### Test 4.1: Unauthorized Access
-**Procedure**:
-1. Clear all cookies and localStorage
-2. Attempt to access `/api/security/metrics`
+**Command**:
+```bash
+curl -i "http://localhost:8000/api/users?search=<script>alert(1)</script>"
+```
 
 **Expected Result**:
-- HTTP 401 Unauthorized or 403 Forbidden
-- Redirected to login page
+- ✅ **HTTP 403 Forbidden** (Blocked by WAF "Pattern Match" or "XSS" rule)
 
-### Test 4.2: Token Expiration
-**Procedure**:
-1. Log in and copy the JWT token
-2. Wait for token to expire (check JWT_EXPIRATION in .env)
-3. Attempt to access protected endpoint
+---
 
-**Expected Result**:
-- HTTP 401 Unauthorized
-- Error: "Token expired"
+## 4. Rate Limiting
 
-### Test 4.3: Session Invalidation
-**Procedure**:
-1. Log in and note session ID
-2. Manually delete session: `DELETE FROM user_sessions WHERE id=<session_id>;`
-3. Refresh dashboard
+### Test 4.1: Flood Detection
+**Goal**: Trigger the 50 req/sec limit.
 
-**Expected Result**:
-- Redirected to login
-- Session no longer valid
-
-## 5. Rate Limiting
-
-### Test 5.1: Login Rate Limit
-**Procedure**:
-1. Send 11+ login requests within 1 minute using curl or Postman:
-   ```bash
-   for i in {1..15}; do curl -X POST http://localhost:8000/api/login \
-     -H "Content-Type: application/json" \
-     -d '{"email":"test@test.com","password":"wrong"}'; done
-   ```
+**Command** (Uses Apache Bench `ab` if available, or a loop):
+```bash
+# Using a simple loop for portability
+start=$(date +%s)
+for i in {1..60}; do
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health
+  echo ""
+done
+end=$(date +%s)
+echo "Duration: $((end-start)) seconds"
+```
 
 **Expected Result**:
-- First 10 requests: HTTP 401 (wrong password)
-- 11th+ requests: HTTP 429 Too Many Requests
-- Error: "Rate limit exceeded"
+- First ~50 requests: **200 OK**
+- Subsequent requests: **429 Too Many Requests** or **403 Forbidden** (if Flood Detector triggers)
 
-### Test 5.2: API Rate Limit
-**Procedure**:
-1. Send 100+ requests to any API endpoint within 1 minute
+---
+
+## 5. Security Metrics (Dashboard)
+
+### Test 5.1: Verify Data
+**Goal**: Ensure the dashboard shows the real counts.
+
+**Command**:
+```bash
+python -c "from db.pg_connections import SessionLocal; from sqlalchemy import text; db=SessionLocal(); print('Blocked IPs:', db.execute(text(\"SELECT count(*) FROM ip_blacklist WHERE is_active=true\")).scalar()); print('Failed Logins:', db.execute(text(\"SELECT count(*) FROM failed_login_attempts\")).scalar()); db.close()"
+```
+Compare this output with what you see on `/admin/security`.
+
+---
+
+## 6. Secure Headers
+
+### Test 6.1: Inspect Headers
+**Command**:
+```bash
+curl -I http://localhost:8000/api/health
+```
 
 **Expected Result**:
-- HTTP 429 after threshold
-- Rate limit resets after time window
+- ✅ **HTTP 200 OK** (Previously 405/404)
+- Should see headers like `X-Content-Type-Options: nosniff` if configured.
 
-## 6. CSRF Token Validation
+---
 
-### Test 6.1: Missing CSRF Token
-**Procedure**:
-1. Send POST request without CSRF token (if implemented)
-2. Check response
+## Troubleshooting
 
-**Expected Result**:
-- HTTP 403 Forbidden (if CSRF protection enabled)
-- Error: "CSRF token missing or invalid"
+- **"Email has not been registered!" (404)**: 
+  - This means the request **passed** the WAF and reached the login endpoint.
+  - **Fix**: The WAF regex is not loaded or not matching. 
+  - **Action**: Restart successful? Run `python scripts/fix_waf_regex.py` again, then **restart the API server**.
 
-## 7. Secure Headers
+- **"dbt" or "psql" not found**:
+  - Use the provided `python -c` commands instead to interact with the DB directly.
 
-### Test 7.1: Security Headers Present
-**Procedure**:
-1. Make any request and inspect response headers:
-   ```bash
-   curl -I http://localhost:8000/api/health
-   ```
-
-**Expected Headers**:
-- `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: DENY`
-- `X-XSS-Protection: 1; mode=block`
-- `Strict-Transport-Security: max-age=31536000` (if HTTPS)
-- `Content-Security-Policy: ...`
-
-## 8. Database Security
 
 ### Test 8.1: Password Hashing
 **Procedure**:
 1. Create new user
-2. Check database: `SELECT password FROM users WHERE email='newuser@test.com';`
 
 **Expected Result**:
 - Password is hashed (bcrypt, 60+ characters)
@@ -208,6 +185,10 @@ This document provides comprehensive step-by-step instructions to verify all sec
 **Expected Result**:
 - Views: `security_metrics_summary`, `recent_security_events`, `active_user_sessions`, `top_attacking_ips`
 - Trigger: `trigger_auto_block` on `security_events` table
+
+> [!NOTE]
+> `SELECT * FROM pg_views` only shows the **definition** of the view (the SQL code), not the data. 
+> To see the actual data, run: `SELECT * FROM security_metrics_summary;`
 
 ## 9. Firewall Rules
 
@@ -288,6 +269,70 @@ This document provides comprehensive step-by-step instructions to verify all sec
 - List of all firewall rules with details
 - Includes hit counts for each rule
 
+# Security Testing Guidelines
+
+## 1. Vulnerability Scanner
+To trigger a full system vulnerability scan:
+```bash
+curl -X POST http://localhost:8000/api/security/scan/full \
+     -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+```
+
+## 2. Firewall Protection
+
+### SQL Injection Protection (JSON Body)
+Test if the firewall blocks SQL injection patterns in POST requests:
+```bash
+curl -i -X POST http://localhost:8000/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin'\'' OR '\''1'\''='\''1", "password": "password"}'
+```
+**Expected Response**: `403 Forbidden` with a firewall block message, OR if the firewall is in "dry" mode, a `401 Unauthorized` with `{"detail": "Invalid email or password."}`. 
+> [!NOTE]
+> We use a generic message to prevent hackers from knowing if an email exists in our system.
+
+### SQL Injection Protection (URL Parameters)
+Test if the firewall blocks SQL injection in query strings:
+```bash
+# Correct way to pass special characters in URL
+curl -i -G "http://localhost:8000/api/users" --data-urlencode "search=admin' OR '1'='1"
+```
+**Expected Response**: `403 Forbidden`. If you get `401 Unauthorized`, it means the firewall allowed the request through to the authentication layer, which is a bypass!
+
+### Malicious Bot Blocking
+Test if the firewall blocks known malicious user agents:
+```bash
+curl -i -H "User-Agent: sqlmap" http://localhost:8000/api/health
+```
+
+### Flood Detection (Rate Limiting)
+Our flood detection is now set to **10 requests per second**.
+
+#### For Bash (Ubuntu Default):
+```bash
+START_TIME=$(date +%s)
+for i in {1..20}; do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health)
+  echo "Request $i: HTTP $CODE"
+  if [ "$CODE" == "403" ] || [ "$CODE" == "429" ]; then
+    echo "Rate limit triggered at request $i!"
+    break
+  fi
+done
+```
+
+#### For Fish Shell:
+```fish
+set start (date +%s)
+for i in (seq 1 20)
+  set code (curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health)
+  echo "Request $i: HTTP $code"
+  if test "$code" = "403" -o "$code" = "429"
+    echo "Rate limit triggered at request $i!"
+    break
+  end
+end
+```
 ## 10. Vulnerability Scanner
 
 ### Test 10.1: Run Full Vulnerability Scan

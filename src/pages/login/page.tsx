@@ -47,6 +47,8 @@ export default function Login() {
       const res = await loginUser(data); // call your backend login
       // Save token
       localStorage.setItem("access_token", res.access_token);
+      localStorage.setItem("auth_token", res.access_token);
+      localStorage.setItem("user_token", res.access_token);
       localStorage.setItem("user_id", String(res.id));
       localStorage.setItem("role", res.role);
 

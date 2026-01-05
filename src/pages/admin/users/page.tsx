@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
 import { getAuthHeaders } from '../../../utils/auth';
@@ -40,6 +41,56 @@ interface UserStats {
   active?: number;
 }
 
+interface ConfirmationModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  message: string;
+  confirmText: string;
+  cancelText: string;
+  type: 'danger' | 'success';
+}
+
+function ConfirmationModal({ isOpen, onClose, onConfirm, title, message, confirmText, cancelText, type }: ConfirmationModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+        <div className="p-6">
+          <div className="flex items-center gap-4 mb-4">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${type === 'danger' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'
+              }`}>
+              <i className={`text-2xl ${type === 'danger' ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'}`}></i>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900">{title}</h3>
+          </div>
+          <p className="text-gray-600 mb-8">{message}</p>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              {cancelText}
+            </button>
+            <button
+              onClick={() => {
+                onConfirm();
+                onClose();
+              }}
+              className={`flex-1 px-4 py-2 text-white rounded-lg transition-colors ${type === 'danger' ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
+                }`}
+            >
+              {confirmText}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminUsers() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -48,10 +99,22 @@ export default function AdminUsers() {
   const [selectedUser, setSelectedUser] = useState<UserDetails | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [totalPages, setTotalPages] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'success';
+  }>({
+    title: '',
+    message: '',
+    onConfirm: () => { },
+    type: 'danger'
+  });
 
   const [stats, setStats] = useState<UserStats>({
     total: 0,
@@ -94,7 +157,7 @@ export default function AdminUsers() {
   };
 
   const fetchUsers = async () => {
-    setLoading(true);
+    setLoadingUsers(true);
     try {
       const queryParams = new URLSearchParams({
         page: currentPage.toString(),
@@ -116,43 +179,57 @@ export default function AdminUsers() {
     } catch (error) {
       console.error('Error fetching users:', error);
     } finally {
-      setLoading(false);
+      setLoadingUsers(false);
     }
   };
 
-  const handleDeactivateUser = async (user: UserDetails) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/control/users/${user.id}/status`, {
-        method: 'PATCH',
-        headers: getAuthHeaders()
-      });
+  const handleToggleStatus = (user: User) => {
+    const isDeactivating = user.status === 'active';
 
-      if (response.ok) {
-        // Update local state in list
-        setUsers(users.map(u =>
-          u.id === user.id
-            ? { ...u, status: u.status === 'active' ? 'suspended' : 'active' }
-            : u
-        ));
-
-        // Update modal internal state
-        if (selectedUser && selectedUser.id === user.id) {
-          setSelectedUser({
-            ...selectedUser,
-            status: selectedUser.status === 'active' ? 'suspended' : 'active',
-            is_active: !selectedUser.is_active
+    setConfirmConfig({
+      title: isDeactivating ? 'Deactivate User' : 'Activate User',
+      message: `Are you sure you want to ${isDeactivating ? 'deactivate' : 'activate'} ${user.name}? They will ${isDeactivating ? 'lose access to the platform until reactivated' : 'be able to log in again'}.`,
+      type: isDeactivating ? 'danger' : 'success',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/control/users/${user.id}/status`, {
+            method: 'PATCH',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({ status: isDeactivating ? 'suspended' : 'active' })
           });
-        }
 
-        fetchStats();
-      } else {
-        const err = await response.json();
-        alert(`Error: ${err.detail}`);
+          const newStatus = isDeactivating ? 'suspended' : 'active';
+
+          if (response.ok) {
+            // Update local state in list
+            setUsers((prevUsers: User[]) => prevUsers.map((u: User) =>
+              u.id === user.id
+                ? { ...u, status: newStatus }
+                : u
+            ));
+
+            // Update modal internal state
+            if (selectedUser && selectedUser.id === user.id) {
+              setSelectedUser({
+                ...(selectedUser as any),
+                status: newStatus,
+                is_active: !isDeactivating
+              });
+            }
+
+            fetchStats();
+            toast.success(`User ${newStatus === 'active' ? 'activated' : 'deactivated'} successfully`);
+          } else {
+            const err = await response.json();
+            toast.error(`Error: ${err.detail}`);
+          }
+        } catch (error) {
+          console.error('Error updating user status:', error);
+          toast.error('Failed to update user status');
+        }
       }
-    } catch (error) {
-      console.error('Error updating user status:', error);
-      alert('Failed to update user status');
-    }
+    });
+    setIsConfirmModalOpen(true);
   };
 
   const handleViewUser = async (user: User) => {
@@ -323,12 +400,12 @@ export default function AdminUsers() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {loading ? (
+                    {loadingUsers ? (
                       <tr><td colSpan={6} className="text-center py-8">Loading users...</td></tr>
                     ) : users.length === 0 ? (
                       <tr><td colSpan={6} className="text-center py-8">No users found.</td></tr>
                     ) : (
-                      users.map((user) => (
+                      users.map((user: User) => (
                         <tr key={user.id} className="hover:bg-gray-50">
                           <td className="py-4 px-4">
                             <div className="flex items-center gap-3">
@@ -453,7 +530,13 @@ export default function AdminUsers() {
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 uppercase">Plan</label>
-                        <div className="mt-1 font-medium">{selectedUser.subscription_plan || 'None'}</div>
+                        <div className="mt-1 font-medium capitalize">
+                          {selectedUser.subscription_plan ? (
+                            selectedUser.subscription_plan.toLowerCase().includes('yearly') ? 'Yearly Pro' :
+                              selectedUser.subscription_plan.toLowerCase().includes('monthly') ? 'Monthly Pro' :
+                                selectedUser.subscription_plan
+                          ) : 'Free'}
+                        </div>
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 uppercase">Pro Days Remaining</label>
@@ -542,7 +625,7 @@ export default function AdminUsers() {
                     </button>
 
                     <button
-                      onClick={() => handleDeactivateUser(selectedUser)}
+                      onClick={() => handleToggleStatus(selectedUser as any)}
                       className={`flex-1 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${selectedUser.status === 'active'
                         ? 'bg-red-100 text-red-600 hover:bg-red-200'
                         : 'bg-green-100 text-green-600 hover:bg-green-200'
@@ -557,6 +640,16 @@ export default function AdminUsers() {
           </div>
         </div>
       )}
+      <ConfirmationModal
+        isOpen={isConfirmModalOpen}
+        onClose={() => setIsConfirmModalOpen(false)}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        type={confirmConfig.type}
+        confirmText={confirmConfig.type === 'danger' ? 'Deactivate' : 'Activate'}
+        cancelText="Cancel"
+      />
     </div>
   );
 }

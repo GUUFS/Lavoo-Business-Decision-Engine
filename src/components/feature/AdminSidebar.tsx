@@ -141,28 +141,10 @@ export default function AdminSidebar({
       current: location.pathname === '/admin/content-management'
     },
     {
-      name: 'System Health',
-      href: '/admin/system-health',
-      icon: 'ri-heart-pulse-line',
-      current: location.pathname === '/admin/system-health'
-    },
-    {
       name: 'Security',
       href: '/admin/security',
       icon: 'ri-shield-line',
       current: location.pathname === '/admin/security'
-    },
-    {
-      name: 'Database',
-      href: '/admin/database',
-      icon: 'ri-database-line',
-      current: location.pathname === '/admin/database'
-    },
-    {
-      name: 'Notifications',
-      href: '/admin/notifications',
-      icon: 'ri-notification-line',
-      current: location.pathname === '/admin/notifications'
     },
     {
       name: 'Settings',

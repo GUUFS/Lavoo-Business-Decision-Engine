@@ -8,7 +8,7 @@ from db.pg_connections import get_db
 from db.pg_models import User, Subscriptions, BusinessAnalysis
 from api.routes.dependencies import admin_required
 
-router = APIRouter(prefix="/api/control/users", tags=["admin-users"])
+router = APIRouter(prefix="/control/users", tags=["admin-users"])
 
 
 @router.get("/stats")
@@ -64,14 +64,32 @@ async def get_user_details(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
+    # Sync Subscription before returning details
+    from api.utils.sub_utils import sync_user_subscription
+    user = sync_user_subscription(db, user)
+
     # Calculate days remaining
     days_remaining = 0
-    if user.subscriptions:
-        # Find active subscription
-        active_sub = next((sub for sub in user.subscriptions if sub.status == 'active'), None)
-        if active_sub and active_sub.end_date:
-             delta = active_sub.end_date.replace(tzinfo=None) - datetime.utcnow()
+    if user.subscription_status == 'active' and user.subscriptions:
+        # Get the FIRST subscription (source of truth)
+        first_sub = db.query(Subscriptions).filter(
+            Subscriptions.user_id == user.id
+        ).order_by(Subscriptions.created_at.asc(), Subscriptions.id.asc()).first()
+        
+        if first_sub and first_sub.end_date:
+             # Ensure timezone awareness for comparison
+             if first_sub.end_date.tzinfo is None:
+                 from datetime import timezone
+                 end_date = first_sub.end_date.replace(tzinfo=timezone.utc)
+             else:
+                 end_date = first_sub.end_date
+             
+             now = datetime.now(end_date.tzinfo)
+             delta = end_date - now
              days_remaining = max(0, delta.days)
+    else:
+        # Force 0 if not active or no subscriptions
+        days_remaining = 0
     
     # Get Referrals from the user (names)
     # referral.referrer_id = user.id

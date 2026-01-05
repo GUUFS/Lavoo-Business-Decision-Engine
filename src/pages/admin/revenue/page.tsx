@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
+import { getAuthHeaders } from '../../../utils/auth';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -160,22 +161,15 @@ export default function AdminRevenue() {
   }, [currentPage, activeTab]);
 
   const handleViewHistory = async (userId: number) => {
-    setHistoryModal(prev => ({ ...prev, open: true, loading: true }));
+    setHistoryModal((prev: any) => ({ ...prev, open: true, loading: true }));
     try {
-      const token = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('access_token='))
-        ?.split('=')[1];
-
       const response = await fetch(`${API_BASE_URL}/api/control/revenue/commissions/user/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
         const data = await response.json();
-        setHistoryModal(prev => ({
+        setHistoryModal((prev: any) => ({
           ...prev,
           user: data.user,
           commissions: data.commissions,
@@ -183,11 +177,11 @@ export default function AdminRevenue() {
         }));
       } else {
         showToast('error', 'Failed to fetch history');
-        setHistoryModal(prev => ({ ...prev, loading: false, open: false }));
+        setHistoryModal((prev: any) => ({ ...prev, loading: false, open: false }));
       }
     } catch (error) {
       console.error('Error fetching history:', error);
-      setHistoryModal(prev => ({ ...prev, loading: false }));
+      setHistoryModal((prev: any) => ({ ...prev, loading: false }));
     }
   };
 
@@ -215,7 +209,7 @@ export default function AdminRevenue() {
               )}
             </div>
             <button
-              onClick={() => setHistoryModal(prev => ({ ...prev, open: false }))}
+              onClick={() => setHistoryModal((prev: any) => ({ ...prev, open: false }))}
               className="p-2 hover:bg-gray-100 rounded-full transition"
             >
               <i className="ri-close-line text-xl text-gray-500"></i>
@@ -285,7 +279,7 @@ export default function AdminRevenue() {
 
           <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
             <button
-              onClick={() => setHistoryModal(prev => ({ ...prev, open: false }))}
+              onClick={() => setHistoryModal((prev: any) => ({ ...prev, open: false }))}
               className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-white transition"
             >
               Close
@@ -308,15 +302,8 @@ export default function AdminRevenue() {
 
   const fetchRevenueStats = async () => {
     try {
-      const token = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('access_token='))
-        ?.split('=')[1];
-
       const response = await fetch(`${API_BASE_URL}/api/control/revenue/stats`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
@@ -331,16 +318,9 @@ export default function AdminRevenue() {
   const fetchTransactions = async () => {
     try {
       setLoading(true);
-      const token = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('access_token='))
-        ?.split('=')[1];
-
       const offset = (currentPage - 1) * itemsPerPage;
       const response = await fetch(`${API_BASE_URL}/api/control/revenue/transactions?limit=${itemsPerPage}&offset=${offset}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
@@ -358,16 +338,9 @@ export default function AdminRevenue() {
   const fetchCommissions = async () => {
     try {
       setLoading(true);
-      const token = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('access_token='))
-        ?.split('=')[1];
-
       const offset = (currentPage - 1) * itemsPerPage;
       const response = await fetch(`${API_BASE_URL}/api/control/revenue/commissions?limit=${itemsPerPage}&offset=${offset}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
@@ -385,16 +358,9 @@ export default function AdminRevenue() {
   const fetchPayouts = async () => {
     try {
       setLoading(true);
-      const token = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('access_token='))
-        ?.split('=')[1];
-
       const offset = (currentPage - 1) * itemsPerPage;
       const response = await fetch(`${API_BASE_URL}/api/control/revenue/payouts?limit=${itemsPerPage}&offset=${offset}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: getAuthHeaders(),
       });
 
       if (response.ok) {
@@ -412,18 +378,13 @@ export default function AdminRevenue() {
   const handleApproveCommissions = async () => {
     if (!dialog.userId) return;
 
-    setDialog(prev => ({ ...prev, loading: true }));
+    setDialog((prev: any) => ({ ...prev, loading: true }));
 
     try {
-      const token = document.cookie
-        .split('; ')
-        .find((row) => row.startsWith('access_token='))
-        ?.split('=')[1];
-
       const response = await fetch(`${API_BASE_URL}/api/control/revenue/commissions/approve/${dialog.userId}`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          ...getAuthHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -476,7 +437,7 @@ export default function AdminRevenue() {
       showToast('error', 'Network error: Failed to connect to server');
 
     } finally {
-      setDialog(prev => ({ ...prev, loading: false }));
+      setDialog((prev: any) => ({ ...prev, loading: false }));
     }
   };
 
@@ -507,8 +468,8 @@ export default function AdminRevenue() {
       {toast.show && (
         <div className="fixed top-6 right-6 z-50 animate-slide-in">
           <div className={`flex items-center gap-4 px-8 py-4 rounded-xl shadow-2xl text-white font-bold text-lg min-w-[300px] border-l-8 ${toast.type === 'success' ? 'bg-green-600 border-green-800' :
-              toast.type === 'warning' ? 'bg-yellow-500 border-yellow-700 text-gray-900' :
-                'bg-red-600 border-red-800'
+            toast.type === 'warning' ? 'bg-yellow-500 border-yellow-700 text-gray-900' :
+              'bg-red-600 border-red-800'
             }`}>
             <i className={`ri-${toast.type === 'success' ? 'check' : toast.type === 'warning' ? 'alert' : 'close'}-fill text-3xl`}></i>
             <div className="flex-1">
@@ -550,7 +511,7 @@ export default function AdminRevenue() {
                   value={dialog.customAmount || ''}
                   onChange={(e) => {
                     const val = parseFloat(e.target.value) || 0;
-                    setDialog(prev => ({ ...prev, customAmount: val }));
+                    setDialog((prev: any) => ({ ...prev, customAmount: val }));
                   }}
                 />
                 <p className="text-xs text-gray-500 mt-2">
@@ -571,7 +532,7 @@ export default function AdminRevenue() {
                             name="method"
                             value="stripe"
                             checked={dialog.selectedMethod === 'stripe'}
-                            onChange={() => setDialog(prev => ({ ...prev, selectedMethod: 'stripe' }))}
+                            onChange={() => setDialog((prev: any) => ({ ...prev, selectedMethod: 'stripe' }))}
                             className="w-5 h-5 text-purple-600"
                           />
                           <div className="flex-1">
@@ -588,7 +549,7 @@ export default function AdminRevenue() {
                             name="method"
                             value="flutterwave"
                             checked={dialog.selectedMethod === 'flutterwave'}
-                            onChange={() => setDialog(prev => ({ ...prev, selectedMethod: 'flutterwave' }))}
+                            onChange={() => setDialog((prev: any) => ({ ...prev, selectedMethod: 'flutterwave' }))}
                             className="w-5 h-5 text-orange-600"
                           />
                           <div className="flex-1">
@@ -784,7 +745,7 @@ export default function AdminRevenue() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          {transactions.map((txn) => (
+                          {transactions.map((txn: Transaction) => (
                             <tr key={txn.id} className="hover:bg-gray-50">
                               <td className="py-4 px-4">
                                 <span className="font-mono text-sm text-gray-900">{txn.id}</span>
@@ -802,7 +763,7 @@ export default function AdminRevenue() {
                                 <span className="font-medium text-gray-900">${txn.amount}</span>
                               </td>
                               <td className="py-4 px-4">
-                                <span className={`px - 2 py - 1 rounded - full text - xs font - medium ${getStatusColor(txn.status)} `}>
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(txn.status)}`}>
                                   {txn.status}
                                 </span>
                               </td>
@@ -830,7 +791,7 @@ export default function AdminRevenue() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          {commissions.map((comm) => (
+                          {commissions.map((comm: Commission) => (
                             <tr key={comm.user_id} className="hover:bg-gray-50">
                               <td className="py-4 px-4">
                                 <div>
@@ -851,7 +812,7 @@ export default function AdminRevenue() {
                                 <span className="text-green-600 font-medium">${comm.paid_commissions.toFixed(2)}</span>
                               </td>
                               <td className="py-4 px-4">
-                                <span className={`px - 2 py - 1 rounded - full text - xs font - medium ${getStatusColor(comm.payout_status)} `}>
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(comm.payout_status)}`}>
                                   {comm.payout_status}
                                 </span>
                               </td>
@@ -905,7 +866,7 @@ export default function AdminRevenue() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          {payouts.map((payout) => (
+                          {payouts.map((payout: Payout) => (
                             <tr key={payout.id} className="hover:bg-gray-50">
                               <td className="py-4 px-4">
                                 <span className="font-mono text-sm text-gray-900">#{payout.id}</span>
@@ -923,7 +884,7 @@ export default function AdminRevenue() {
                                 <span className="capitalize text-gray-900">{payout.method}</span>
                               </td>
                               <td className="py-4 px-4">
-                                <span className={`px - 2 py - 1 rounded - full text - xs font - medium ${getStatusColor(payout.status)} `}>
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(payout.status)}`}>
                                   {payout.status}
                                 </span>
                               </td>
@@ -951,7 +912,7 @@ export default function AdminRevenue() {
                     </div>
                     <div className="flex items-center gap-3 flex-wrap">
                       <button
-                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        onClick={() => setCurrentPage((prev: number) => Math.max(1, prev - 1))}
                         disabled={currentPage === 1}
                         className="px-5 py-2.5 border-2 border-gray-300 rounded-xl text-base font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap transition-colors flex items-center gap-2"
                       >
@@ -975,8 +936,8 @@ export default function AdminRevenue() {
                             <button
                               onClick={() => setCurrentPage(pageNum)}
                               className={`w-12 h-12 rounded-xl text-lg font-bold transition-all ${currentPage === pageNum
-                                  ? 'bg-red-600 text-white shadow-lg shadow-red-200 ring-2 ring-red-600 ring-offset-2'
-                                  : 'border-2 border-gray-200 text-gray-600 hover:border-red-600 hover:text-red-600 hover:bg-red-50'
+                                ? 'bg-red-600 text-white shadow-lg shadow-red-200 ring-2 ring-red-600 ring-offset-2'
+                                : 'border-2 border-gray-200 text-gray-600 hover:border-red-600 hover:text-red-600 hover:bg-red-50'
                                 }`}
                             >
                               {pageNum}
@@ -988,7 +949,7 @@ export default function AdminRevenue() {
                         ))}
 
                       <button
-                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        onClick={() => setCurrentPage((prev: number) => Math.min(totalPages, prev + 1))}
                         disabled={currentPage === totalPages}
                         className="px-5 py-2.5 border-2 border-gray-300 rounded-xl text-base font-bold text-gray-700 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap transition-colors flex items-center gap-2"
                       >
@@ -1017,7 +978,7 @@ export default function AdminRevenue() {
                 )}
               </div>
               <button
-                onClick={() => setHistoryModal(prev => ({ ...prev, open: false }))}
+                onClick={() => setHistoryModal((prev: any) => ({ ...prev, open: false }))}
                 className="p-2 hover:bg-gray-100 rounded-full transition"
               >
                 <i className="ri-close-line text-xl text-gray-500"></i>
@@ -1059,7 +1020,7 @@ export default function AdminRevenue() {
                           <td className="px-4 py-3">{item.subscription_plan}</td>
                           <td className="px-4 py-3 font-medium text-gray-900">${item.amount.toFixed(2)}</td>
                           <td className="px-4 py-3">
-                            <span className={`px - 2 py - 1 rounded - full text - xs font - medium ${getStatusColor(item.status)} `}>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(item.status)}`}>
                               {item.status}
                             </span>
                           </td>
@@ -1085,7 +1046,7 @@ export default function AdminRevenue() {
 
             <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
               <button
-                onClick={() => setHistoryModal(prev => ({ ...prev, open: false }))}
+                onClick={() => setHistoryModal((prev: any) => ({ ...prev, open: false }))}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-white transition"
               >
                 Close

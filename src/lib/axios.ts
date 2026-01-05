@@ -49,7 +49,7 @@ instance.interceptors.request.use(
         : { ...config.headers };
 
     if (isAuthRequired(config)) {
-     ( config.headers as any) = {
+      (config.headers as any) = {
         ...headers,
         Authorization: token ? `Bearer ${token}` : "",
         // "Content-Type": "application/json",
@@ -100,7 +100,7 @@ instance.interceptors.response.use(
       } catch (refreshError) {
         Cookies.remove("access_token");
         Cookies.remove("refresh_token");
-        window.location.href = "/auth-login";
+        window.location.href = "/login";
         return Promise.reject(refreshError);
       }
     }

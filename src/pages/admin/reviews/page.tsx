@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { toast } from 'react-toastify';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
 import { getAuthHeaders } from '../../../utils/auth';
@@ -193,13 +194,15 @@ export default function AdminReviews() {
   const [loading, setLoading] = useState(true);
   const [selectedReview, setSelectedReview] = useState<Review | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'list' | 'users'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'users' | 'displayed'>('list'); // Added 'displayed' mode
   const [users, setUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [historyModal, setHistoryModal] = useState<{ open: boolean, user: any, reviews: Review[] }>({
     open: false, user: null, reviews: []
   });
   const [totalPages, setTotalPagesState] = useState(1);
+  const [displayedReviews, setDisplayedReviews] = useState<Review[]>([]); // New state for displayed reviews
+  const [loadingDisplayed, setLoadingDisplayed] = useState(false);
 
   const fetchReviews = async () => {
     try {
@@ -226,8 +229,12 @@ export default function AdminReviews() {
   };
 
   useEffect(() => {
-    fetchReviews();
-  }, [selectedFilter, currentPage]);
+    if (viewMode === 'list') {
+      fetchReviews();
+    } else if (viewMode === 'displayed') {
+      fetchDisplayedReviews();
+    }
+  }, [selectedFilter, currentPage, viewMode]);
 
   const filteredReviews = reviews.filter(r => {
     if (selectedRating === 'all') return true;
@@ -236,32 +243,47 @@ export default function AdminReviews() {
 
   const handleReply = async (id: number, message: string): Promise<boolean> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/reply`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/reply`, {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({ message })
       });
-      if (response.ok) return true;
-      alert('Failed to send reply');
-      return false;
+      if (res.ok) {
+        toast.success('Reply sent successfully');
+        setIsModalOpen(false);
+        // Update review in state
+        const updatedReviews = reviews.map(r =>
+          r.id === id ? { ...r, conversation_count: (r.conversation_count || 0) + 1 } : r
+        );
+        setReviews(updatedReviews);
+        return true; // Added return true for consistency with original signature
+      } else {
+        toast.error('Failed to send reply');
+        return false; // Added return false for consistency with original signature
+      }
     } catch (e) {
-      alert('Error sending reply');
-      return false;
+      console.error(e);
+      toast.error('Error sending reply');
+      return false; // Added return false for consistency with original signature
     }
   };
 
   const handleUpdateStatus = async (id: number, status: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/status`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/status`, {
         method: 'PATCH',
-        headers: getAuthHeaders(),
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ status })
       });
-      if (response.ok) {
-        setReviews(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+      if (res.ok) {
+        toast.success(`Review ${status} successfully`);
+        fetchReviews();
+      } else {
+        toast.error('Failed to update status');
       }
     } catch (e) {
-      alert('Failed to update status');
+      console.error(e);
+      toast.error('Error updating status');
     }
   };
 
@@ -281,9 +303,67 @@ export default function AdminReviews() {
             reviews: prev.reviews.map(r => r.id === id ? { ...r, is_attended: data.is_attended } : r)
           }));
         }
+        toast.success(data.is_attended ? 'Review marked as attended' : 'Review marked as unattended');
+      } else {
+        toast.error('Failed to update attended status');
       }
     } catch (e) {
       console.error(e);
+      toast.error('Error updating attended status');
+    }
+  };
+
+  // New function to fetch displayed reviews
+  const fetchDisplayedReviews = async () => {
+    setLoadingDisplayed(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/displayed?page=${currentPage}&limit=${itemsPerPage}`, {
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDisplayedReviews(data.reviews);
+        setTotalPagesState(data.totalPages);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingDisplayed(false);
+    }
+  };
+
+  // New function to add review to display
+  const handleAddToDisplay = async (reviewId: number) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${reviewId}/display`, {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+
+
+        // Only refresh if we are specifically viewing the displayed list
+        if (viewMode === 'displayed') fetchDisplayedReviews();
+      }
+    } catch (e) {
+      toast.error('Failed to add review to display');
+    }
+  };
+
+  // New function to remove review from display
+  const handleRemoveFromDisplay = async (reviewId: number) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${reviewId}/display`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
+      if (res.ok) {
+        toast.success('Review removed from homepage display!');
+        // Refresh displayed reviews
+        fetchDisplayedReviews();
+      }
+    } catch (e) {
+      toast.error('Failed to remove review from display');
     }
   };
 
@@ -351,69 +431,78 @@ export default function AdminReviews() {
               <div className="flex border-b border-gray-200 mb-6">
                 <button className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${viewMode === 'list' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={() => setViewMode('list')}>All Reviews</button>
                 <button className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${viewMode === 'users' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={() => { setViewMode('users'); fetchUsers(); }}>Group by User</button>
+                <button className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${viewMode === 'displayed' ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`} onClick={() => { setViewMode('displayed'); fetchDisplayedReviews(); }}>Displayed Reviews</button>
               </div>
-              {viewMode === 'list' ? (
+              {(viewMode === 'list' || viewMode === 'displayed') ? (
                 <div className="flex flex-col md:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
-                    <select value={selectedFilter} onChange={(e) => setSelectedFilter(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
-                      <option value="all">All Reviews</option>
-                      <option value="published">Published</option>
-                      <option value="pending">Pending</option>
-                      <option value="rejected">Rejected</option>
-                    </select>
-                  </div>
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Rating</label>
-                    <select value={selectedRating} onChange={(e) => setSelectedRating(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
-                      <option value="all">All Ratings</option>
-                      <option value="5">5 Stars</option>
-                      <option value="4">4 Stars</option>
-                      <option value="3">3 Stars</option>
-                      <option value="2">2 Stars</option>
-                      <option value="1">1 Star</option>
-                    </select>
-                  </div>
+                  {viewMode === 'list' && (
+                    <>
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
+                        <select value={selectedFilter} onChange={(e) => setSelectedFilter(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
+                          <option value="all">All Reviews</option>
+                          <option value="published">Published</option>
+                          <option value="pending">Pending</option>
+                          <option value="rejected">Rejected</option>
+                        </select>
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Rating</label>
+                        <select value={selectedRating} onChange={(e) => setSelectedRating(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
+                          <option value="all">All Ratings</option>
+                          <option value="5">5 Stars</option>
+                          <option value="4">4 Stars</option>
+                          <option value="3">3 Stars</option>
+                          <option value="2">2 Stars</option>
+                          <option value="1">1 Star</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  {viewMode === 'displayed' && (
+                    <div className="flex-1 p-3 bg-blue-50 text-blue-700 rounded-lg text-sm flex items-center">
+                      <i className='ri-information-line mr-2'></i> These reviews are currently visible on the homepage carousel.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-sm text-gray-500">Viewing reviews grouped by distinct users. Click "History" to see all reviews for a user.</div>
               )}
             </div>
-            {viewMode === 'list' ? (
+            {(viewMode === 'list' || viewMode === 'displayed') ? (
               <div className="space-y-4">
-                {loading ? <div className="text-center py-10 text-gray-500">Loading reviews...</div> : filteredReviews.length === 0 ? <div className="text-center py-10 text-gray-500">No reviews found.</div> : filteredReviews.map((review) => (
-                  <div key={review.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 relative">
-                    {/* Attended Badge/Button */}
-                    <div className="absolute top-6 right-6 flex gap-2">
-                      <button onClick={() => handleToggleAttended(review.id)} className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors border ${review.is_attended ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}>
-                        {review.is_attended ? <><i className="ri-check-line mr-1"></i>Attended</> : 'Mark Attended'}
-                      </button>
-                    </div>
-
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 pr-32">
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center"><i className="ri-user-line text-red-600"></i></div>
-                          <div>
-                            <h3 className="font-semibold text-gray-900">{review.user_name}</h3>
-                            <p className="text-sm text-gray-500">{review.business_name}</p>
+                {loading ? <div className="text-center py-10 text-gray-500">Loading reviews...</div> :
+                  (viewMode === 'list' ? filteredReviews : displayedReviews).length === 0 ? <div className="text-center py-10 text-gray-500">No reviews found.</div> :
+                    (viewMode === 'list' ? filteredReviews : displayedReviews).map((review) => (
+                      <div key={review.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 relative">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 pr-32">
+                            <div className="flex items-center gap-3 mb-3">
+                              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center"><i className="ri-user-line text-red-600"></i></div>
+                              <div>
+                                <h3 className="font-semibold text-gray-900">{review.user_name}</h3>
+                                <p className="text-sm text-gray-500">{review.business_name}</p>
+                              </div>
+                              <div className="flex">{renderStars(review.rating)}</div>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(review.status)}`}>{review.status}</span>
+                            </div>
+                            <h4 className="font-medium text-gray-900 mb-2">{review.review_title}</h4>
+                            <p className="text-gray-700 mb-4">{review.review_text}</p>
+                            <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
+                              <span>{new Date(review.date_submitted).toLocaleDateString()}</span>
+                            </div>
+                            <div className="flex gap-2">
+                              {viewMode === 'displayed' ? (
+                                <button onClick={() => handleRemoveFromDisplay(review.id)} className="px-4 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium flex items-center gap-2"><i className="ri-eye-off-line"></i> Hide</button>
+                              ) : (
+                                <button onClick={() => handleAddToDisplay(review.id)} className="px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium flex items-center gap-2"><i className="ri-eye-line"></i> Display</button>
+                              )}
+                              {review.status === 'pending' && (<><button onClick={() => handleUpdateStatus(review.id, 'published')} className="px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors text-sm">Approve</button><button onClick={() => handleUpdateStatus(review.id, 'rejected')} className="px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors text-sm">Reject</button></>)}
+                            </div>
                           </div>
-                          <div className="flex">{renderStars(review.rating)}</div>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(review.status)}`}>{review.status}</span>
-                        </div>
-                        <h4 className="font-medium text-gray-900 mb-2">{review.review_title}</h4>
-                        <p className="text-gray-700 mb-4">{review.review_text}</p>
-                        <div className="flex items-center gap-4 text-sm text-gray-500 mb-4">
-                          <span>{new Date(review.date_submitted).toLocaleDateString()}</span>
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => { setSelectedReview(review); setIsModalOpen(true); }} className="px-4 py-2 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium flex items-center gap-2"><i className="ri-chat-1-line"></i> View Conversation ({review.conversation_count})</button>
-                          {review.status === 'pending' && (<><button onClick={() => handleUpdateStatus(review.id, 'published')} className="px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors text-sm">Approve</button><button onClick={() => handleUpdateStatus(review.id, 'rejected')} className="px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors text-sm">Reject</button></>)}
                         </div>
                       </div>
-                    </div>
-                  </div>
-                ))}
+                    ))}
                 {totalPages > 1 && (
                   <div className="mt-8 flex items-center justify-between">
                     <span className="text-sm text-gray-600">Page {currentPage} of {totalPages}</span>

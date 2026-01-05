@@ -212,5 +212,7 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
         </div>
       </header>
     );
+
+  return null;
 }
 

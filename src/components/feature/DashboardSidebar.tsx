@@ -29,12 +29,12 @@ const sidebarItems: SidebarItem[] = [
     icon: <AlertTriangle className="w-5 h-5" />,
     path: '/dashboard/alerts'
   },
-  {
-    id: 'insights',
-    label: 'AI Insights',
-    icon: <Brain className="w-5 h-5" />,
-    path: '/dashboard/insights'
-  },
+  // {
+    // id: 'insights',
+    // label: 'AI Insights',
+    // icon: <Brain className="w-5 h-5" />,
+    // path: '/dashboard/insights'
+  // },
   {
     id: 'earnings',
     label: 'Earnings',
@@ -53,12 +53,12 @@ const sidebarItems: SidebarItem[] = [
     icon: <Star className="w-5 h-5" />,
     path: '/dashboard/reviews'
   },
-  {
-    id: 'ai_trends',
-    label: 'AI Trends',
-    icon: <Globe className="w-5 h-5" />,
-    path: '/dashboard/ai_trends'
-  },
+  // {
+    // id: 'ai_trends',
+    // label: 'AI Trends',
+    // icon: <Globe className="w-5 h-5" />,
+    // path: '/dashboard/ai_trends'
+  // },
   {
     id: 'customer-service',
     label: 'Customer Service',

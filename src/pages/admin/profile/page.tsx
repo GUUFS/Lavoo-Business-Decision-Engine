@@ -1,5 +1,5 @@
-
 import { useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
 import { getAuthHeaders } from '../../../utils/auth';
@@ -157,12 +157,24 @@ export default function AdminProfile() {
         })
       });
       if (response.ok) {
+        const updatedUser = await response.json();
+        // Update profileData with the response from the server to ensure consistency
+        setProfileData(prev => ({
+          ...prev,
+          firstName: (updatedUser.name || '').split(' ')[0] || '',
+          lastName: (updatedUser.name || '').split(' ').slice(1).join(' ') || '',
+          department: updatedUser.department || '',
+          location: updatedUser.location || '',
+          bio: updatedUser.bio || ''
+        }));
         setIsEditing(false);
+        toast.success('Profile updated successfully');
       } else {
-        alert('Failed to update profile');
+        toast.error('Failed to update profile');
       }
-    } catch (e) {
-      alert('Error updating profile');
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      toast.error('Error updating profile');
     }
   };
 

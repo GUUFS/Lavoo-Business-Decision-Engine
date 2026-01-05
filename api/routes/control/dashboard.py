@@ -8,7 +8,7 @@ from db.pg_connections import get_db
 from db.pg_models import User, Commission, Ticket, Review, Subscriptions, Payout
 from api.routes.dependencies import admin_required
 
-router = APIRouter(prefix="/api/admin/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/admin/dashboard", tags=["dashboard"])
 
 @router.get("/stats")
 async def get_dashboard_stats(
