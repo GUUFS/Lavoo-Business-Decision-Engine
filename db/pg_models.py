@@ -4,61 +4,20 @@ PostgreSQL database models - works with both PostgreSQL and SQLite.
 This file contains all ORM models for the application.
 """
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import Column, DateTime, Float, Integer, String, Numeric, Text, ForeignKey, JSON, Boolean, DECIMAL, Enum, Index, Date, UniqueConstraint
+from pydantic import BaseModel, ConfigDict, EmailStr
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL, Enum, Numeric, Index
+from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.sql.sqltypes import VARCHAR
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy.dialects.postgresql import JSONB, INET, UUID
 
 from .pg_connections import Base
 
 import enum
 from uuid import uuid4
 from typing import Optional, List
-
-class SystemSettings(Base):
-    __tablename__ = "system_settings"
-
-    id = Column(Integer, primary_key=True, index=True)
-    
-    # General
-    site_name = Column(String, default="AI Business Intelligence Analyst")
-    support_email = Column(String, default="support@aianalyst.com")
-    default_language = Column(String, default="en")
-    timezone = Column(String, default="UTC")
-    
-    # User Limits
-    max_analyses_basic = Column(Integer, default=10)
-    max_analyses_pro = Column(Integer, default=50)
-    max_analyses_premium = Column(Integer, default=200)
-
-    # AI Configuration
-    primary_ai_model = Column(String, default="gpt-4")
-    analysis_timeout = Column(Integer, default=300)
-    max_tokens = Column(Integer, default=4000)
-    temperature = Column(Float, default=0.7)
-    
-    # AI Features (Checkboxes)
-    enable_predictive_analytics = Column(Boolean, default=True)
-    generate_recommendations = Column(Boolean, default=True)
-    include_confidence_scores = Column(Boolean, default=True)
-    enable_experimental_features = Column(Boolean, default=False)
-    
-    # Security
-    require_mfa_admin = Column(Boolean, default=False)
-    force_password_reset_90 = Column(Boolean, default=False)
-    lock_accounts_after_failed_attempts = Column(Boolean, default=True)
-    data_retention_days = Column(Integer, default=365)
-    backup_frequency = Column(String, default="daily")
-    
-    # Billing
-    monthly_price = Column(Float, default=29.95)
-    yearly_price = Column(Float, default=290.00)
-    # subscription_plan_active (maybe not needed here, inferred from user)
-
 
 class User(Base):
     """
@@ -86,7 +45,6 @@ class User(Base):
     referral_count = Column(Integer, default=0)
 
     # Admin and subscription
-    # Admin and subscription
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     user_status = Column(String(20), server_default="active", nullable=False)
@@ -94,18 +52,16 @@ class User(Base):
     subscription_status = Column(String, default="Free")
     subscription_plan = Column(String, nullable=True)
 
-    # Profile info
-    department = Column(String, nullable=True)
-    location = Column(String, nullable=True)
-    bio = Column(Text, nullable=True)
-    
-    # Security settings
-    two_factor_enabled = Column(Boolean, default=False)
-    email_notifications = Column(Boolean, default=True)
-
     # Referral system (Clinton's feature)
     referral_code = Column(String, unique=True, index=True)
     referrer_code = Column(String, nullable=True)
+
+    # User profile fields
+    department = Column(String(100), nullable=True)
+    location = Column(String(100), nullable=True)
+    bio = Column(Text, nullable=True)
+    two_factor_enabled = Column(Boolean, default=False)
+    email_notifications = Column(Boolean, default=True)
 
     # Relationships
     subscriptions = relationship("Subscriptions", back_populates="user")
@@ -119,255 +75,6 @@ class User(Base):
     commissions_earned = relationship("Commission", foreign_keys="Commission.user_id", back_populates="user")
     payouts = relationship("Payout", back_populates="user")
     payout_account = relationship("PayoutAccount", back_populates="user", uselist=False)
-    commission_summaries = relationship("CommissionSummary", back_populates="user")
-
-    # Table Aruguments
-    __table_args__ = (
-        Index('idx_users_subscription_status', 'subscription_status'),
-    )
-
-
-class SystemMetric(Base):
-    __tablename__ = "system_metrics"
-
-    id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
-
-    uptime = Column(Numeric(10, 2))
-    uptime_percentage = Column(Numeric(5, 2))
-    cpu_usage = Column(Numeric(5, 2))
-
-    memory_total_mb = Column(Integer)
-    memory_used_mb = Column(Integer)
-    memory_percentage = Column(Integer)
-
-    load_average_1m = Column(Numeric(5, 2))
-    load_average_5m = Column(Numeric(5, 2))
-    load_average_15m = Column(Numeric(5, 2))
-
-    avg_response_time = Column(Integer)
-    requests_per_minute = Column(Integer)
-    error_rate = Column(Numeric(5, 2))
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-    # Table Arguments
-    __table_args__ = (
-        Index('idx_system_metrics_timestamp', 'timestamp'),
-        Index('idx_system_metrics_created_at', 'created_at'),
-    )
-
-
-class ServiceHealth(Base):
-    __tablename__ = "service_health"
-
-    id = Column(Integer, primary_key=True, index=True)
-    service_name = Column(String(100), nullable=False)
-    status = Column(String(20), nullable=False)
-
-    uptime = Column(Numeric(5, 2))
-    response_time = Column(Integer)
-    error_count = Column(Integer, default=0)
-
-    last_error = Column(Text)
-    last_check = Column(DateTime(timezone=True), server_default=func.now())
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index('idx_service_health_service','service_name'),
-        Index('idx_service_health_status','status'),
-        Index('idx_service_health_created','created_at'),
-    )
-
-
-class SystemAlert(Base):
-    __tablename__ = "system_alerts"
-
-    id = Column(Integer, primary_key=True, index=True)
-    alert_id = Column(String(255), unique=True, nullable=False)
-
-    type = Column(String(20), nullable=False)
-    service = Column(String(100), nullable=False)
-    message = Column(Text, nullable=False)
-
-    status = Column(String(20), nullable=False, default="active")
-    details = Column(JSONB)
-
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    resolved_at = Column(DateTime(timezone=True))
-    resolved_by = Column(String(255))
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index('idx_system_alerts_status','status'),
-        Index('idx_system_alerts_service','service'),
-        Index('idx_system_alerts_timestamp','timestamp'),
-        Index('idx_system_alerts_type','type'),
-    )
-
-
-class ActivityLog(Base):
-    __tablename__ = "activity_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    service = Column(String(100), nullable=False)
-    operation = Column(String(100), nullable=False)
-
-    duration = Column(Integer)
-    success = Column(Boolean, default=True)
-
-    user_id = Column(String(255))
-    ip_address = Column(String(45))  # INET-compatible
-    details = Column(JSONB)
-    error_message = Column(Text)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("idx_activity_logs_service", service),
-        Index("idx_activity_logs_operation", operation),
-        Index("idx_activity_logs_created", created_at.desc()),
-        Index("idx_activity_logs_success", success),
-    )
-
-
-class PerformanceMetric(Base):
-    __tablename__ = "performance_metrics"
-
-    id = Column(Integer, primary_key=True, index=True)
-    endpoint = Column(String(255), nullable=False)
-    method = Column(String(10), nullable=False)
-
-    status_code = Column(Integer)
-    response_time = Column(Integer)
-
-    request_size = Column(Integer)
-    response_size = Column(Integer)
-
-    user_id = Column(String(255))
-    ip_address = Column(String(45))
-    user_agent = Column(Text)
-
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("idx_performance_endpoint", endpoint),
-        Index("idx_performance_timestamp", timestamp.desc()),
-        Index("idx_performance_status", status_code),
-    )
-
-
-class DatabaseOperation(Base):
-    __tablename__ = "database_operations"
-
-    id = Column(Integer, primary_key=True, index=True)
-    operation_type = Column(String(50), nullable=False)
-    table_name = Column(String(100), nullable=False)
-
-    duration = Column(Integer)
-    rows_affected = Column(Integer)
-
-    success = Column(Boolean, default=True)
-    error_message = Column(Text)
-
-    query_hash = Column(String(64))
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("idx_db_ops_table", table_name),
-        Index("idx_db_ops_timestamp", timestamp.desc()),
-        Index("idx_db_ops_duration", duration.desc()),
-    )
-
-
-class ErrorTracking(Base):
-    __tablename__ = "error_tracking"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    error_type = Column(String(100))
-    error_message = Column(Text, nullable=False)
-    stack_trace = Column(Text)
-
-    service = Column(String(100))
-    endpoint = Column(String(255))
-    method = Column(String(10))
-
-    user_id = Column(String(255))
-    ip_address = Column(String(45))
-    request_body = Column(JSONB)
-
-    environment = Column(String(50))
-    severity = Column(String(20))
-    sentry_issue_id = Column(String(255))
-
-    first_seen = Column(DateTime(timezone=True), server_default=func.now())
-    last_seen = Column(DateTime(timezone=True), server_default=func.now())
-
-    occurrence_count = Column(Integer, default=1)
-    resolved = Column(Boolean, default=False)
-    resolved_at = Column(DateTime(timezone=True))
-
-    __table_args__ = (
-        Index("idx_errors_type", error_type),
-        Index("idx_errors_service", service),
-        Index("idx_errors_severity", severity),
-        Index("idx_errors_resolved", resolved),
-        Index("idx_errors_last_seen", last_seen.desc()),
-    )
-
-
-class APIUsage(Base):
-    __tablename__ = "api_usage"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    endpoint = Column(String(255), nullable=False)
-    method = Column(String(10), nullable=False)
-
-    user_id = Column(String(255))
-    api_key_id = Column(String(255))
-
-    request_count = Column(Integer, default=1)
-    total_response_time = Column(Integer)
-    avg_response_time = Column(Integer)
-    error_count = Column(Integer, default=0)
-
-    date = Column(Date, nullable=False)
-    hour = Column(Integer)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        Index("idx_api_usage_date", date.desc()),
-        Index("idx_api_usage_endpoint", endpoint),
-        Index("idx_api_usage_user", user_id),
-        UniqueConstraint("endpoint", "method", "user_id", "date", "hour",name="idx_api_usage_unique"),
-    )
-
-
-class UptimeRecord(Base):
-    __tablename__ = "uptime_records"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    date = Column(Date, nullable=False)
-    total_uptime_seconds = Column(Integer, nullable=False)
-    total_downtime_seconds = Column(Integer, nullable=False)
-    uptime_percentage = Column(Numeric(5, 2), nullable=False)
-
-    incidents_count = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        Index("idx_uptime_date", date.desc()),
-        Index("idx_uptime_date_unique", date, unique=True),
-    )
-
-
 
 class AITool(Base):
     """
@@ -429,6 +136,13 @@ class BusinessAnalysis(Base):
     ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing (YOUR FIX)
     estimated_cost = Column(Float)  # Monthly cost estimate
     timeline_weeks = Column(Integer)  # Implementation timeline
+
+    # Admin Monitoring Fields (added for admin dashboard)
+    confidence_score = Column(Integer, nullable=True)  # 0-100 confidence score
+    duration = Column(String(50), nullable=True)  # e.g., "2m 34s"
+    analysis_type = Column(String(100), nullable=True)  # Sales, Customer, Market, etc.
+    insights_count = Column(Integer, default=0)  # Number of insights generated
+    recommendations_count = Column(Integer, default=0)  # Number of recommendations
 
     # Metadata
     status = Column(String(50), default="completed")  # pending, completed, failed
@@ -526,9 +240,6 @@ class UserResponse(BaseModel):
     referral_chops: int
     referral_count: int
     referral_code: Optional[str] = None
-    department: Optional[str] = None
-    location: Optional[str] = None
-    bio: Optional[str] = None
 
 
 class AIToolBase(BaseModel):
@@ -621,7 +332,6 @@ class BusinessAnalysisResponse(BaseModel):
     timeline_weeks: int
     created_at: str
 
-
 class AuthResponse(BaseModel):
     """Pydantic model for authentication token response"""
     access_token: str
@@ -632,11 +342,13 @@ class AuthResponse(BaseModel):
     role: str
     subscription_status: str | None = None
     subscription_plan: str | None = None
-    referral_code: Optional[str] = None
-    department: Optional[str] = None
-    location: Optional[str] = None
-    bio: Optional[str] = None
-    created_at: Optional[datetime] = None
+    referral_code: str | None = None
+    department: str | None = None
+    location: str | None = None
+    bio: str | None = None
+    two_factor_enabled: bool | None = None
+    email_notifications: bool | None = None
+    created_at: datetime | None = None
 
 
 # Paypal payment gateway
@@ -670,7 +382,6 @@ class Subscriptions(Base):
     start_date = Column(DateTime(timezone=True), nullable=False)
     end_date = Column(DateTime(timezone=True), nullable=False)
 
-    # Relationships
     user = relationship("User", back_populates="subscriptions")
     commission = relationship("Commission", back_populates="subscription", uselist=False)
 
@@ -797,10 +508,8 @@ class Review(Base):
     category = Column(String, default="General")
     helpful = Column(Integer, default=0)
     verified = Column(Boolean, default=False)
-    is_attended = Column(Boolean, default=False)
 
     conversations = relationship("Conversation", back_populates="review", cascade="all, delete-orphan")
-
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -816,32 +525,12 @@ class Conversation(Base):
     review = relationship("Review", back_populates="conversations")
 
 
-class DisplayedReview(Base):
-    """
-    Stores reviews selected by admin to be displayed on the homepage.
-    This allows dynamic control of which reviews appear to visitors.
-    """
-    __tablename__ = "displayed_reviews"
-
-    id = Column(Integer, primary_key=True, index=True)
-    review_id = Column(Integer, ForeignKey("reviews.id", ondelete="CASCADE"), unique=True, nullable=False)
-    display_order = Column(Integer, default=0, nullable=False)  # Lower number = higher priority
-    added_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    added_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))  # FIX: Changed from UUID to Integer
-
-    # Relationships
-    review = relationship("Review", backref="display_info")
-    admin = relationship("User", foreign_keys=[added_by])
-
-
-
 class ReviewCreate(BaseModel):
     business_name: str
     review_title: str
     rating: int
     review_text: str
     category: Optional[str] = "General"
-
 
 class ReviewResponse(BaseModel):
     id: int
@@ -858,7 +547,6 @@ class ReviewResponse(BaseModel):
     conversation_count: int
     unread_messages: int
     has_conversation: bool
-    is_attended: bool = False
 
     class Config:
         from_attributes = True
@@ -937,16 +625,119 @@ class Referral(Base):
     chops_awarded = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationship
     referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
     referred_user = relationship("User",foreign_keys=[referred_user_id], back_populates="referred_by")
 
-    # Table Arguments
+
+'''Commissions Table'''
+class Commission(Base):
+    __tablename__ = "commissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    referred_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    subscription_id = Column(Integer, ForeignKey("subscriptions.id"), nullable=True)
+    amount = Column(Numeric(precision=10, scale=2), nullable=False)
+    original_amount = Column(Numeric(precision=10, scale=2), nullable=True)
+    currency = Column(String(10), nullable=True)
+    commission_rate = Column(Numeric(precision=5, scale=2), nullable=True)
+    status = Column(String, nullable=False)  # pending, processing, paid, failed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=False)
+    payout_id = Column(Integer, nullable=True)
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+    referred_user = relationship("User", foreign_keys=[referred_user_id])
+    subscription = relationship("Subscriptions", foreign_keys=[subscription_id])
+
+
+'''Payouts Table'''
+class Payout(Base):
+    __tablename__ = "payouts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amount = Column(Numeric(precision=10, scale=2), nullable=False)
+    currency = Column(String(10), default="USD")
+    status = Column(String, nullable=False)  # pending, processing, completed, failed
+    provider = Column(String(50), nullable=True)  # stripe, paypal, etc.
+    provider_payout_id = Column(String(255), nullable=True)
+    provider_response = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+
+'''Payout Account Table'''
+class PayoutAccount(Base):
+    __tablename__ = "payout_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    payment_method = Column(String(50), nullable=False)  # stripe, flutterwave, paypal
+
+    # Stripe fields
+    stripe_account_id = Column(String(255), nullable=True)
+
+    # Flutterwave/Bank fields
+    bank_name = Column(String(255), nullable=True)
+    account_number = Column(String(100), nullable=True)
+    account_name = Column(String(255), nullable=True)
+
+    # PayPal fields
+    paypal_email = Column(String(255), nullable=True)
+
+    # Legacy fields (for backward compatibility)
+    provider = Column(String(50), nullable=True)
+    account_id = Column(String(255), nullable=True)
+    account_details = Column(JSON, nullable=True)
+
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class CommissionSummary(Base):
+    """
+    Monthly summary of commissions per user (for reporting and analytics)
+    """
+    __tablename__ = "commission_summaries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Period
+    year = Column(Integer, nullable=False)
+    month = Column(Integer, nullable=False)
+
+    # Summary metrics
+    total_commissions = Column(Numeric(10, 2), default=0.00)
+    paid_commissions = Column(Numeric(10, 2), default=0.00)
+    pending_commissions = Column(Numeric(10, 2), default=0.00)
+    commission_count = Column(Integer, default=0)
+
+    # Currency
+    currency = Column(String(10), nullable=False, default='USD')
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationship
+    user = relationship("User")
+
+    # Unique constraint and indexes
     __table_args__ = (
-        Index('idx_referrals_referrer_id', 'referrer_id'),
-        Index('idx_referrals_created_at', 'created_at'),
-        Index('idx_referrals_referrer_created', 'referrer_id', 'created_at'),
+        Index('idx_commission_summary_user_period', 'user_id', 'year', 'month', unique=True),
     )
+
 
 class ReferralResponse(BaseModel):
     id: int
@@ -994,7 +785,7 @@ class AlertCreate(BaseModel):
     action_required: str
     source: Optional[str] = None
     date: str
-
+    url: Optional[str] = None
 
 class AlertResponse(BaseModel):
     id: int
@@ -1088,6 +879,46 @@ class UserPinnedAlert(Base):
 
     user = relationship("User", back_populates="pinned_alerts")
 
+
+class Trend(Base):
+    """
+    Viral AI Trends model for storing trending topics
+    """
+    __tablename__ = "trends"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Basic Information
+    title = Column(String(255), nullable=False)
+    industry = Column(String(100), nullable=False)
+    description = Column(Text, nullable=False)
+
+    # Engagement Metrics
+    engagement = Column(String(50), nullable=True)  # e.g., "12.5M"
+    growth = Column(String(50), nullable=True)  # e.g., "+245%"
+    viral_score = Column(Integer, nullable=False)  # 0-100
+    search_volume = Column(String(50), nullable=True)  # e.g., "450,000/month"
+
+    # Timing & Competition
+    peak_time = Column(String(50), nullable=True)  # e.g., "2:00 PM EST"
+    competition = Column(String(20), default="medium")  # low, medium, high
+    opportunity = Column(String(50), nullable=True)  # e.g., "94%"
+    nature = Column(String(50), nullable=False)  # Explosive, Growing, Emerging, Mainstream
+
+    # Social Data (JSON)
+    hashtags = Column(JSON, nullable=True)  # ["#AIAvatars", "#ContentCreation"]
+    platforms = Column(JSON, nullable=True)  # ["LinkedIn", "Twitter", "TikTok"]
+
+    # Actionable Content
+    action_items = Column(Text, nullable=False)
+
+    # Metadata
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True, onupdate=datetime.utcnow)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
 class InsightItems(BaseModel):
     id: int
     title: str
@@ -1127,6 +958,7 @@ class InsightCreate(BaseModel):
     action_to_take: str
     source: Optional[str] = None
     date: str
+    url: Optional[str] = None
 
 
 class ViewInsightRequest(BaseModel):
@@ -1158,220 +990,65 @@ class ChopsBreakdown(BaseModel):
     referral_count: int
 
 
-'''Information for the Earnings, Commissions and Referral Payouts'''
-class UserLevelResponse(BaseModel):
-    totalChops: int
-    referralChops: int
-    currentLevel: int
-    currentRank: str
+class TrendCreate(BaseModel):
+    """Pydantic model for creating a trend"""
+    title: str
+    industry: str
+    description: str
+    engagement: Optional[str] = None
+    growth: Optional[str] = None
+    viral_score: int
+    search_volume: Optional[str] = None
+    peak_time: Optional[str] = None
+    competition: Optional[str] = "medium"
+    opportunity: Optional[str] = None
+    nature: str
+    hashtags: Optional[List[str]] = None
+    platforms: Optional[List[str]] = None
+    action_items: str
 
 
-class MonthlyData(BaseModel):
-    month: str
-    revenue: float
-    transactions: int
+class TrendResponse(BaseModel):
+    """Pydantic model for trend response"""
+    id: int
+    title: str
+    industry: str
+    description: str
+    engagement: Optional[str]
+    growth: Optional[str]
+    viral_score: int
+    search_volume: Optional[str]
+    peak_time: Optional[str]
+    competition: str
+    opportunity: Optional[str]
+    nature: str
+    hashtags: Optional[List[str]]
+    platforms: Optional[List[str]]
+    action_items: str
+    is_active: bool
+    created_at: datetime
 
-
-class EarningsSummary(BaseModel):
-    totalCommissions: float
-    totalPaidReferrals: int
-    referralChops: int
-    growthRate: float
-    totalRevenue: float
-    avgOrderValue: float
-
-
-class Commission(Base):
-    """
-    Tracks referral commissions earned by users
-    """
-    __tablename__ = "commissions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # The referrer who earns commission
-    referred_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # The user who made the payment
-    subscription_id = Column(Integer, ForeignKey("subscriptions.id"), nullable=False)
-    
-    # Commission details
-    amount = Column(Numeric(10, 2), nullable=False)  # Commission amount (50% of subscription)
-    original_amount = Column(Numeric(10, 2), nullable=False)  # Original subscription amount
-    currency = Column(String(10), nullable=False)
-    commission_rate = Column(Numeric(5, 2), default=50.00)  # Percentage (50%)
-    
-    # Status tracking
-    status = Column(String(20), nullable=False, default='pending')  # pending, approved, paid, failed
-    
-    # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    approved_at = Column(DateTime(timezone=True), nullable=True)
-    paid_at = Column(DateTime(timezone=True), nullable=True)
-    
-    # Payout tracking
-    payout_id = Column(Integer, ForeignKey("payouts.id"), nullable=True)
-    
-    # Relationships
-    user = relationship("User", foreign_keys=[user_id], back_populates="commissions_earned")
-    referred_user = relationship("User", foreign_keys=[referred_user_id])
-    subscription = relationship("Subscriptions", back_populates="commission")
-    payout = relationship("Payout", back_populates="commissions")
-
-     # Indexes
-    __table_args__ = (
-        Index('idx_commissions_user_status', 'user_id', 'status'),
-        Index('idx_commissions_created_at', 'created_at'),
-    )
-
-
-class Payout(Base):
-    """
-    Tracks payout requests and transactions to users
-    """
-    __tablename__ = "payouts"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
-    # Payout details
-    amount = Column(Numeric(10, 2), nullable=False)
-    currency = Column(String(10), nullable=False)
-    payment_method = Column(String(20), nullable=False)  # stripe, flutterwave
-    
-    # Status
-    status = Column(String(20), nullable=False, default='pending')  # pending, processing, completed, failed, cancelled
-    
-    # Payment provider details
-    provider_payout_id = Column(String(255), nullable=True)  # Stripe/Flutterwave payout ID
-    provider_response = Column(Text, nullable=True)  # JSON response from provider
-    
-    # Recipient details (for payout)
-    recipient_email = Column(String(255), nullable=False)
-    recipient_name = Column(String(255), nullable=False)
-    
-    # Bank/account details (encrypted in production)
-    account_details = Column(Text, nullable=False)  # Store encrypted bank details
-    
-    # Timestamps
-    requested_at = Column(DateTime(timezone=True), server_default=func.now())
-    processed_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
-    failed_at = Column(DateTime(timezone=True), nullable=True)
-    
-    # Error tracking
-    failure_reason = Column(Text, nullable=False)
-    retry_count = Column(Integer, default=0)
-    
-    # Notes
-    admin_notes = Column(Text, nullable=True)
-    
-    # Relationships
-    user = relationship("User", back_populates="payouts")
-    commissions = relationship("Commission", back_populates="payout")
-    
-    # Indexes
-    __table_args__ = (
-        Index('idx_payouts_user_status', 'user_id', 'status'),
-        Index('idx_payouts_requested_at', 'requested_at'),
-    )
-
-
-class PayoutAccount(Base):
-    """
-    Stores user's payout account information (bank details, etc.)
-    """
-    __tablename__ = "payout_accounts"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
-    
-    # Stripe Connect (if using Stripe payouts)
-    stripe_account_id = Column(String(255), nullable=True)
-    stripe_account_status = Column(String(50), nullable=True)  # pending, verified, rejected
-    
-    # Flutterwave Transfer (if using Flutterwave payouts)
-    flutterwave_recipient_code = Column(String(255), nullable=True)
-    
-    # Bank details (for Flutterwave or manual payouts)
-    bank_name = Column(String(255), nullable=True)
-    account_number = Column(String(50), nullable=True)
-    account_name = Column(String(255), nullable=True)
-    bank_code = Column(String(50), nullable=True)  # Required for Nigerian banks
-    
-    # PayPal (optional)
-    paypal_email = Column(String(255), nullable=True)
-    
-    # Default payout method
-    default_payout_method = Column(String(20), nullable=True)  # stripe, flutterwave, paypal
-    
-    # Verification
-    is_verified = Column(Boolean, default=False)
-    verified_at = Column(DateTime(timezone=True), nullable=True)
-    
-    # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationship
-    user = relationship("User", back_populates="payout_account")
-
-
-class CommissionSummary(Base):
-    """
-    Monthly summary of commissions per user (for reporting and analytics)
-    """
-    __tablename__ = "commission_summaries"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
-    # Period
-    year = Column(Integer, nullable=False)
-    month = Column(Integer, nullable=False)
-    
-    # Summary metrics
-    total_commissions = Column(Numeric(10, 2), default=0.00)
-    paid_commissions = Column(Numeric(10, 2), default=0.00)
-    pending_commissions = Column(Numeric(10, 2), default=0.00)
-    commission_count = Column(Integer, default=0)
-    
-    # Currency
-    currency = Column(String(10), nullable=False, default='USD')
-    
-    # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationship
-    user = relationship("User", back_populates="commission_summaries")
-    
-    # Unique constraint and indexes
-    __table_args__ = (
-        Index('idx_commission_summary_user_period', 'user_id', 'year', 'month', unique=True),
-    )
-
-
-class PayoutAccountCreate(BaseModel):
-    payment_method: str  # stripe, flutterwave, paypal
-    
-    # Stripe
-    stripe_account_id: Optional[str] = None
-    
-    # Flutterwave
-    bank_name: Optional[str] = None
-    account_number: Optional[str] = None
-    account_name: Optional[str] = None
-    bank_code: Optional[str] = None
-    
-    # PayPal
-    paypal_email: Optional[str] = None
-    
     class Config:
         from_attributes = True
 
 
-class PayoutRequest(BaseModel):
-    amount: float = Field(..., gt=0, description="Amount to withdraw")
-    payment_method: str = Field(..., description="stripe or flutterwave")
-    
+class PayoutResponse(BaseModel):
+    id: int
+    amount: float
+    currency: str
+    status: str
+    payment_method: str
+    requested_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+'''Commission and Payout Pydantic Models'''
+class ApproveCommissionsRequest(BaseModel):
+    """Request model for approving commissions"""
+    commission_ids: List[int]
+
     class Config:
         from_attributes = True
 
@@ -1384,26 +1061,21 @@ class CommissionResponse(BaseModel):
     created_at: datetime
     referred_user_id: int
     subscription_id: int
-    
+
     class Config:
         from_attributes = True
 
 
-class PayoutResponse(BaseModel):
-    id: int
-    amount: float
-    currency: str
-    status: str
-    payment_method: str
-    requested_at: datetime
-    
-    class Config:
-        from_attributes = True
+class CommissionSummary(BaseModel):
+    month: str
+    revenue: float
+    transactions: int
 
 
-class ApproveCommissionsRequest(BaseModel):
-    payment_method: Optional[str] = None  # Optional filter by payment method   
-    amount: Optional[Decimal] = None
+class PayoutAccountCreate(BaseModel):
+    provider: str  # stripe, paypal, bank_transfer
+    account_id: Optional[str] = None
+    account_details: Optional[dict] = None
 
 
 '''Security Architecture Tables'''
@@ -1574,7 +1246,7 @@ class SecurityMetricsSummary(Base):
     Used for retrieving aggregate security data.
     """
     __tablename__ = "security_metrics_summary"
-    
+
     # Views don't have PKs, but SQLAlchemy requires one
     # Using total_events_24h as a dummy PK since it's likely unique enough for reading
     total_events_24h = Column(Integer, primary_key=True)
@@ -1594,3 +1266,111 @@ class SecurityMetricsResponse(BaseModel):
     lastSecurityScan: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CommissionResponse(BaseModel):
+    """Response model for commission data"""
+    id: int
+    user_id: int
+    referred_user_id: Optional[int]
+    subscription_id: Optional[int]
+    amount: float
+    currency: Optional[str]
+    status: str
+    created_at: datetime
+    approved_at: Optional[datetime]
+    paid_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PayoutResponse(BaseModel):
+    """Response model for payout data"""
+    id: int
+    user_id: int
+    amount: float
+    currency: str
+    status: str
+    provider: Optional[str]
+    provider_payout_id: Optional[str]
+    created_at: datetime
+    processed_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class CommissionSummary(BaseModel):
+    """Summary model for commission statistics"""
+    total_commissions: float
+    paid_commissions: float
+    pending_commissions: float
+    commission_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class PayoutAccountCreate(BaseModel):
+    """Request model for creating/updating payout account"""
+    payment_method: str  # stripe, flutterwave, paypal
+    stripe_account_id: Optional[str] = None
+    bank_name: Optional[str] = None
+    account_number: Optional[str] = None
+    account_name: Optional[str] = None
+    paypal_email: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PayoutRequest(BaseModel):
+    """Request model for requesting a payout"""
+    amount: float
+    payment_method: str  # stripe, flutterwave, paypal
+
+    class Config:
+        from_attributes = True
+
+
+'''System Settings Table'''
+class SystemSettings(Base):
+    __tablename__ = "system_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # General
+    site_name = Column(String(255), default="AI Business Analyst")
+    support_email = Column(String(255), default="support@aitugo.com")
+    default_language = Column(String(10), default="en")
+    timezone = Column(String(50), default="UTC")
+
+    # Limits
+    max_analyses_basic = Column(Integer, default=5)
+    max_analyses_pro = Column(Integer, default=50)
+    max_analyses_premium = Column(Integer, default=500)
+
+    # AI Settings
+    primary_ai_model = Column(String(100), default="gpt-4")
+    analysis_timeout = Column(Integer, default=120)  # seconds
+    max_tokens = Column(Integer, default=2000)
+    temperature = Column(Float, default=0.7)
+    enable_predictive_analytics = Column(Boolean, default=True)
+    generate_recommendations = Column(Boolean, default=True)
+    include_confidence_scores = Column(Boolean, default=True)
+    enable_experimental_features = Column(Boolean, default=False)
+
+    # Security
+    require_mfa_admin = Column(Boolean, default=False)
+    force_password_reset_90 = Column(Boolean, default=False)
+    lock_accounts_after_failed_attempts = Column(Boolean, default=True)
+    data_retention_days = Column(Integer, default=90)
+    backup_frequency = Column(String(50), default="daily")
+
+    # Billing
+    monthly_price = Column(Float, default=29.99)
+    yearly_price = Column(Float, default=299.99)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

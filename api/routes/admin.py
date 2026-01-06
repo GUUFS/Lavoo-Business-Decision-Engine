@@ -8,7 +8,6 @@ from db.pg_models import (
     InsightCreate, AlertCreate
 )
 from api.routes.dependencies import admin_required
-from api.cache import cache, cache_key_builder
 from typing import Optional, List
 from datetime import datetime, date, timedelta, timezone
 
@@ -368,7 +367,6 @@ def get_analysis_detail(
 # ===== ANALYTICS DASHBOARD ENDPOINTS =====
 
 @router.get("/analytics")
-@cache(expire=180, key_builder=cache_key_builder)  # 3-minute cache
 def get_analytics(
     timeRange: str = "7d",
     user=Depends(admin_required),
@@ -544,7 +542,6 @@ def get_analytics(
 
 
 @router.get("/activity-stream")
-@cache(expire=14, key_builder=cache_key_builder)  # 14-second cache (matches polling interval)
 def get_activity_stream(
     limit: int = 10,
     user=Depends(admin_required),
@@ -709,7 +706,6 @@ def update_existing_analyses(
 # ===== USER MANAGEMENT ENDPOINTS =====
 
 @router.get("/users")
-@cache(expire=180, key_builder=cache_key_builder)  # 3-minute cache
 def get_users(
     page: int = 1,
     limit: int = 10,

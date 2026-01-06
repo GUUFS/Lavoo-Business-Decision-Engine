@@ -6,6 +6,7 @@ from db.pg_connections import get_db
 from db.pg_models import (User, Alert, Referral, UserAlert, UserResponse, UserCreate, AlertResponse, AlertCreate,
                             ViewAlertRequest, ShareAlertRequest, ChopsBreakdown, PinAlertRequest, UserPinnedAlert)
 from api.routes.login import get_current_user
+from api.cache import get_cached, set_cached, delete_cached, CacheTTL
 
 from typing import Optional, List
 
@@ -22,8 +23,8 @@ def is_pro_user(subscription_status: str) -> bool:
 def get_current_user_route(current_user=Depends(get_current_user)):
     user = current_user  # extract actual user object
     return {
-        "id": user.id, 
-        "email": user.email, 
+        "id": user.id,
+        "email": user.email,
         "subscription_status": user.subscription_status,
         "total_chops": user.total_chops,
         "alert_reading_chops": user.alert_reading_chops,
@@ -59,7 +60,7 @@ def get_user_chops(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     return ChopsBreakdown(
         total_chops=user.total_chops,
         alert_reading_chops=user.alert_reading_chops,
@@ -82,7 +83,7 @@ def create_alert(alert: AlertCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/api/alerts", response_model=List[AlertResponse])
-def get_alerts(
+async def get_alerts(
     user_id: Optional[int] = None,
     category: Optional[str] = None,
     priority: Optional[str] = None,
@@ -95,16 +96,22 @@ def get_alerts(
     # Use authenticated user's ID if not provided
     if not user_id:
         user_id = current_user.id
-    
+
+    # Try to get from cache first (2 minute TTL)
+    cache_key = f"alerts:list:{user_id}:{category or 'all'}:{priority or 'all'}:{skip}:{limit}"
+    cached = await get_cached(cache_key)
+    if cached:
+        return cached
+
     query = db.query(Alert).filter(Alert.is_active == True)
-    
+
     if category:
         query = query.filter(Alert.category == category)
     if priority:
         query = query.filter(Alert.priority == priority)
-    
+
     alerts = query.order_by(Alert.created_at.desc()).offset(skip).limit(limit).all()
-    
+
     # Get all pinned alerts for this user
     pinned_alert_ids = set(
         db.query(UserPinnedAlert.alert_id)
@@ -121,17 +128,17 @@ def get_alerts(
             UserAlert.user_id == user_id,
             UserAlert.alert_id == alert.id
         ).first()
-        
+
         # Mark as attended if the is_attended flag is True OR if user has viewed/shared
         is_attended = False
         has_viewed = False
         has_shared = False
-        
+
         if user_alert:
             has_viewed = user_alert.has_viewed
             has_shared = user_alert.has_shared
             is_attended = user_alert.is_attended or has_viewed or has_shared
-        
+
         alert_dict = {
             "id": alert.id,
             "title": alert.title,
@@ -153,9 +160,13 @@ def get_alerts(
             "is_pinned": alert.id in pinned_alert_ids
         }
         result.append(AlertResponse(**alert_dict))
-    
+
     # Sort: pinned alerts first, then by created_at
     result.sort(key=lambda x: (not x.is_pinned, alerts[[a.id for a in alerts].index(x.id)].created_at), reverse=True)
+
+    # Cache the result for 2 minutes
+    result_data = [alert.model_dump() for alert in result]
+    await set_cached(cache_key, result_data, CacheTTL.MEDIUM)
 
     return result
 
@@ -166,18 +177,18 @@ def get_alert(alert_id: int, user_id: Optional[int] = None, db: Session = Depend
     alert = db.query(Alert).filter(Alert.id == alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    
+
     if user_id:
         user_alert = db.query(UserAlert).filter(
             UserAlert.user_id == user_id,
             UserAlert.alert_id == alert_id
         ).first()
-        
+
         # Mark as attended if ANY interaction exists
         is_attended = False
         if user_alert:
             is_attended = user_alert.has_viewed or user_alert.has_shared or user_alert.is_attended
-        
+
         alert_dict = {
             "id": alert.id,
             "title": alert.title,
@@ -198,34 +209,37 @@ def get_alert(alert_id: int, user_id: Optional[int] = None, db: Session = Depend
             "is_attended": is_attended
         }
         return AlertResponse(**alert_dict)
-    
+
     return alert
 
 
 @router.post("/api/alerts/view")
-def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
+async def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """Mark alert as viewed and award chops if first time"""
     # Get user and alert
     user = current_user
     alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
-    
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    
+
+    # Invalidate user's alerts cache on any view/share/pin action
+    await delete_cached(f"alerts:list:{user.id}:all:all:0:100")
+
     # Check if user_alert record exists
     user_alert = db.query(UserAlert).filter(
         UserAlert.user_id == user.id,
         UserAlert.alert_id == request.alert_id
     ).first()
-    
+
     chops_earned = 0
-    
+
     if not user_alert:
         # Create new record - FIRST TIME VIEWING
         chops_to_award = 5 if is_pro_user(user.subscription_status) else 1
-        
+
         user_alert = UserAlert(
             user_id=user.id,
             alert_id=request.alert_id,
@@ -234,19 +248,19 @@ def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_use
             viewed_at=datetime.utcnow(),
             chops_earned_from_view=chops_to_award
         )
-        
+
         # Award chops
         # user.total_chops += chops_to_award
         # user.alert_reading_chops += chops_to_award
         chops_earned = 0
-        
+
         # Update alert view count
         alert.total_views += 1
-        
+
         db.add(user_alert)
         db.commit()
         db.refresh(user)  # Refresh to get updated values
-        
+
         return {
             "message": "Alert viewed successfully",
             "chops_earned": chops_earned,
@@ -254,27 +268,27 @@ def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_use
             "alert_reading_chops": user.alert_reading_chops,
             "alert_sharing_chops": user.alert_sharing_chops
         }
-    
+
     elif not user_alert.has_viewed:
         # Record exists but not viewed yet - FIRST TIME VIEWING
         chops_to_award = 5 if is_pro_user(user.subscription_status) else 1
-        
+
         user_alert.has_viewed = True
         user_alert.is_attended = True
         user_alert.viewed_at = datetime.utcnow()
         user_alert.chops_earned_from_view = chops_to_award
-        
+
         # Award chops
-        # user.total_chops += chops_to_award
-        # user.alert_reading_chops += chops_to_award
-        chops_earned = 0
+        user.total_chops += chops_to_award
+        user.alert_reading_chops += chops_to_award
+        chops_earned = chops_to_award
         
         # Update alert view count
         alert.total_views += 1
-        
+
         db.commit()
         db.refresh(user)  # Refresh to get updated values
-        
+
         return {
             "message": "Alert viewed successfully",
             "chops_earned": chops_earned,
@@ -282,15 +296,15 @@ def view_alert(request: ViewAlertRequest, current_user = Depends(get_current_use
             "alert_reading_chops": user.alert_reading_chops,
             "alert_sharing_chops": user.alert_sharing_chops
         }
-    
+
     else:
         # Already viewed - NO CHOPS AWARDED
         if not user_alert.is_attended:
             user_alert.is_attended = True
             db.commit()
-        
+
         db.refresh(user)  # Refresh to get current values
-        
+
         return {
             "message": "Alert already viewed",
             "chops_earned": 0,
@@ -306,24 +320,24 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
     # Get user and alert
     user = current_user
     alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
-    
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    
+
     # Check if user_alert record exists
     user_alert = db.query(UserAlert).filter(
         UserAlert.user_id == user.id,
         UserAlert.alert_id == request.alert_id
     ).first()
-    
+
     chops_earned = 0
-    
+
     if not user_alert:
         # Create new record - FIRST TIME SHARING
         chops_to_award = 10 if is_pro_user(user.subscription_status) else 5
-        
+
         user_alert = UserAlert(
             user_id=user.id,
             alert_id=request.alert_id,
@@ -332,19 +346,19 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
             shared_at=datetime.utcnow(),
             chops_earned_from_share=chops_to_award
         )
-        
+
         # Award chops
-        # user.total_chops += chops_to_award
-        # user.alert_sharing_chops += chops_to_award
-        chops_earned = 0
+        user.total_chops += chops_to_award
+        user.alert_sharing_chops += chops_to_award
+        chops_earned = chops_to_award
         
         # Update alert share count
         alert.total_shares += 1
-        
+
         db.add(user_alert)
         db.commit()
         db.refresh(user)  # Refresh to get updated values
-        
+
         return {
             "message": "Alert shared successfully",
             "chops_earned": chops_earned,
@@ -352,27 +366,27 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
             "alert_reading_chops": user.alert_reading_chops,
             "alert_sharing_chops": user.alert_sharing_chops
         }
-    
+
     elif not user_alert.has_shared:
         # Record exists but not shared yet - FIRST TIME SHARING
         chops_to_award = 10 if is_pro_user(user.subscription_status) else 5
-        
+
         user_alert.has_shared = True
         user_alert.is_attended = True
         user_alert.shared_at = datetime.utcnow()
         user_alert.chops_earned_from_share = chops_to_award
-        
+
         # Award chops
-        # user.total_chops += chops_to_award
-        # user.alert_sharing_chops += chops_to_award
-        chops_earned = 0
+        user.total_chops += chops_to_award
+        user.alert_sharing_chops += chops_to_award
+        chops_earned = chops_to_award
         
         # Update alert share count
         alert.total_shares += 1
-        
+
         db.commit()
         db.refresh(user)  # Refresh to get updated values
-        
+
         return {
             "message": "Alert shared successfully",
             "chops_earned": chops_earned,
@@ -380,11 +394,11 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
             "alert_reading_chops": user.alert_reading_chops,
             "alert_sharing_chops": user.alert_sharing_chops
         }
-    
+
     else:
         # Already shared - NO CHOPS AWARDED
         db.refresh(user)  # Refresh to get current values
-        
+
         return {
             "message": "Alert already shared",
             "chops_earned": 0,
@@ -440,33 +454,33 @@ def get_user_alert_stats(user_id: int, current_user = Depends(get_current_user),
 
 @router.post("/api/alerts/pin")
 def pin_alert(
-    request: PinAlertRequest, 
-    current_user = Depends(get_current_user), 
+    request: PinAlertRequest,
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Pin or unpin an alert"""
     user = current_user
-    
+
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
+
     # Verify alert exists
     alert = db.query(Alert).filter(Alert.id == request.alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    
+
     # Check if already pinned
     existing = db.query(UserPinnedAlert).filter(
         UserPinnedAlert.user_id == user.id,
         UserPinnedAlert.alert_id == request.alert_id
     ).first()
-    
+
     if existing:
         # Unpin
         db.delete(existing)
         db.commit()
         return {"message": "Alert unpinned", "is_pinned": False}
-    
+
     # Pin
     pinned_record = UserPinnedAlert(
         user_id=user.id,
@@ -474,7 +488,7 @@ def pin_alert(
     )
     db.add(pinned_record)
     db.commit()
-    
+
     return {"message": "Alert pinned", "is_pinned": True}
 
 # Health check

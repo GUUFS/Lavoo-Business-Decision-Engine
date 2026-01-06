@@ -112,7 +112,7 @@ def extract_user_id(current_user):
     """Helper function to extract user_id from current_user"""
     if isinstance(current_user, dict):
         if "user" in current_user:
-            user_data = current_user["user"]
+            user_data = current_user
             if isinstance(user_data, dict):
                 return user_data.get("id") or user_data.get("user_id")
             elif hasattr(user_data, 'id'):

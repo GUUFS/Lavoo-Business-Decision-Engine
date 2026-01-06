@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardSidebar from '../../components/feature/DashboardSidebar';
-import { getUserAnalyses } from '../../api/business-analyzer';
+import { useAnalysisHistory } from '../../api/analysis';
 import toast from 'react-hot-toast';
 
 export default function AnalysisHistoryPage() {
@@ -10,56 +10,32 @@ export default function AnalysisHistoryPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
-  const [analysisHistory, setAnalysisHistory] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
   const itemsPerPage = 10;
 
-  // Fetch user analyses from backend
+  // Use TanStack Query hook with caching (5 minute stale time)
+  const {
+    data: analysisHistory = [],
+    isLoading,
+    error,
+    isFetching
+  } = useAnalysisHistory(50);
+
+  // Handle authentication errors
   useEffect(() => {
-    const fetchAnalyses = async () => {
-      try {
-        setIsLoading(true);
-        const analyses = await getUserAnalyses(50); // Get up to 50 analyses
-        
-        console.log('📊 Fetched analyses:', analyses);
-        console.log('📊 Analyses length:', analyses?.length);
-        console.log('📊 First analysis structure:', analyses?.[0]);
+    if (error) {
+      console.error('Error fetching analyses:', error);
+      toast.error('Failed to load analysis history');
 
-        // Transform backend data to match UI expectations
-        const transformedAnalyses = analyses.map((analysis: any) => ({
-          id: analysis.analysis_id || analysis.id,
-          title: `Business Analysis - ${new Date(analysis.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })}`,
-          date: new Date(analysis.created_at).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
-          description: analysis.objective || analysis.business_goal || 'Business analysis report',
-          bottlenecks: analysis.bottlenecks?.length || 0,
-          solutions: (analysis.business_strategies?.length || 0) + (analysis.ai_tools?.length || 0),
-          confidence: `${analysis.ai_confidence_score || 85}%`,
-          status: 'completed',
-          industry: 'Business',
-          created_at: analysis.created_at,
-          raw: analysis // Keep original data for detailed view
-        }));
-
-        setAnalysisHistory(transformedAnalyses);
-      } catch (error: any) {
-        console.error('Error fetching analyses:', error);
-        toast.error('Failed to load analysis history');
-
-        // If authentication error, redirect to login
-        if (error.message?.includes('Not authenticated') || error.message?.includes('login')) {
-          setTimeout(() => {
-            navigate('/login', { state: { from: '/analysis-history' } });
-          }, 2000);
-        }
-      } finally {
-        setIsLoading(false);
+      const errorMessage = (error as Error).message || '';
+      if (errorMessage.includes('Not authenticated') || errorMessage.includes('login') || errorMessage.includes('401')) {
+        setTimeout(() => {
+          navigate('/login', { state: { from: '/analysis-history' } });
+        }, 2000);
       }
-    };
-
-    fetchAnalyses();
-  }, [navigate]);
+    }
+  }, [error, navigate]);
 
 
   const filteredAnalyses = analysisHistory.filter(analysis => {
@@ -312,7 +288,7 @@ export default function AnalysisHistoryPage() {
                   <div>
                     <p className="text-xs md:text-sm font-medium text-gray-600">Avg. Solutions</p>
                     <p className="text-lg md:text-2xl font-bold text-gray-900">
-                      {analysisHistory.length > 0 
+                      {analysisHistory.length > 0
                         ? Math.round(analysisHistory.reduce((acc, a) => acc + a.solutions, 0) / analysisHistory.length)
                         : 0
                       }

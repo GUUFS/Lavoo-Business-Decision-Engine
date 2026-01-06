@@ -2,11 +2,18 @@
 """
 Caching configuration and utilities using Redis with fastapi-cache2
 Falls back to in-memory cache if Redis is unavailable
+
+IMPORTANT: The @cache decorator from fastapi-cache2 does NOT work with
+FastAPI endpoints that use Depends() for authentication. Instead, use
+the manual caching functions provided below (get_cached, set_cached).
 """
 
 import os
+import json
 import logging
-from typing import Optional
+from typing import Optional, Any
+from datetime import timedelta
+from functools import wraps
 from fastapi import Request, Response
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
@@ -18,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 # Redis connection instance
 redis_client: Optional[aioredis.Redis] = None
+
+# In-memory fallback cache (thread-safe dict)
+_memory_cache: dict[str, tuple[Any, float]] = {}
+import time
 
 
 async def init_cache():
@@ -184,4 +195,123 @@ __all__ = [
     "invalidate_cache_pattern",
     "invalidate_user_cache",
     "clear_all_caches",
+    "get_cached",
+    "set_cached",
+    "delete_cached",
 ]
+
+
+# ====================
+# MANUAL CACHING FUNCTIONS
+# (Works with FastAPI Depends())
+# ====================
+
+async def get_cached(key: str) -> Optional[Any]:
+    """
+    Get a value from cache by key.
+    Works with both Redis and in-memory fallback.
+
+    Args:
+        key: Cache key (automatically prefixed with 'aianalyst:')
+
+    Returns:
+        Cached value or None if not found/expired
+
+    Example:
+        cached = await get_cached(f"alerts:user:{user_id}")
+        if cached:
+            return cached
+    """
+    global redis_client, _memory_cache
+
+    full_key = f"aianalyst:{key}"
+
+    try:
+        if redis_client:
+            # Try Redis
+            value = await redis_client.get(full_key)
+            if value:
+                return json.loads(value)
+        else:
+            # Fallback to in-memory
+            if full_key in _memory_cache:
+                value, expiry = _memory_cache[full_key]
+                if expiry > time.time():
+                    return value
+                else:
+                    # Expired - remove it
+                    del _memory_cache[full_key]
+    except Exception as e:
+        logger.warning(f"Cache get error for '{key}': {e}")
+
+    return None
+
+
+async def set_cached(key: str, value: Any, ttl_seconds: int = 300):
+    """
+    Set a value in cache with TTL (time to live).
+    Works with both Redis and in-memory fallback.
+
+    Args:
+        key: Cache key (automatically prefixed with 'aianalyst:')
+        value: Value to cache (must be JSON serializable)
+        ttl_seconds: Time to live in seconds (default: 5 minutes)
+
+    Example:
+        await set_cached(f"alerts:user:{user_id}", alerts_data, ttl_seconds=120)
+    """
+    global redis_client, _memory_cache
+
+    full_key = f"aianalyst:{key}"
+
+    try:
+        if redis_client:
+            # Store in Redis with TTL
+            await redis_client.setex(
+                full_key,
+                ttl_seconds,
+                json.dumps(value, default=str)
+            )
+            logger.debug(f"Cached '{key}' in Redis (TTL: {ttl_seconds}s)")
+        else:
+            # Store in memory with expiry timestamp
+            _memory_cache[full_key] = (value, time.time() + ttl_seconds)
+            logger.debug(f"Cached '{key}' in memory (TTL: {ttl_seconds}s)")
+    except Exception as e:
+        logger.warning(f"Cache set error for '{key}': {e}")
+
+
+async def delete_cached(key: str):
+    """
+    Delete a specific cache key.
+
+    Args:
+        key: Cache key (automatically prefixed with 'aianalyst:')
+
+    Example:
+        await delete_cached(f"alerts:user:{user_id}")
+    """
+    global redis_client, _memory_cache
+
+    full_key = f"aianalyst:{key}"
+
+    try:
+        if redis_client:
+            await redis_client.delete(full_key)
+        else:
+            _memory_cache.pop(full_key, None)
+
+        logger.debug(f"Deleted cache key '{key}'")
+    except Exception as e:
+        logger.warning(f"Cache delete error for '{key}': {e}")
+
+
+# TTL constants for common cache durations
+class CacheTTL:
+    """Common cache TTL values in seconds"""
+    SHORT = 60  # 1 minute - for rapidly changing data
+    MEDIUM = 300  # 5 minutes - for moderately changing data
+    LONG = 600  # 10 minutes - for stable data
+    VERY_LONG = 1800  # 30 minutes - for rarely changing data
+    HOUR = 3600  # 1 hour
+    DAY = 86400  # 24 hours

@@ -27,3 +27,4 @@ sentry
 nodemailer
 fastapi-cache2
 redis
+pip-audit

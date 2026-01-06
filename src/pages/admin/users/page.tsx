@@ -2,44 +2,14 @@ import { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
-import { getAuthHeaders } from '../../../utils/auth';
-
-interface User {
-  id: number;
-  name: string;
-  email: string;
-  plan: string;
-  status: 'active' | 'suspended' | 'inactive';
-  joinDate: string;
-  lastActive: string;
-  analyses: number;
-  avatar: string;
-}
-
-interface UserDetails extends User {
-  subscription_status: string;
-  subscription_plan: string;
-  total_chops: number;
-  referral_chops: number;
-  alert_reading_chops: number;
-  insight_reading_chops: number;
-  referral_count: number;
-  referrals: string[];
-  insight_sharing_chops: number;
-  alert_sharing_chops: number;
-  days_remaining: number;
-  referral_code: string;
-  is_active: boolean;
-}
-
-interface UserStats {
-  total: number;
-  pro: number;
-  free: number;
-  deactivated: number;
-  inactive: number;
-  active?: number;
-}
+import {
+  useUserStats,
+  useUsers,
+  useUserDetail,
+  useToggleUserStatus,
+  type User,
+  type UserDetails
+} from '../../../api/admin-users';
 
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -95,178 +65,66 @@ export default function AdminUsers() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [selectedUser, setSelectedUser] = useState<UserDetails | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [users, setUsers] = useState<User[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalUsers, setTotalUsers] = useState(0);
-  const [loadingDetails, setLoadingDetails] = useState(false);
-  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
-  const [confirmConfig, setConfirmConfig] = useState<{
-    title: string;
-    message: string;
-    onConfirm: () => void;
-    type: 'danger' | 'success';
-  }>({
-    title: '',
-    message: '',
-    onConfirm: () => { },
-    type: 'danger'
+
+
+  // TanStack Query hooks
+  const { data: stats = { total: 0, pro: 0, free: 0, deactivated: 0, inactive: 0 } } = useUserStats();
+  const { data: usersData, isLoading: loading, refetch } = useUsers({
+    page: currentPage,
+    limit: 10,
+    status: filterStatus,
+    search: debouncedSearch
   });
+  const { data: selectedUser, isLoading: loadingDetails } = useUserDetail(selectedUserId);
+  const toggleStatusMutation = useToggleUserStatus();
 
-  const [stats, setStats] = useState<UserStats>({
-    total: 0,
-    pro: 0,
-    free: 0,
-    deactivated: 0,
-    inactive: 0,
-    active: 0
-  });
-
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-  useEffect(() => {
-    fetchStats();
-    fetchUsers();
-  }, [currentPage, filterStatus]);
+  const users = usersData?.users || [];
+  const totalPages = usersData?.totalPages || 1;
+  const totalUsers = usersData?.total || 0;
 
   // Debounce search
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (currentPage === 1) fetchUsers();
-      else setCurrentPage(1);
+      setDebouncedSearch(searchTerm);
+      setCurrentPage(1);
     }, 500);
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  const fetchStats = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/control/users/stats`, {
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        const data = await response.json();
-        // Add dummy active if missing to satisfy potential types, or just map pro -> active logic
-        setStats({ ...data, active: data.pro });
-      }
-    } catch (error) {
-      console.error('Error fetching stats:', error);
-    }
-  };
 
-  const fetchUsers = async () => {
-    setLoadingUsers(true);
-    try {
-      const queryParams = new URLSearchParams({
-        page: currentPage.toString(),
-        limit: '10',
-        search: searchTerm,
-        status: filterStatus
-      });
-
-      const response = await fetch(`${API_BASE_URL}/api/control/users?${queryParams}`, {
-        headers: getAuthHeaders()
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data.users);
-        setTotalPages(data.totalPages);
-        setTotalUsers(data.total);
-      }
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
-
-  const handleToggleStatus = (user: User) => {
-    const isDeactivating = user.status === 'active';
-
-    setConfirmConfig({
-      title: isDeactivating ? 'Deactivate User' : 'Activate User',
-      message: `Are you sure you want to ${isDeactivating ? 'deactivate' : 'activate'} ${user.name}? They will ${isDeactivating ? 'lose access to the platform until reactivated' : 'be able to log in again'}.`,
-      type: isDeactivating ? 'danger' : 'success',
-      onConfirm: async () => {
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/control/users/${user.id}/status`, {
-            method: 'PATCH',
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ status: isDeactivating ? 'suspended' : 'active' })
-          });
-
-          const newStatus = isDeactivating ? 'suspended' : 'active';
-
-          if (response.ok) {
-            // Update local state in list
-            setUsers((prevUsers: User[]) => prevUsers.map((u: User) =>
-              u.id === user.id
-                ? { ...u, status: newStatus }
-                : u
-            ));
-
-            // Update modal internal state
-            if (selectedUser && selectedUser.id === user.id) {
-              setSelectedUser({
-                ...(selectedUser as any),
-                status: newStatus,
-                is_active: !isDeactivating
-              });
-            }
-
-            fetchStats();
-            toast.success(`User ${newStatus === 'active' ? 'activated' : 'deactivated'} successfully`);
-          } else {
-            const err = await response.json();
-            toast.error(`Error: ${err.detail}`);
-          }
-        } catch (error) {
-          console.error('Error updating user status:', error);
-          toast.error('Failed to update user status');
-        }
-      }
-    });
-    setIsConfirmModalOpen(true);
-  };
-
-  const handleViewUser = async (user: User) => {
+  const handleViewUser = (user: User) => {
+    setSelectedUserId(user.id);
     setIsUserModalOpen(true);
-    setLoadingDetails(true);
+  };
+
+  const handleDeactivateUser = async (user: UserDetails) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/control/users/${user.id}`, {
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        const details = await response.json();
-        // Merge list data (avatar, lastActive) with details if needed, 
-        // but details should have most info. Avatar logic might need repeating or passing.
-        const fullDetails: UserDetails = {
-          ...user, // Default fallback
-          ...details,
-          status: details.is_active ? 'active' : 'suspended', // Map bool to string
-          avatar: user.avatar // Keep avatar from list or regenerate
-        };
-        setSelectedUser(fullDetails);
-      } else {
-        alert("Failed to load user details");
-        setIsUserModalOpen(false);
-      }
+      await toggleStatusMutation.mutateAsync(user.id);
     } catch (error) {
-      console.error("Error fetching user details:", error);
-    } finally {
-      setLoadingDetails(false);
+      console.error("Error toggling user status:", error);
+      alert("Failed to update user status");
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-600';
-      case 'inactive': return 'bg-gray-100 text-gray-600';
+      case 'inactive': return 'bg-yellow-100 text-yellow-600';
       case 'suspended': return 'bg-red-100 text-red-600';
       default: return 'bg-gray-100 text-gray-600';
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'active': return 'Active';
+      case 'inactive': return 'Inactive';
+      case 'suspended': return 'Deactivated';
+      default: return status;
     }
   };
 
@@ -274,16 +132,9 @@ export default function AdminUsers() {
     if (!plan) return 'bg-gray-100 text-gray-600';
     const lowerPlan = plan.toLowerCase();
 
-    // Free -> Normal Gray
     if (lowerPlan.includes('free') || lowerPlan.includes('basic')) return 'bg-gray-100 text-gray-600';
-
-    // Yearly -> Normal Orange
     if (lowerPlan.includes('yearly')) return 'bg-orange-100 text-orange-600';
-
-    // Monthly -> Sky Blue
     if (lowerPlan.includes('monthly') || lowerPlan.includes('pro')) return 'bg-sky-100 text-sky-600';
-
-    // Fallbacks
     if (lowerPlan.includes('premium')) return 'bg-orange-100 text-orange-600';
     return 'bg-gray-100 text-gray-600';
   };
@@ -301,12 +152,17 @@ export default function AdminUsers() {
         <div className="flex-1 p-4 md:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
             {/* Header */}
-            <div className="mb-6 md:mb-8">
-              <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">User Management</h1>
-              <p className="text-gray-600">Manage user accounts, subscriptions, and access permissions</p>
+            <div className="mb-6 md:mb-8 flex justify-between items-start">
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2">User Management</h1>
+                <p className="text-gray-600">Manage user accounts, subscriptions, and access permissions</p>
+              </div>
+              <button onClick={() => refetch()} className="p-2 text-gray-500 hover:text-red-600 transition-colors" title="Refresh">
+                <i className="ri-refresh-line text-xl"></i>
+              </button>
             </div>
 
-            {/* Stats Cards - Updated grid to 5 cols and reduced padding */}
+            {/* Stats Cards */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4 mb-8">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 md:p-4">
                 <div className="flex items-center justify-between mb-2">
@@ -373,7 +229,7 @@ export default function AdminUsers() {
                 </div>
                 <select
                   value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
+                  onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
                   className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 pr-8"
                 >
                   <option value="all">All Status</option>
@@ -425,7 +281,7 @@ export default function AdminUsers() {
                           </td>
                           <td className="py-4 px-4">
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(user.status)}`}>
-                              {user.status === 'suspended' ? 'Deactivated' : 'Active'}
+                              {getStatusLabel(user.status)}
                             </span>
                           </td>
                           <td className="py-4 px-4">
@@ -484,7 +340,6 @@ export default function AdminUsers() {
             </div>
           </div>
         </div>
-
       </div>
 
       {/* User Details Modal */}
@@ -495,7 +350,7 @@ export default function AdminUsers() {
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-lg font-semibold text-gray-900">User Details</h3>
                 <button
-                  onClick={() => setIsUserModalOpen(false)}
+                  onClick={() => { setIsUserModalOpen(false); setSelectedUserId(null); }}
                   className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                 >
                   <i className="ri-close-line text-xl"></i>
@@ -521,26 +376,27 @@ export default function AdminUsers() {
                   {/* Subscription Section */}
                   <div className="bg-gray-50 p-4 rounded-lg">
                     <h5 className="font-medium text-gray-900 mb-3 border-b border-gray-200 pb-2">Subscription</h5>
-                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       <div>
-                        <label className="text-xs text-gray-500 uppercase">Status</label>
+                        <label className="text-xs text-gray-500 uppercase">Account Status</label>
                         <div className={`mt-1 inline-flex px-2 py-1 rounded-full text-xs font-semibold ${getStatusColor(selectedUser.status)}`}>
-                          {selectedUser.subscription_plan?.toLowerCase().includes('free') ? 'Free' : (selectedUser.status === 'suspended' ? 'Deactivated' : 'Active')}
+                          {getStatusLabel(selectedUser.status)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500 uppercase">Subscription</label>
+                        <div className={`mt-1 inline-flex px-2 py-1 rounded-full text-xs font-semibold ${selectedUser.subscription_status === 'active' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-600'}`}>
+                          {selectedUser.subscription_status === 'active' ? 'Pro' : 'Free'}
                         </div>
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 uppercase">Plan</label>
-                        <div className="mt-1 font-medium capitalize">
-                          {selectedUser.subscription_plan ? (
-                            selectedUser.subscription_plan.toLowerCase().includes('yearly') ? 'Yearly Pro' :
-                              selectedUser.subscription_plan.toLowerCase().includes('monthly') ? 'Monthly Pro' :
-                                selectedUser.subscription_plan
-                          ) : 'Free'}
-                        </div>
+
+                        <div className="mt-1 font-medium">{selectedUser.subscription_plan || 'Free'}</div>
                       </div>
                       <div>
-                        <label className="text-xs text-gray-500 uppercase">Pro Days Remaining</label>
-                        <div className="mt-1 font-medium">{selectedUser.days_remaining} Days</div>
+                        <label className="text-xs text-gray-500 uppercase">Days Remaining</label>
+                        <div className="mt-1 font-medium">{selectedUser.days_remaining || 0} Days</div>
                       </div>
                     </div>
                   </div>
@@ -616,23 +472,33 @@ export default function AdminUsers() {
                     </div>
                   </div>
 
-                  <div className="flex gap-3 mt-6 pt-6 border-t border-gray-100">
+                  {/* Action Button - Only Activate/Deactivate */}
+                  <div className="mt-6 pt-6 border-t border-gray-100">
                     <button
-                      onClick={() => setIsUserModalOpen(false)}
-                      className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
-                    >
-                      Close
-                    </button>
 
-                    <button
-                      onClick={() => handleToggleStatus(selectedUser as any)}
-                      className={`flex-1 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${selectedUser.status === 'active'
-                        ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                        : 'bg-green-100 text-green-600 hover:bg-green-200'
-                        }`}
+                      onClick={() => handleDeactivateUser(selectedUser)}
+                      disabled={toggleStatusMutation.isPending}
+                      className={`w-full px-4 py-3 rounded-lg font-medium transition-colors ${
+                        selectedUser.status === 'suspended'
+                          ? 'bg-green-600 text-white hover:bg-green-700'
+                          : 'bg-red-600 text-white hover:bg-red-700'
+                      } disabled:opacity-50`}
                     >
-                      {selectedUser.status === 'active' ? 'Deactivate User' : 'Activate User'}
+                      {toggleStatusMutation.isPending
+                        ? 'Updating...'
+                        : selectedUser.status === 'suspended'
+                          ? 'Activate User'
+                          : 'Deactivate User'
+                      }
                     </button>
+                    <p className="text-xs text-gray-400 text-center mt-2">
+                      {selectedUser.status === 'suspended'
+                        ? 'Activating will allow this user to log in again'
+                        : selectedUser.status === 'inactive'
+                          ? 'This user is inactive (no login for 30+ days). Deactivating will prevent login.'
+                          : 'Deactivating will prevent this user from logging in'
+                      }
+                    </p>
                   </div>
                 </div>
               )}

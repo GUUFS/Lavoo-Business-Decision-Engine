@@ -93,7 +93,7 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
     Priority: Authorization header > Cookie
     """
     token = None
-    
+
     # First, try to get token from Authorization header
     if authorization:
         try:
@@ -110,11 +110,11 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
                 detail="Invalid authorization header format",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-    
+
     # If no Authorization header, try cookie
     elif access_token_cookie:
         token = access_token_cookie
-    
+
     # If no token found anywhere
     if not token:
         raise HTTPException(
@@ -122,21 +122,21 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Validate token
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
-        
+
         if email is None:
             raise credentials_exception
-            
+
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -165,7 +165,7 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
 
 @router.get("/me", response_model=AuthResponse)
 def me(
-    current_user: User = Depends(get_current_user), 
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(None),
     access_token_cookie: Optional[str] = Cookie(None)
@@ -177,10 +177,10 @@ def me(
     role = "user"
     if current_user.is_admin:
         role = "admin"
-    
+
     # Get token from header or cookie for return
     token = authorization.split()[1] if authorization else access_token_cookie
-    
+
     # Return matched fields
     return {
         "id": current_user.id,
@@ -196,7 +196,7 @@ def me(
         "two_factor_enabled": current_user.two_factor_enabled,
         "email_notifications": current_user.email_notifications,
         "created_at": current_user.created_at,
-        "access_token": token or "", 
+        "access_token": token or "",
         "token_type": "bearer"
     }
 
@@ -289,13 +289,13 @@ def change_password(
 
     user.password = pwd_context.hash(password_data.new_password)
     db.commit()
-    
+
     return {"message": "Password updated successfully"}
 
 
 def get_admin_user(
-    authorization: Optional[str] = Header(None), 
-    access_token_cookie: Optional[str] = Cookie(None), 
+    authorization: Optional[str] = Header(None),
+    access_token_cookie: Optional[str] = Cookie(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -303,7 +303,7 @@ def get_admin_user(
     Supports both Authorization header and access_token cookie.
     """
     user = get_current_user(authorization, access_token_cookie, db)
-    
+
     if not user.is_admin:
         log_debug(f"DEBUG AUTH: User {user.email} is NOT an admin")
         raise HTTPException(
@@ -346,20 +346,20 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
 
     # Get client IP address
     client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
-    
+
     # Check if IP is blacklisted BEFORE any authentication
     blacklist_check = db.query(IPBlacklist).filter(
         IPBlacklist.ip_address == client_ip,
         IPBlacklist.is_active == True
     ).first()
-    
+
     if blacklist_check:
         log_debug(f"Blocked login attempt from blacklisted IP: {client_ip}")
         raise HTTPException(
             status_code=403,
             detail="IP address blacklisted. Access denied."
         )
-    
+
     # Verify password policy: Check password BEFORE is_active
     if not pwd_context.verify(request.password, user.password):
         # Record failed login attempt - CRITICAL for security tracking
@@ -373,21 +373,15 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
         # Convert integer user_id to UUID format for database compatibility
         user_uuid = uuid.UUID(int=user.id) if isinstance(user.id, int) else user.id
         
-        # Try to record failed attempt - don't let this block security event creation
+        # Record in failed_login_attempts and create security event
         try:
             failed_attempt = FailedLoginAttempt(
-                email=request.email,  # Store email for IP blacklist tracking
+                email=request.email,  
                 ip_address=client_ip,
                 user_agent=user_agent
             )
             db.add(failed_attempt)
-            db.flush()  # Flush but don't commit yet
-        except Exception as e:
-            logger.error(f"Error recording failed login attempt: {e}")
-            # Continue anyway - security event is more critical
-        
-        # ALWAYS create security event - this triggers the auto-block mechanism
-        try:
+            
             event = SecurityEvent(
                 type="failed_login",
                 severity="medium",
@@ -400,9 +394,8 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
             db.commit()  # Commit both records together
             logger.info(f"Recorded failed login for {user.email} from IP {client_ip}")
         except Exception as e:
-            logger.error(f"CRITICAL: Failed to create security event: {e}")
+            logger.error(f"CRITICAL: Failed to record security diagnostics: {e}")
             db.rollback()
-            # Even if recording fails, still reject the login
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password."
@@ -413,9 +406,32 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
             status_code=status.HTTP_403_FORBIDDEN, detail="Your account has been deactivated. Please contact support with lavoo@gmail.com to verify your account."
         )
 
-    # Update Last Active
+    # Update Last Active - this also auto-reactivates inactive users
+    # (inactive = no login for 30 days, but is_active is still True)
+    # When they login again, they become active automatically
     user.updated_at = datetime.utcnow()
-    user.last_login = datetime.utcnow() # Update last_login field too
+    user.last_login = datetime.utcnow()
+
+    # Check and sync subscription status on login
+    if user.subscriptions:
+        has_active_sub = False
+        for sub in user.subscriptions:
+            if sub.status == 'active' and sub.end_date:
+                end_date = sub.end_date.replace(tzinfo=None) if sub.end_date.tzinfo else sub.end_date
+                if end_date > datetime.utcnow():
+                    has_active_sub = True
+                    user.subscription_status = 'active'
+                    user.subscription_plan = sub.plan_type or 'Pro'
+                    break
+                else:
+                    # Subscription expired
+                    sub.status = 'expired'
+
+        if not has_active_sub:
+            # Revert to Free if no active subscription
+            user.subscription_status = 'Free'
+            user.subscription_plan = 'Free'
+
     db.commit()
 
     role = "admin" if user.is_admin else "user"
@@ -423,10 +439,10 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
     # Generate access token with extended expiration
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.email, "role": role, "id": user.id}, 
+        data={"sub": user.email, "role": role, "id": user.id},
         expires_delta=access_token_expires
     )
-    
+
     refresh_token = create_refresh_token({"sub": user.email, "role": role, "id": user.id})
 
     # Set cookies with extended max_age
@@ -449,7 +465,7 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
     )
 
     print(f"DEBUG: User logged in: {user.email}, role: {role}, token: {access_token[:20]}...")
-    
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -460,7 +476,7 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
         "referral_code": user.referral_code
     }
 
-    
+
 @router.post("/refresh", response_model=AuthResponse)
 def refresh_token_endpoint(refresh_token: str = Cookie(None), response: Response = None, db: Session = Depends(get_db)):
     if not refresh_token:
@@ -488,7 +504,7 @@ def refresh_token_endpoint(refresh_token: str = Cookie(None), response: Response
         {"sub": email, "role": role, "id": user.id},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    
+
     # Also issue a new refresh token
     new_refresh_token = create_refresh_token({"sub": email, "role": role, "id": user.id})
 
@@ -546,12 +562,12 @@ def login_for_swagger(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     role = "admin" if user.is_admin else "user"
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.email, "role": role, "id": user.id}, 
+        data={"sub": user.email, "role": role, "id": user.id},
         expires_delta=access_token_expires
     )
 

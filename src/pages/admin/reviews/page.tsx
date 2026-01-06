@@ -1,67 +1,28 @@
-import { useState, useEffect, useRef } from 'react';
-import { toast } from 'react-toastify';
+
+import { useState, useRef, useEffect } from 'react';
 import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
-import { getAuthHeaders } from '../../../utils/auth';
+import {
+  useAdminReviews,
+  useReviewConversations,
+  useReplyToReview,
+  useUpdateReviewStatus,
+  type Review,
+  type Message
+} from '../../../api/admin-reviews';
+import { instance } from '../../../lib/axios';
+import { useQueryClient } from '@tanstack/react-query';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-interface Message {
-  id: number;
-  review_id: number;
-  sender_type: 'user' | 'admin';
-  message: string;
-  timestamp: string;
-  is_read: boolean;
-}
-
-interface Review {
-  id: number;
-  user_name: string;
-  user_email: string;
-  business_name: string;
-  review_title: string;
-  rating: number;
-  review_text: string;
-  date_submitted: string;
-  status: string;
-  category: string;
-  admin_response: boolean;
-  conversation_count: number;
-  unread_messages: number;
-  is_attended: boolean; // Added field
-}
-
-const ConversationModal = ({ review, onClose, onReply }: {
+const ConversationModal = ({ review, onClose }: {
   review: Review,
-  onClose: () => void,
-  onReply: (id: number, message: string) => Promise<boolean>
+  onClose: () => void
 }) => {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
   const [newMessage, setNewMessage] = useState('');
-  const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const fetchMessages = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${review.id}/conversations`, {
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setMessages(data);
-      }
-    } catch (error) {
-      console.error("Error fetching messages", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchMessages();
-  }, [review.id]);
+  // Use cached hook for conversations
+  const { data: messages = [], isLoading: loading, refetch } = useReviewConversations(review.id);
+  const replyMutation = useReplyToReview();
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -69,13 +30,14 @@ const ConversationModal = ({ review, onClose, onReply }: {
 
   const handleSend = async () => {
     if (!newMessage.trim()) return;
-    setSending(true);
-    const success = await onReply(review.id, newMessage);
-    if (success) {
+
+    try {
+      await replyMutation.mutateAsync({ reviewId: review.id, message: newMessage });
       setNewMessage('');
-      fetchMessages();
+      refetch();
+    } catch {
+      alert('Failed to send reply');
     }
-    setSending(false);
   };
 
   return (
@@ -111,7 +73,7 @@ const ConversationModal = ({ review, onClose, onReply }: {
           ) : messages.length === 0 ? (
             <div className="text-center text-gray-400 py-10">No messages yet.</div>
           ) : (
-            messages.map((msg) => (
+            messages.map((msg: Message) => (
               <div key={msg.id} className={`flex ${msg.sender_type === 'admin' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`max-w-[70%] rounded-2xl px-4 py-3 shadow-sm ${msg.sender_type === 'admin' ? 'bg-red-600 text-white rounded-br-none' : 'bg-gray-100 text-gray-800 border border-gray-200 rounded-bl-none'}`}>
                   <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
@@ -126,9 +88,20 @@ const ConversationModal = ({ review, onClose, onReply }: {
         </div>
         <div className="p-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
           <div className="flex gap-2">
-            <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Type your reply..." onKeyDown={(e) => e.key === 'Enter' && handleSend()} className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all" />
-            <button onClick={handleSend} disabled={sending || !newMessage.trim()} className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
-              {sending ? <i className="ri-loader-4-line animate-spin"></i> : <i className="ri-send-plane-fill"></i>}
+            <input
+              type="text"
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              placeholder="Type your reply..."
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
+            />
+            <button
+              onClick={handleSend}
+              disabled={replyMutation.isPending || !newMessage.trim()}
+              className="px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {replyMutation.isPending ? <i className="ri-loader-4-line animate-spin"></i> : <i className="ri-send-plane-fill"></i>}
               Send
             </button>
           </div>
@@ -138,7 +111,12 @@ const ConversationModal = ({ review, onClose, onReply }: {
   );
 };
 
-const HistoryModal = ({ user, reviews, onClose, onToggleAttended }: { user: any, reviews: Review[], onClose: () => void, onToggleAttended: (id: number) => Promise<void> }) => {
+const HistoryModal = ({ user, reviews, onClose, onToggleAttended }: {
+  user: { user_id: number; user_name: string; user_email: string };
+  reviews: Review[];
+  onClose: () => void;
+  onToggleAttended: (id: number) => Promise<void>
+}) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col animate-fade-in">
@@ -166,7 +144,10 @@ const HistoryModal = ({ user, reviews, onClose, onToggleAttended }: { user: any,
                     </div>
                     <span className="text-sm text-gray-500">{new Date(review.date_submitted).toLocaleDateString()}</span>
                   </div>
-                  <button onClick={() => onToggleAttended(review.id)} className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors border ${review.is_attended ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'}`}>
+                  <button
+                    onClick={() => onToggleAttended(review.id)}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors border ${review.is_attended ? 'bg-green-100 text-green-700 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'}`}
+                  >
                     {review.is_attended ? 'Details Attended' : 'Mark Attended'}
                   </button>
                 </div>
@@ -184,128 +165,74 @@ const HistoryModal = ({ user, reviews, onClose, onToggleAttended }: { user: any,
   );
 };
 
+interface ReviewUser {
+  user_id: number;
+  user_name: string;
+  user_email: string;
+  review_count: number;
+  average_rating: number;
+  last_review_date: string | null;
+}
+
 export default function AdminReviews() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [selectedRating, setSelectedRating] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selectedReview, setSelectedReview] = useState<Review | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'list' | 'users' | 'displayed'>('list'); // Added 'displayed' mode
-  const [users, setUsers] = useState<any[]>([]);
+
+  const [viewMode, setViewMode] = useState<'list' | 'users'>('list');
+  const [users, setUsers] = useState<ReviewUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const [historyModal, setHistoryModal] = useState<{ open: boolean, user: any, reviews: Review[] }>({
+  const [historyModal, setHistoryModal] = useState<{ open: boolean, user: ReviewUser | null, reviews: Review[] }>({
     open: false, user: null, reviews: []
   });
-  const [totalPages, setTotalPagesState] = useState(1);
-  const [displayedReviews, setDisplayedReviews] = useState<Review[]>([]); // New state for displayed reviews
-  const [loadingDisplayed, setLoadingDisplayed] = useState(false);
 
-  const fetchReviews = async () => {
-    try {
-      setLoading(true);
-      let url = `${API_BASE_URL}/api/admin/reviews?page=${currentPage}&limit=${itemsPerPage}`;
-      if (selectedFilter !== 'all') url += `&status=${selectedFilter}`;
-      const response = await fetch(url, { headers: getAuthHeaders() });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.reviews) {
-          setReviews(data.reviews);
-          const total = Math.ceil(data.total / itemsPerPage);
-          setTotalPagesState(total > 0 ? total : 1);
-        } else {
-          setReviews(data);
-          setTotalPagesState(1);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to fetch reviews", e);
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  useEffect(() => {
-    if (viewMode === 'list') {
-      fetchReviews();
-    } else if (viewMode === 'displayed') {
-      fetchDisplayedReviews();
-    }
-  }, [selectedFilter, currentPage, viewMode]);
+  const queryClient = useQueryClient();
+
+
+  // Use TanStack Query hook for reviews
+  const { data: reviewsData, isLoading: loading, refetch } = useAdminReviews({
+    page: currentPage,
+    limit: itemsPerPage,
+    status: selectedFilter,
+    rating: selectedRating
+  });
+
+  const reviews = reviewsData?.reviews || [];
+  const totalPages = reviewsData?.pagination?.totalPages || 1;
+
+  const updateStatusMutation = useUpdateReviewStatus();
 
   const filteredReviews = reviews.filter(r => {
     if (selectedRating === 'all') return true;
     return Math.round(r.rating).toString() === selectedRating;
   });
 
-  const handleReply = async (id: number, message: string): Promise<boolean> => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/reply`, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ message })
-      });
-      if (res.ok) {
-        toast.success('Reply sent successfully');
-        setIsModalOpen(false);
-        // Update review in state
-        const updatedReviews = reviews.map(r =>
-          r.id === id ? { ...r, conversation_count: (r.conversation_count || 0) + 1 } : r
-        );
-        setReviews(updatedReviews);
-        return true; // Added return true for consistency with original signature
-      } else {
-        toast.error('Failed to send reply');
-        return false; // Added return false for consistency with original signature
-      }
-    } catch (e) {
-      console.error(e);
-      toast.error('Error sending reply');
-      return false; // Added return false for consistency with original signature
-    }
-  };
 
   const handleUpdateStatus = async (id: number, status: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ status })
-      });
-      if (res.ok) {
-        toast.success(`Review ${status} successfully`);
-        fetchReviews();
-      } else {
-        toast.error('Failed to update status');
-      }
-    } catch (e) {
-      console.error(e);
-      toast.error('Error updating status');
+      await updateStatusMutation.mutateAsync({ reviewId: id, status });
+    } catch {
+      alert('Failed to update status');
     }
   };
 
   const handleToggleAttended = async (id: number) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/reviews/${id}/attended`, {
-        method: 'POST',
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        const data = await response.json();
-        // Update reviews in main list and history modal
-        setReviews(prev => prev.map(r => r.id === id ? { ...r, is_attended: data.is_attended } : r));
-        if (historyModal.open) {
-          setHistoryModal(prev => ({
-            ...prev,
-            reviews: prev.reviews.map(r => r.id === id ? { ...r, is_attended: data.is_attended } : r)
-          }));
-        }
-        toast.success(data.is_attended ? 'Review marked as attended' : 'Review marked as unattended');
-      } else {
-        toast.error('Failed to update attended status');
+
+      await instance.post(`/api/admin/reviews/${id}/attended`);
+      // Invalidate reviews cache
+      queryClient.invalidateQueries({ queryKey: ['admin', 'reviews'] });
+      // Update history modal if open
+      if (historyModal.open) {
+        setHistoryModal(prev => ({
+          ...prev,
+          reviews: prev.reviews.map(r => r.id === id ? { ...r, is_attended: !r.is_attended } : r)
+        }));
       }
     } catch (e) {
       console.error(e);
@@ -370,8 +297,8 @@ export default function AdminReviews() {
   const fetchUsers = async () => {
     setLoadingUsers(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/users`, { headers: getAuthHeaders() });
-      if (res.ok) setUsers(await res.json());
+      const res = await instance.get('/api/admin/reviews/users');
+      setUsers(res.data);
     } catch (e) {
       console.error(e);
     } finally {
@@ -379,17 +306,11 @@ export default function AdminReviews() {
     }
   };
 
-  const handleViewHistory = async (user: any) => {
+  const handleViewHistory = async (user: ReviewUser) => {
     setHistoryModal({ open: true, user, reviews: [] });
-    // TODO: Pagination support for history in future if needed, currently fetching all?
-    // The backend endpoint admin_get_user_reviews supports pagination now. Default 10.
-    // For now we just fetch page 1.
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/user/${user.user_id}?page=1&limit=50`, { headers: getAuthHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        setHistoryModal(prev => ({ ...prev, reviews: data.reviews }));
-      }
+      const res = await instance.get(`/api/admin/reviews/user/${user.user_id}?page=1&limit=50`);
+      setHistoryModal(prev => ({ ...prev, reviews: res.data.reviews }));
     } catch (e) {
       console.error(e);
     }
@@ -400,6 +321,7 @@ export default function AdminReviews() {
       <i key={i} className={`ri-star-${i < rating ? 'fill' : 'line'} text-yellow-400`}></i>
     ));
   };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'published': return 'bg-green-100 text-green-800';
@@ -422,7 +344,7 @@ export default function AdminReviews() {
                 <p className="text-gray-600">Manage feedback and engage with users</p>
               </div>
               <div className="flex gap-2">
-                <button onClick={fetchReviews} className="p-2 text-gray-500 hover:text-red-600 transition-colors" title="Refresh">
+                <button onClick={() => refetch()} className="p-2 text-gray-500 hover:text-red-600 transition-colors" title="Refresh">
                   <i className="ri-refresh-line text-xl"></i>
                 </button>
               </div>
@@ -435,35 +357,27 @@ export default function AdminReviews() {
               </div>
               {(viewMode === 'list' || viewMode === 'displayed') ? (
                 <div className="flex flex-col md:flex-row gap-4">
-                  {viewMode === 'list' && (
-                    <>
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
-                        <select value={selectedFilter} onChange={(e) => setSelectedFilter(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
-                          <option value="all">All Reviews</option>
-                          <option value="published">Published</option>
-                          <option value="pending">Pending</option>
-                          <option value="rejected">Rejected</option>
-                        </select>
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Rating</label>
-                        <select value={selectedRating} onChange={(e) => setSelectedRating(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
-                          <option value="all">All Ratings</option>
-                          <option value="5">5 Stars</option>
-                          <option value="4">4 Stars</option>
-                          <option value="3">3 Stars</option>
-                          <option value="2">2 Stars</option>
-                          <option value="1">1 Star</option>
-                        </select>
-                      </div>
-                    </>
-                  )}
-                  {viewMode === 'displayed' && (
-                    <div className="flex-1 p-3 bg-blue-50 text-blue-700 rounded-lg text-sm flex items-center">
-                      <i className='ri-information-line mr-2'></i> These reviews are currently visible on the homepage carousel.
-                    </div>
-                  )}
+
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Status</label>
+                    <select value={selectedFilter} onChange={(e) => { setSelectedFilter(e.target.value); setCurrentPage(1); }} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
+                      <option value="all">All Reviews</option>
+                      <option value="published">Published</option>
+                      <option value="pending">Pending</option>
+                      <option value="rejected">Rejected</option>
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Rating</label>
+                    <select value={selectedRating} onChange={(e) => setSelectedRating(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500">
+                      <option value="all">All Ratings</option>
+                      <option value="5">5 Stars</option>
+                      <option value="4">4 Stars</option>
+                      <option value="3">3 Stars</option>
+                      <option value="2">2 Stars</option>
+                      <option value="1">1 Star</option>
+                    </select>
+                  </div>
                 </div>
               ) : (
                 <div className="text-sm text-gray-500">Viewing reviews grouped by distinct users. Click "History" to see all reviews for a user.</div>
@@ -542,7 +456,7 @@ export default function AdminReviews() {
           </div>
         </div>
       </div>
-      {isModalOpen && selectedReview && <ConversationModal review={selectedReview} onClose={() => setIsModalOpen(false)} onReply={handleReply} />}
+      {isModalOpen && selectedReview && <ConversationModal review={selectedReview} onClose={() => setIsModalOpen(false)} />}
       {historyModal.open && historyModal.user && <HistoryModal user={historyModal.user} reviews={historyModal.reviews} onClose={() => setHistoryModal({ ...historyModal, open: false })} onToggleAttended={handleToggleAttended} />}
     </div>
   );

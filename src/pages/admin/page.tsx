@@ -1,61 +1,19 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import AdminSidebar from '../../components/feature/AdminSidebar';
 import AdminHeader from '../../components/feature/AdminHeader';
 import { Link } from 'react-router-dom';
-import { getAuthHeaders } from '../../utils/auth';
-
-interface DashboardData {
-  total_users: number;
-  active_users: number;
-  total_revenue: number;
-  system_uptime: string;
-  recent_activity: {
-    type: string;
-    message: string;
-    time: string;
-  }[];
-}
-
-interface ActivityItem {
-  id: number;
-  type: string;
-  message: string;
-  time: string;
-  icon: string;
-  color: string;
-}
+import { useAdminDashboardStats, type DashboardStats, type ActivityItem } from '../../api/admin-dashboard';
 
 export default function AdminDashboard() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // State for dynamic stats
-  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/admin/dashboard/stats`, {
-          headers: getAuthHeaders()
-        });
-        if (res.ok) {
-          setDashboardData(await res.json());
-        }
-      } catch (error) {
-        console.error("Failed to fetch dashboard stats", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchStats();
-  }, []);
+  // Use TanStack Query hook with automatic caching (2-minute cache)
+  const { data: dashboardData, isLoading: loading } = useAdminDashboardStats();
 
   // safely access data or use defaults
-  const d = dashboardData || {} as Partial<DashboardData>;
+  const d = dashboardData || {} as Partial<DashboardStats>;
 
   const stats = [
     {
