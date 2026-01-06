@@ -17,13 +17,14 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
   const queryClient = useQueryClient();
 
   const { data: user, isLoading } = useCurrentUser();
-  console.log("USER:", user);
 
   const isLoggedIn = !!user;
   const isAnalyzePage = location.pathname === "/analyze";
   const isLoginPage = location.pathname === "/login";
   const isSignUpPage = location.pathname === "/signup";
-  const isDashboard = location.pathname.includes("dashboard");
+  const isDashboard = location.pathname.includes("dashboard") ||
+    location.pathname.includes("/results") ||
+    location.pathname.includes("/analysis-history");
   const isAdmin = location.pathname.includes("/admin");
 
   const handleLogout = () => {

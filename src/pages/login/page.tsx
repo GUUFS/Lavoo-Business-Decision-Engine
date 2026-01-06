@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "react-toastify";
+import { useQueryClient } from "@tanstack/react-query";
 import Header from "../../components/feature/Header";
 import Footer from "../../components/feature/Footer";
 import Button from "../../components/base/Button";
@@ -24,6 +25,7 @@ type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function Login() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { mutateAsync: loginUser } = useLogin();
   // const {mutateAsync: loginAdmin} = useAdmin<AuthResponse>();
   // const { mutate, isPending } = useLogin();
@@ -51,6 +53,9 @@ export default function Login() {
       localStorage.setItem("user_token", res.access_token);
       localStorage.setItem("user_id", String(res.id));
       localStorage.setItem("role", res.role);
+
+      // ✅ Invalidate currentUser query to ensure fresh data in dashboard
+      await queryClient.invalidateQueries({ queryKey: ["currentUser"] });
 
       // Redirect based on role
       if (res.role === "admin") {

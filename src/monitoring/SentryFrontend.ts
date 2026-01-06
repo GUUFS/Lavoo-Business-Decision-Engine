@@ -5,7 +5,15 @@
 import * as Sentry from "@sentry/react";
 
 export function initFrontendSentry() {
-    const dsn = import.meta.env.VITE_SENTRY_DSN || (window as any)._env_?.REACT_APP_SENTRY_DSN || "https://c00b037dd5c7945d120ed4c72cdba1d7@o4510550376120320.ingest.us.sentry.io/4510550802169856";
+    // Only initialize Sentry in production to avoid 403 errors
+    const environment = import.meta.env.MODE || "development";
+
+    if (environment === "development") {
+        console.log("Sentry disabled in development mode");
+        return;
+    }
+
+    const dsn = import.meta.env.VITE_SENTRY_DSN || (window as any)._env_?.REACT_APP_SENTRY_DSN;
 
     if (dsn) {
         Sentry.init({
@@ -19,7 +27,7 @@ export function initFrontendSentry() {
             // Session Replay
             replaysSessionSampleRate: 0.1,
             replaysOnErrorSampleRate: 1.0,
-            environment: import.meta.env.MODE || "development",
+            environment: environment,
         });
         console.log("Frontend Sentry initialized");
     } else {

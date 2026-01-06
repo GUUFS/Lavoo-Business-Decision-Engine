@@ -9,7 +9,7 @@ import {
     useRecentReviews,
 } from '@/api/dashboard';
 
-export default function Dashboard() {
+function Dashboard() {
     const navigate = useNavigate();
 
     // Use TanStack Query hooks for all data fetching with caching
@@ -24,14 +24,6 @@ export default function Dashboard() {
 
     // Combined loading state
     const loading = isLoadingUser || isLoadingChops || isLoadingStats || isLoadingAlerts || isLoadingInsights || isLoadingReviews;
-
-    // Redirect to login if no user
-    useEffect(() => {
-        if (!isLoadingUser && !currentUser) {
-            console.error('❌ No user found, redirecting to login');
-            navigate('/login');
-        }
-    }, [currentUser, isLoadingUser, navigate]);
 
     const formatTimeAgo = (dateString: string) => {
         const date = new Date(dateString);
@@ -80,11 +72,11 @@ export default function Dashboard() {
                     <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
-                                <p className="text-sm text-gray-600 mb-1">Total Chops</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{chopsData?.total_chops || 0}</p>
+                                <p className="text-sm text-gray-600 mb-1">Total Analyses</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_insights || 0}</p>
                             </div>
-                            <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-bar-chart-line text-green-600 text-lg md:text-xl"></i>
+                            <div className="w-10 h-10 md:w-12 md:h-12 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                                <i className="ri-search-line text-purple-600 text-lg md:text-xl"></i>
                             </div>
                         </div>
                     </div>
@@ -94,23 +86,10 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm text-gray-600 mb-1">Active Alerts</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.unattended_alerts || 0}</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.active_alerts || 0}</p>
                             </div>
                             <div className="w-10 h-10 md:w-12 md:h-12 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                                 <i className="ri-alert-line text-orange-600 text-lg md:text-xl"></i>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* AI Insights Count - Using actual data */}
-                    <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
-                        <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                                <p className="text-sm text-gray-600 mb-1">AI Insights</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{topInsights.length}</p>
-                            </div>
-                            <div className="w-10 h-10 md:w-12 md:h-12 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-search-line text-purple-600 text-lg md:text-xl"></i>
                             </div>
                         </div>
                     </div>
@@ -120,7 +99,9 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
                                 <p className="text-sm text-gray-600 mb-1">Avg Rating</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.average_rating || 'N/A'}</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">
+                                    {typeof stats?.average_rating === 'number' ? stats.average_rating.toFixed(1) : '0.0'}
+                                </p>
                             </div>
                             <div className="w-10 h-10 md:w-12 md:h-12 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
                                 <i className="ri-star-line text-yellow-600 text-lg md:text-xl"></i>
@@ -328,3 +309,5 @@ export default function Dashboard() {
         </div>
     );
 }
+
+export default Dashboard;

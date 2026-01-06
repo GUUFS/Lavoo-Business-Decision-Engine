@@ -23,8 +23,8 @@ const queryClient = new QueryClient({
       // Retry failed requests once (balance reliability & performance)
       retry: 1,
 
-      // Default stale time: 5 minutes (data considered fresh for 5min)
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      // Default stale time: 1 minute (data considered fresh for 1min)
+      staleTime: 1 * 60 * 1000, // 1 minute
 
       // Default garbage collection: 10 minutes (unused cache cleared after 10min)
       gcTime: 10 * 60 * 1000, // 10 minutes (formerly cacheTime)

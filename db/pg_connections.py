@@ -54,6 +54,7 @@ try:
         pool_size=15,  # Number of permanent connections
         max_overflow=20,  # Additional connections when needed
         echo=False,  # Set to True for SQL query logging (debugging)
+        connect_args={"sslmode": "require"}, # Ensure SSL is enforced
     )
 
     # Test the connection

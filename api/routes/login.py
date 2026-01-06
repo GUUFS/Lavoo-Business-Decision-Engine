@@ -421,7 +421,7 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
                 if end_date > datetime.utcnow():
                     has_active_sub = True
                     user.subscription_status = 'active'
-                    user.subscription_plan = sub.plan_type or 'Pro'
+                    user.subscription_plan = sub.subscription_plan or 'Pro'
                     break
                 else:
                     # Subscription expired
