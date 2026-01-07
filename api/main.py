@@ -313,19 +313,6 @@ async def shutdown_event():
     """Cleanup on application shutdown"""
     await close_cache()
 
-origins = ["http://localhost:3000",
-           "http://localhost:5173",
-    "http://localhost:8080"]
-
-# Enable CORS for (React form requests)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["*"],
-)
-
 # Path to the React build
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 out_dir = os.path.join(BASE_DIR, "web")
