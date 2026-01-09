@@ -128,25 +128,34 @@ class BusinessAnalysis(Base):
     # Original user input
     business_goal = Column(Text, nullable=False)  # Original user query
 
-    # AI Analysis Results (JSON fields)
+    # V2 Agentic Analysis Fields (new structured format)
+    objective = Column(Text, nullable=True)  # Clear business objective
+    bottlenecks = Column(JSON, nullable=True)  # List of identified bottlenecks
+    business_strategies = Column(JSON, nullable=True)  # Prioritized action plans
+    ai_tools = Column(JSON, nullable=True)  # Recommended AI tools
+    key_evidence = Column(JSON, nullable=True)  # Supporting evidence/signals
+    assumptions = Column(JSON, nullable=True)  # Assumptions made in analysis
+    reasoning_trace = Column(JSON, nullable=True)  # AI reasoning steps
+
+    # Legacy fields (kept for backward compatibility)
     intent_analysis = Column(JSON)  # Objective, capabilities, stages, metrics
     tool_combinations = Column(JSON)  # 2-3 recommended tool combos with synergies
     roadmap = Column(JSON)  # Actionable plan with timeline
-    roi_projections = Column(JSON)  # ROI calculations, break-even, revenue impact (YOUR FIX)
-    ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing (YOUR FIX)
+    roi_projections = Column(JSON)  # ROI calculations, break-even, revenue impact
+    ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing
     estimated_cost = Column(Float)  # Monthly cost estimate
     timeline_weeks = Column(Integer)  # Implementation timeline
 
     # Admin Monitoring Fields (added for admin dashboard)
     confidence_score = Column(Integer, nullable=True)  # 0-100 confidence score
-    duration = Column(String(50), nullable=True)  # e.g., "2m 34s"
-    analysis_type = Column(String(100), nullable=True)  # Sales, Customer, Market, etc.
+    duration = Column(String(50), nullable=True)  # e.g., "2m 34s" or seconds as float
+    analysis_type = Column(String(100), nullable=True)  # Sales, Customer, Market, agentic_v2
     insights_count = Column(Integer, default=0)  # Number of insights generated
     recommendations_count = Column(Integer, default=0)  # Number of recommendations
 
     # Metadata
     status = Column(String(50), default="completed")  # pending, completed, failed
-    ai_model_used = Column(String(100), default="gpt-4o-mini")
+    ai_model_used = Column(String(100), default="grok-3-fast")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

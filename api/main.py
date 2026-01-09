@@ -47,6 +47,7 @@ logger = get_logger(__name__)
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
 from api.routes import analyzer, index, login, signup, admin, dependencies, business_analyzer, earnings
+from api.routes import analyzer_v2  # New agentic analyzer v2
 from api.routes import customer_service, reviews, alerts, insights, referrals, security, firewall_scanner
 from api.routes.control import revenue, users, dashboard, settings
 
@@ -177,26 +178,26 @@ async def startup_event():
                 """))
 
                 db.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS is_attended BOOLEAN DEFAULT FALSE"))
-                
+
                 # Subscription table updates
                 db.execute(text("""
-                    ALTER TABLE subscriptions 
+                    ALTER TABLE subscriptions
                     ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20);
                 """))
-                
+
                 # Initialize subscription_status for existing records
                 # If end_date < now, it's expired. If status is not successful, it's 'Payment failed'.
                 # Otherwise it's active.
                 db.execute(text("""
-                    UPDATE subscriptions 
-                    SET subscription_status = CASE 
+                    UPDATE subscriptions
+                    SET subscription_status = CASE
                         WHEN end_date < NOW() THEN 'expired'
                         WHEN status NOT IN ('completed', 'active', 'paid', 'successful') THEN 'Payment failed'
                         ELSE 'active'
                     END
                     WHERE subscription_status IS NULL;
                 """))
-                
+
 
                 # Security table fixes
                 try:
@@ -327,7 +328,8 @@ app.include_router(signup.router, prefix="/api")  # For React frontend that uses
 app.include_router(login.router, prefix="/api")  # For React frontend that uses /api/login
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
-app.include_router(business_analyzer.router)  # Business analysis endpoints (YOUR FIX)
+app.include_router(analyzer_v2.router)  # NEW: Agentic analyzer v2 (replaces old business_analyzer)
+# app.include_router(business_analyzer.router)  # DEPRECATED: Old business analyzer
 app.include_router(analyzer.router)
 app.include_router(admin.router)
 app.include_router(paypal.router)
