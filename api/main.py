@@ -46,8 +46,8 @@ logger = get_logger(__name__)
 
 # import the router page
 from api.routes import ai_db as ai  # PostgreSQL-based AI routes
-from api.routes import analyzer, index, login, signup, admin, dependencies, business_analyzer, earnings
-from api.routes import analyzer_v2  # New agentic analyzer v2
+from api.routes import analyzer, index, login, signup, admin, dependencies, earnings
+from api.routes import analyzer_v2  # Agentic analyzer v2
 from api.routes import customer_service, reviews, alerts, insights, referrals, security, firewall_scanner
 from api.routes.control import revenue, users, dashboard, settings
 
@@ -328,8 +328,7 @@ app.include_router(signup.router, prefix="/api")  # For React frontend that uses
 app.include_router(login.router, prefix="/api")  # For React frontend that uses /api/login
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
-app.include_router(analyzer_v2.router)  # NEW: Agentic analyzer v2 (replaces old business_analyzer)
-# app.include_router(business_analyzer.router)  # DEPRECATED: Old business analyzer
+app.include_router(analyzer_v2.router)  # Agentic analyzer v2
 app.include_router(analyzer.router)
 app.include_router(admin.router)
 app.include_router(paypal.router)

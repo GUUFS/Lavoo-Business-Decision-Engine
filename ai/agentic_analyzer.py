@@ -144,17 +144,17 @@ class AgenticAnalyzer:
     # =========================================================================
     async def _stage1_intent_agent(self, user_query: str) -> Dict[str, Any]:
         """
-        Stage 1: Understand the user's intent and identify bottlenecks.
+        Stage 1: Understand the user's intent and identify THE primary bottleneck.
 
         This agent acts as a business consultant to:
         - Extract the TRUE underlying objective
-        - Identify 3-5 key bottlenecks blocking success
+        - Identify THE ONE most critical bottleneck blocking success
         - Generate supporting evidence/signals
 
         Returns:
             {
                 "objective": "Clear, measurable goal",
-                "bottlenecks": [...],
+                "bottlenecks": [single primary bottleneck],
                 "key_evidence": [...],
                 "assumptions": [...],
                 "reasoning_trace": [...]
@@ -165,8 +165,10 @@ class AgenticAnalyzer:
 Your job is to:
 1. Deeply understand the user's business challenge
 2. Extract their TRUE underlying objective (not surface-level)
-3. Identify 3-5 critical bottlenecks blocking their success
+3. Identify THE SINGLE most critical bottleneck blocking their success
 4. Provide key evidence/signals supporting your diagnosis
+
+IMPORTANT: Return ONLY ONE bottleneck - the primary root cause blocking everything else.
 
 OUTPUT FORMAT (strict JSON):
 {
@@ -176,7 +178,7 @@ OUTPUT FORMAT (strict JSON):
             "id": 1,
             "title": "5-8 word diagnostic title",
             "description": "80-120 char description with context and impact",
-            "priority": "HIGH|MEDIUM|LOW",
+            "priority": "HIGH",
             "impact": "Specific business impact statement"
         }
     ],
