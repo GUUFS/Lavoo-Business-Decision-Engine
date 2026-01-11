@@ -57,14 +57,12 @@ export default function Login() {
       // ✅ Invalidate currentUser query to ensure fresh data in dashboard
       await queryClient.invalidateQueries({ queryKey: ["currentUser"] });
 
-      // Redirect based on role
+      // Redirect based on role (redirect provides immediate feedback, no toast needed)
       if (res.role === "admin") {
         navigate("/admin");
       } else {
         navigate("/dashboard");
       }
-
-      // toast.success("Login successful!");
     } catch (error: any) {
       toast.error(error?.message || "Login failed. Please check your credentials.");
     } finally {

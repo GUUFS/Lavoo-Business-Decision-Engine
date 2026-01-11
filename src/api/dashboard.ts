@@ -97,39 +97,22 @@ export const useDashboardStats = (userId: number | null) => {
       const alertsData = await alertsResponse.json();
       const activeAlerts = Array.isArray(alertsData) ? alertsData.length : 0;
 
-      // Fetch insights count
-      const insightsResponse = await fetch(`${API_BASE_URL}/api/insights`, {
+      // Fetch insights/analyses stats
+      const statsResponse = await fetch(`${API_BASE_URL}/api/user/stats`, {
         headers: getAuthHeaders(),
       });
 
-      if (!insightsResponse.ok) {
-        throw new Error(`HTTP ${insightsResponse.status}`);
-      }
-
-      const insightsData = await insightsResponse.json();
-      const totalInsights = insightsData.total_insights || insightsData.insights?.length || 0;
-
-      // Fetch reviews for average rating
-      const reviewsResponse = await fetch(`${API_BASE_URL}/api/reviews`, {
-        headers: getAuthHeaders(),
-      });
-
-      let averageRating = 0;
-      if (reviewsResponse.ok) {
-        const reviewsData = await reviewsResponse.json();
-        const reviews = Array.isArray(reviewsData) ? reviewsData : [];
-        if (reviews.length > 0) {
-          averageRating =
-            reviews.reduce((sum: number, r: Review) => sum + r.rating, 0) /
-            reviews.length;
-        }
+      let totalAnalyses = 0;
+      if (statsResponse.ok) {
+        const statsData = await statsResponse.json();
+        totalAnalyses = statsData.total_analyses || 0;
       }
 
       return {
         total_revenue: 0,
         active_alerts: activeAlerts,
         new_alerts_today: 0,
-        total_insights: totalInsights,
+        total_insights: totalAnalyses, // This will be displayed as "Total Analyses"
         new_insights_today: 0,
         average_rating: averageRating,
         rating_change: 0,

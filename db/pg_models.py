@@ -525,6 +525,25 @@ class Conversation(Base):
     review = relationship("Review", back_populates="conversations")
 
 
+
+class DisplayedReview(Base):
+    """
+    Stores reviews selected by admin to be displayed on the homepage.
+    This allows dynamic control of which reviews appear to visitors.
+    """
+    __tablename__ = "displayed_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    review_id = Column(Integer, ForeignKey("reviews.id", ondelete="CASCADE"), unique=True, nullable=False)
+    display_order = Column(Integer, default=0, nullable=False)  # Lower number = higher priority
+    added_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    added_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+
+    # Relationships
+    review = relationship("Review", backref="display_info")
+    admin = relationship("User", foreign_keys=[added_by])
+
+
 class ReviewCreate(BaseModel):
     business_name: str
     review_title: str

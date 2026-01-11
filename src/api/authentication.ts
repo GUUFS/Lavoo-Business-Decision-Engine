@@ -82,7 +82,7 @@ export const useLogin = () => {
         sameSite: "lax",
       });
 
-      toast.success("Login successful!");
+
     },
 
     onError: (error) => {

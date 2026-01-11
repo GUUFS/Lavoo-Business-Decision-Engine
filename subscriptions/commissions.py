@@ -155,7 +155,7 @@ async def setup_payout_account(
             if account_data.paypal_email:
                 payout_account.paypal_email = account_data.paypal_email
             
-            payout_account.default_payout_method = account_data.payment_method
+            payout_account.payment_method = account_data.payment_method
             payout_account.updated_at = datetime.utcnow()
         else:
             # Create new
@@ -169,7 +169,7 @@ async def setup_payout_account(
                 account_name=account_data.account_name,
                 bank_code=account_data.bank_code,
                 paypal_email=account_data.paypal_email,
-                default_payout_method=account_data.payment_method
+                payment_method=account_data.payment_method
             )
             db.add(payout_account)
         
@@ -182,7 +182,7 @@ async def setup_payout_account(
             "status": "success",
             "message": "Payout account configured successfully",
             "data": {
-                "payment_method": payout_account.default_payout_method,
+                "payment_method": payout_account.payment_method,
                 "is_verified": payout_account.is_verified,
                 "has_stripe": bool(payout_account.stripe_account_id),
                 "has_bank_details": bool(payout_account.bank_name and payout_account.account_number),
@@ -213,7 +213,9 @@ async def get_payout_account(
     """
     try:
         user_id = extract_user_id(current_user)
-        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found in token")
+            
         payout_account = db.query(PayoutAccount).filter(
             PayoutAccount.user_id == user_id
         ).first()
@@ -224,22 +226,30 @@ async def get_payout_account(
                 "message": "No payout account configured"
             }
         
+        # Ensure account_number is treated as string for slicing
+        account_num = str(payout_account.account_number) if payout_account.account_number else ""
+        
         return {
             "status": "success",
             "data": {
-                "payment_method": payout_account.default_payout_method,
-                "is_verified": payout_account.is_verified,
-                "has_stripe": bool(payout_account.stripe_account_id),
-                "has_bank_details": bool(payout_account.bank_name and payout_account.account_number),
-                "has_paypal": bool(payout_account.paypal_email),
+                "payment_method": getattr(payout_account, "payment_method", "stripe"),
+                "is_verified": bool(getattr(payout_account, "is_verified", False)),
+                "has_stripe": bool(getattr(payout_account, "stripe_account_id", None)),
+                "has_bank_details": bool(getattr(payout_account, "bank_name", None) and account_num),
+                "has_paypal": bool(getattr(payout_account, "paypal_email", None)),
                 # Don't expose sensitive data
-                "bank_name": payout_account.bank_name,
-                "account_last_4": payout_account.account_number[-4:] if payout_account.account_number else None,
-                "paypal_email": payout_account.paypal_email
+                "bank_name": getattr(payout_account, "bank_name", None),
+                "account_last_4": account_num[-4:] if len(account_num) >= 4 else account_num,
+                "paypal_email": getattr(payout_account, "paypal_email", None)
             }
         }
         
     except Exception as e:
+        print(f"[Payout Account ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch payout account: {str(e)}"

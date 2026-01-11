@@ -60,11 +60,21 @@ app = FastAPI(debug=True)
 print("APP TYPE:", type(app))
 
 
-origins = ["http://localhost:3000",
-           "http://localhost:5173",
-    "http://localhost:8080"]
+origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:5173",
+    "http://localhost:8080"
+]
+
+
+# Initialize and Register Firewall Middleware
+from api.security.firewall import FirewallMiddleware
+app.add_middleware(FirewallMiddleware)
 
 # Enable CORS for (React form requests)
+# CORSMiddleware MUST be added after FirewallMiddleware to be the outermost layer
+# (FastAPI processes middlewares in reverse order of addition)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -72,10 +82,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
-
-# Initialize and Register Firewall Middleware
-from api.security.firewall import FirewallMiddleware
-app.add_middleware(FirewallMiddleware)
 
 
 # Health check endpoint for monitoring (Railway, Render, DigitalOcean, etc.)
@@ -219,6 +225,16 @@ async def startup_event():
                 except Exception as e:
                     logger.warning(f"Failed to add is_active to firewall_rules: {e}")
 
+                try:
+                    # Add created_at and updated_at to system_settings
+                    db.execute(text("""
+                        ALTER TABLE system_settings 
+                        ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+                    """))
+                except Exception as e:
+                    logger.warning(f"Failed to add columns to system_settings: {e}")
+
             except Exception as e:
                 # If batch fails (e.g. SQLite doesn't support multiple ADD COLUMN), fall back to individual or log
                 logger.warning(f"Batch migration warning (will attempt individual if critical): {e}")
@@ -312,19 +328,6 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on application shutdown"""
     await close_cache()
-
-origins = ["http://localhost:3000",
-           "http://localhost:5173",
-    "http://localhost:8080"]
-
-# Enable CORS for (React form requests)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["*"],
-)
 
 # Path to the React build
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
