@@ -9,171 +9,95 @@ interface StrategyCardProps {
   action: BusinessStrategy;
   index: number;
   hasAITool: any;
+  effort?: string;
 }
 
-function StrategyCard({ action, index, hasAITool }: StrategyCardProps) {
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCardProps) {
   const steps = action.description.split('.').filter(s => s.trim()).map(s => s.trim() + '.');
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start mb-24 last:mb-0">
-      {/* Action Card */}
-      <div className="lg:col-span-8 bg-white border border-gray-100 rounded-[2rem] shadow-2xl overflow-hidden group hover:border-orange-200 transition-all duration-500 hover:shadow-orange-100/50">
-        <div className="p-10 md:p-14">
-          <div className="flex items-center justify-between mb-10">
-            <div className="flex items-center space-x-4">
-              <span className="bg-orange-600 text-white text-[10px] font-medium px-4 py-1.5 rounded-full uppercase tracking-widest shadow-lg shadow-orange-200">
-                Priority {String(index + 1).padStart(2, '0')}
-              </span>
-              <span className="text-[10px] font-medium text-gray-400 uppercase tracking-[0.2em]">
-                {index === 0 ? 'Urgent Implementation' : 'Strategic Phase'}
-              </span>
-            </div>
-          </div>
-
-          <div className="mb-10">
-            <div className="text-[10px] font-medium text-orange-600 uppercase tracking-widest mb-3">Focus Area</div>
-            <h3 className="text-3xl font-medium text-gray-900 mb-6 group-hover:text-orange-600 transition-colors tracking-tight leading-tight">
+    <div className="bg-white border border-gray-100 rounded-[2rem] shadow-2xl overflow-hidden group hover:border-orange-200 transition-all duration-500 hover:shadow-orange-100/50 mb-12 last:mb-0">
+      <div className="p-10 md:p-14">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center space-x-3 flex-1 min-w-0">
+            <span className="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-lg shadow-orange-200 flex-shrink-0">
+              {index + 1}
+            </span>
+            <h3 className="text-sm font-bold text-gray-900 group-hover:text-orange-600 transition-colors tracking-tight leading-tight truncate uppercase tracking-widest">
               {action.title}
             </h3>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
-            <div>
-              <div className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mb-4 border-b border-gray-50 pb-3">Strategic Action</div>
-              <div className="text-gray-800 leading-relaxed font-medium text-lg">
-                Package your expert knowledge into a high-ticket offering that directly addresses the burning pain points of your specific niche audience.
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mb-4 border-b border-gray-50 pb-3">Strategic Impact</div>
-              <div className="text-gray-600 leading-relaxed font-medium">
-                This shifts your business from a volume-based commodity model to a value-based premium model, instantly increasing your revenue potential per client.
-              </div>
-            </div>
+          <div className="flex items-center space-x-2 ml-4 flex-shrink-0">
+            <span className="bg-orange-50 text-orange-700 text-[10px] font-bold px-3 py-1.5 rounded-lg uppercase tracking-widest border border-orange-100 italic whitespace-nowrap">
+              Effort: {effort}
+            </span>
           </div>
-
-          <div className="bg-gray-50/50 rounded-3xl p-10 mb-10 border border-gray-100">
-            <div className="text-[10px] font-medium text-gray-500 uppercase tracking-widest mb-6 flex items-center">
-              <i className="ri-navigation-line mr-3 text-sm"></i>
-              Step-by-Step Implementation
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-5">
-              {steps.slice(0, 6).map((step, idx) => (
-                <div key={idx} className="flex items-start text-sm text-gray-700 font-medium">
-                  <span className="w-6 h-6 flex-shrink-0 bg-white border border-gray-200 rounded-lg flex items-center justify-center text-[10px] font-medium text-gray-400 mr-4 mt-0.5 shadow-sm">
-                    {idx + 1}
-                  </span>
-                  {step}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* AI Tool Recommendation */}
-          {hasAITool && (
-            <div className="mt-10 pt-10 border-t border-gray-100">
-              <div className="text-[10px] font-medium text-purple-600 uppercase tracking-widest mb-6 flex items-center">
-                <i className="ri-magic-line mr-3 text-sm"></i>
-                AI-Driven Acceleration
-              </div>
-              <div className="bg-purple-50/50 rounded-3xl p-8 border border-purple-100 flex flex-col md:flex-row items-center gap-8">
-                <div className="w-20 h-20 bg-white rounded-2xl shadow-xl flex items-center justify-center border border-purple-50 flex-shrink-0">
-                  <span className="text-3xl font-medium text-purple-600">{hasAITool.title[0]}</span>
-                </div>
-                <div className="flex-1 text-center md:text-left">
-                  <h5 className="font-medium text-purple-900 text-xl mb-1">{hasAITool.title}</h5>
-                  <p className="text-sm text-purple-800/60 mb-4 font-medium">Helpful for {hasAITool.description.split('.')[0]}.</p>
-                  <div className="flex flex-wrap justify-center md:justify-start gap-3">
-                    <span className="px-3 py-1 bg-white rounded-full text-[10px] font-medium text-purple-500 border border-purple-100 shadow-sm uppercase tracking-widest">CONTENT GENERATION</span>
-                    <span className="px-3 py-1 bg-white rounded-full text-[10px] font-medium text-purple-500 border border-purple-100 shadow-sm uppercase tracking-widest">AUDIENCE ANALYSIS</span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => hasAITool.website && window.open(hasAITool.website, '_blank')}
-                  className="px-8 py-3.5 bg-purple-600 text-white rounded-2xl text-xs font-medium shadow-xl shadow-purple-200 hover:bg-purple-700 transition-all flex-shrink-0 uppercase tracking-widest"
-                >
-                  Explore Tool
-                </button>
-              </div>
-            </div>
-          )}
         </div>
-      </div>
 
-      {/* Context / Roadmap Sidebar */}
-      <div className="lg:col-span-4 space-y-8">
-        <div className="bg-orange-950 rounded-[2rem] p-10 text-white shadow-2xl relative overflow-hidden group/roadmap">
-          <div className="absolute top-0 right-0 p-6 opacity-10 group-hover/roadmap:scale-110 transition-transform duration-700">
-            <i className="ri-rocket-line text-8xl"></i>
-          </div>
-          <div className="relative z-10">
-            <div className="text-[10px] font-medium uppercase tracking-[0.3em] text-orange-400 mb-6 opacity-80">Execution Timeline</div>
-            <h4 className="text-2xl font-medium mb-8 tracking-tight">7-Day Sprint</h4>
-
-            <div className="space-y-6 mb-12">
-              <div className="flex items-center gap-5 group/item cursor-default">
-                <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-lg shadow-orange-500/50"></div>
-                <div className="text-sm font-medium opacity-80 group-hover/item:opacity-100 transition-opacity">Identify 3 core expertise areas</div>
+        <div className="space-y-8 mb-10">
+          <div>
+            <div className="flex flex-col space-y-2">
+              <div className="flex items-center space-x-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
+                <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">What to do:</div>
               </div>
-              <div className="flex items-center gap-5 group/item cursor-default">
-                <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-lg shadow-orange-500/50"></div>
-                <div className="text-sm font-medium opacity-80 group-hover/item:opacity-100 transition-opacity">Define target client avatar</div>
-              </div>
-              <div className="flex items-center gap-5 group/item cursor-default">
-                <div className="w-2.5 h-2.5 rounded-full bg-orange-400 opacity-50"></div>
-                <div className="text-sm font-medium opacity-60 group-hover/item:opacity-100 transition-opacity">Draft value proposition</div>
+              <div className="text-gray-700 leading-relaxed font-medium text-base">
+                {action.description.split('.')[0]}.
               </div>
             </div>
-
-            <div className="relative">
-              <button
-                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="w-full bg-orange-500 text-white py-4 px-8 rounded-2xl font-medium text-[10px] uppercase tracking-[0.2em] hover:bg-orange-600 transition-all shadow-xl shadow-orange-900/20 flex items-center justify-center gap-3"
-              >
-                <i className="ri-settings-4-fill text-sm"></i>
-                Optimize with {hasAITool ? hasAITool.title : 'AI Tool'}
-                <i className={`ri-arrow-${isDropdownOpen ? 'up' : 'down'}-s-line text-lg ml-1`}></i>
-              </button>
-
-              {isDropdownOpen && (
-                <div className="absolute bottom-full left-0 right-0 mb-4 bg-white rounded-3xl shadow-2xl p-6 text-gray-900 border border-gray-100 z-50 animate-in fade-in zoom-in-95 duration-300">
-                  <div className="text-[10px] font-medium text-orange-600 uppercase tracking-widest mb-4 border-b border-gray-50 pb-3">Growth Strategies</div>
-                  <div className="space-y-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-6 h-6 bg-orange-50 rounded-lg flex items-center justify-center text-orange-600 flex-shrink-0 shadow-sm">
-                        <i className="ri-speed-mini-line text-xs font-bold"></i>
-                      </div>
-                      <div className="text-[11px] leading-relaxed text-gray-600">
-                        <span className="font-medium text-gray-900 block mb-0.5">Rapid Prototyping</span>
-                        Use the tool to generate 5 variations of your offer in 15 minutes.
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-4">
-                      <div className="w-6 h-6 bg-orange-50 rounded-lg flex items-center justify-center text-orange-600 flex-shrink-0 shadow-sm">
-                        <i className="ri-search-eye-line text-xs font-bold"></i>
-                      </div>
-                      <div className="text-[11px] leading-relaxed text-gray-600">
-                        <span className="font-medium text-gray-900 block mb-0.5">Audience Testing</span>
-                        Simulate audience response to different pricing models.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+          </div>
+          <div>
+            <div className="flex flex-col space-y-2">
+              <div className="flex items-center space-x-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
+                <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">Why this matters:</div>
+              </div>
+              <div className="text-gray-600 leading-relaxed font-medium text-base">
+                {steps[1] || "This represents the highest leverage move for your current business stage."}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white border border-gray-100 rounded-3xl p-8 shadow-xl">
-          <div className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mb-3 flex items-center">
-            <i className="ri-information-line mr-2 text-sm"></i>
-            Strategic Note
+        {/* AI Tool Recommendation */}
+        {hasAITool && (
+          <div className="mt-10 pt-10 border-t border-gray-100">
+            <div className="text-sm font-bold text-orange-600 uppercase tracking-[0.2em] mb-8 flex items-center">
+              <i className="ri-flashlight-fill mr-3 text-lg"></i>
+              OPTIONAL AI ACCELERATION
+            </div>
+            <div className="bg-orange-50/30 rounded-3xl p-10 border border-orange-100/50">
+              <div className="space-y-8">
+                <div>
+                  <span className="text-base font-bold text-gray-900 uppercase tracking-tight">Tool Name:</span>
+                  <span className="ml-2 text-xl font-black text-orange-600 tracking-tight">{hasAITool.title}</span>
+                </div>
+                <div>
+                  <div className="text-base font-bold text-gray-900 mb-2 uppercase tracking-tight">What it helps with:</div>
+                  <p className="text-gray-700 leading-relaxed font-medium text-base">
+                    {hasAITool.description}
+                  </p>
+                </div>
+                <div>
+                  <div className="text-base font-bold text-gray-900 mb-2 uppercase tracking-tight">Why this tool:</div>
+                  <p className="text-gray-700 leading-relaxed font-medium text-base">
+                    {hasAITool.pros?.[0] || `Built specifically for rapid ${hasAITool.title[0]} generation with minimal technical overhead.`}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-          <p className="text-[11px] text-gray-500 leading-relaxed italic font-medium">
-            This plan specifically excludes traditional ad-spend strategies and complex technical builds that would exceed your current 10-hour weekly capacity.
-          </p>
-        </div>
+        )}
+
+        {!hasAITool && (
+          <div className="mt-10 pt-10 border-t border-gray-100">
+            <div className="text-sm font-bold text-orange-600 uppercase tracking-[0.2em] mb-4 flex items-center">
+              <i className="ri-flashlight-fill mr-3 text-lg"></i>
+              OPTIONAL AI ACCELERATION
+            </div>
+            <p className="text-gray-500 italic text-sm font-medium">No AI tool is necessary for this step. Manual execution is sufficient.</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -193,6 +117,19 @@ export default function Results() {
   const [error, setError] = useState<string | null>(null);
 
   const [showReasoningTrace, setShowReasoningTrace] = useState(false);
+  const [inspirationalMessage, setInspirationalMessage] = useState('');
+
+  const motivationalQuotes = [
+    "You are not behind. You are just early in the sequence.",
+    "Precision beats speed when the direction is right.",
+    "Focus on the bottleneck, and the rest becomes noise.",
+    "Growth is a series of solved problems. You're on the next one.",
+    "The best time to optimize was yesterday. The second best time is NOW."
+  ];
+
+  useEffect(() => {
+    setInspirationalMessage(motivationalQuotes[Math.floor(Math.random() * motivationalQuotes.length)]);
+  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -376,11 +313,11 @@ export default function Results() {
 
       <div className="max-w-7xl mx-auto px-4 py-8">
         {/* Banner */}
-        <div className="bg-orange-600 rounded-[2rem] p-10 mb-12 text-white shadow-2xl flex flex-col md:flex-row items-center justify-between relative overflow-hidden">
+        <div className="bg-orange-700 rounded-[2rem] p-10 mb-12 text-white shadow-2xl flex flex-col md:flex-row items-center justify-between relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-32 -mt-32"></div>
           <div className="relative z-10 mb-6 md:mb-0">
             <h1 className="text-3xl md:text-5xl font-medium mb-4 uppercase tracking-tighter leading-tight">
-              Growth blocked by {bottlenecks.length} Key Constraints
+              Your growth is being slowed down by <span className="font-extrabold text-white">{bottlenecks.length} critical bottlenecks</span>
             </h1>
             <p className="text-orange-100 opacity-90 text-lg font-medium">
               Precision analysis triggered by current ecosystem signals.
@@ -396,48 +333,59 @@ export default function Results() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 mb-20">
           <div className="lg:col-span-8">
-            <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden h-full flex flex-col">
-              <div className="bg-orange-50/50 px-10 py-5 border-b border-orange-100/50 flex items-center justify-between">
-                <div className="flex items-center text-orange-800 font-medium uppercase tracking-[0.2em] text-[10px]">
-                  <i className="ri-stethoscope-line mr-3 text-lg text-orange-600"></i>
-                  primary bottleneck
-                </div>
-                <div className="bg-orange-600 text-white text-[10px] font-medium py-2 px-6 rounded-full uppercase tracking-widest shadow-lg shadow-orange-200">
-                  fix this first
-                </div>
-              </div>
-              <div className="p-12 md:p-16 flex-1">
-                <div className="mb-6">
-                  <span className="text-xs font-medium text-orange-600 uppercase tracking-[0.3em]">Critical Strategic Priority</span>
-                </div>
-                <h2 className="text-4xl font-medium text-gray-900 mb-10 leading-tight tracking-tight">
-                  {primaryBottleneck?.title}
-                </h2>
-                <div className="text-2xl text-gray-600 leading-relaxed mb-12 font-medium">
-                  {primaryBottleneck?.description}
-                </div>
+            <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden flex flex-col">
+              <div className="p-12 md:p-16 bg-green-50/40">
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-6">
+                      <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center text-orange-500 shadow-inner">
+                        <i className="ri-lightbulb-flash-line text-4xl"></i>
+                      </div>
+                      <h2 className="text-xl font-bold text-gray-900 uppercase tracking-widest">Primary Bottleneck</h2>
+                    </div>
+                    <div className="bg-orange-600 text-white text-[10px] font-bold py-2 px-6 rounded-full uppercase tracking-widest shadow-lg shadow-orange-200">
+                      fix this first
+                    </div>
+                  </div>
 
-                <div className="grid grid-cols-1 gap-8">
-                  <div className="bg-gray-50/50 border border-gray-100 p-10 rounded-3xl">
-                    <div className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mb-6 border-b border-gray-100 pb-4">Execution Impact</div>
-                    <div className="text-gray-900 font-medium leading-relaxed text-lg">
-                      {primaryBottleneck?.impact}
+                  <div className="mb-8">
+                    <h3 className="text-4xl font-black text-orange-600 tracking-tighter leading-tight mb-4">
+                      {primaryBottleneck?.title || "Operational Constraint"}
+                    </h3>
+                    <div className="text-lg text-gray-600 leading-relaxed font-medium">
+                      {primaryBottleneck?.description}
                     </div>
                   </div>
-                  <div className="bg-orange-50/50 border border-orange-100 p-10 rounded-3xl">
-                    <div className="text-[10px] font-medium text-orange-600 uppercase tracking-widest mb-6 border-b border-orange-100 pb-4">Strategic Recommendation</div>
-                    <div className="text-gray-900 font-medium leading-relaxed text-lg">
-                      Focus all resources on high-ticket conversion before mass-market scaling.
+
+                  <div className="mt-10 pt-10 border-t border-gray-100/50">
+                    <div className="flex items-center gap-3 mb-4">
+                      <i className="ri-error-warning-line text-orange-500 text-lg"></i>
+                      <div className="text-[10px] font-bold text-gray-900 uppercase tracking-widest">Consequence if ignored</div>
                     </div>
+                    <p className="text-gray-600 font-medium leading-relaxed text-lg">
+                      {primaryBottleneck?.impact || "Your current growth plateau will persist, leading to wasted resources and missed market opportunities."}
+                    </p>
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div className="mt-8 bg-white rounded-[2.5rem] border border-gray-100 shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden p-12 md:p-16">
+              <div className="flex items-center gap-6 mb-8">
+                <div className="w-16 h-16 bg-orange-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-orange-200">
+                  <i className="ri-flashlight-fill text-4xl"></i>
+                </div>
+                <h2 className="text-xl font-bold text-gray-900 uppercase tracking-widest">Strategic Priority</h2>
+              </div>
+              <p className="text-3xl font-extrabold text-gray-900 tracking-tighter leading-tight">
+                {businessStrategies[0]?.description || "Execute the primary action plan item to resolve the core bottleneck."}
+              </p>
             </div>
           </div>
 
           <div className="lg:col-span-4 flex flex-col gap-8">
             <div className="bg-white rounded-[2rem] border border-gray-100 shadow-xl p-10">
-              <div className="flex items-center text-gray-900 font-medium uppercase tracking-[0.2em] text-[10px] mb-10 border-b border-gray-50 pb-6">
+              <div className="flex items-center text-gray-900 font-medium uppercase tracking-[0.2em] text-sm mb-10 border-b border-gray-50 pb-6">
                 <i className="ri-error-warning-line mr-3 text-orange-500 text-lg"></i>
                 secondary constraints
               </div>
@@ -449,8 +397,10 @@ export default function Results() {
                         {String(i + 2).padStart(2, '0')}
                       </div>
                       <div>
-                        <div className="font-medium text-gray-900 mb-1.5 text-base tracking-tight">{b.title}</div>
-                        <div className="text-xs text-gray-500 leading-relaxed font-medium">{b.description}</div>
+                        <div className="font-bold text-gray-900 mb-1.5 text-base tracking-tight">{b.title}</div>
+                        <div className="text-xs text-gray-500 leading-relaxed font-medium">
+                          {b.description !== b.title ? b.description : "Secondary priority addressed after implementation of the primary solution."}
+                        </div>
                       </div>
                     </div>
                   ))
@@ -460,14 +410,15 @@ export default function Results() {
               </div>
             </div>
 
-            <div className="bg-red-50/50 rounded-[2rem] border border-red-100 shadow-sm p-10">
-              <div className="flex items-center text-red-700 font-medium uppercase tracking-[0.2em] text-[10px] mb-6">
-                <i className="ri-close-circle-line mr-3 text-lg"></i>
-                Business Efficiency Focus
+            <div className="bg-white border border-gray-100 rounded-[2rem] shadow-xl p-10">
+              <div className="flex items-center text-red-600 font-bold uppercase tracking-[0.3em] text-[10px] mb-6">
+                <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center mr-4 shadow-sm border border-red-200/50">
+                  <i className="ri-prohibited-fill text-2xl text-red-600"></i>
+                </div>
+                STOP
               </div>
-              <div className="text-red-900 font-medium text-2xl mb-4 tracking-tight">Stop This Now</div>
-              <p className="text-sm text-red-800/70 leading-relaxed font-medium">
-                Stop mass-market content distribution. It drains capacity without equivalent high-ticket ROI.
+              <p className="text-base text-gray-500 leading-relaxed font-medium">
+                Stop wasting time on broad promotions that aren't translating into sales; they are not effective and won't change your revenue situation.
               </p>
             </div>
           </div>
@@ -477,8 +428,8 @@ export default function Results() {
         <section className="mt-32">
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-16 gap-8">
             <div>
-              <h2 className="text-5xl font-medium text-gray-900 mb-6 uppercase tracking-tighter">Execution Roadmap</h2>
-              <div className="h-2.5 w-40 bg-orange-500 rounded-full shadow-lg shadow-orange-200"></div>
+              <h2 className="text-5xl font-bold text-gray-900 mb-4 uppercase tracking-tighter">Ranked Action Plan</h2>
+              <p className="text-gray-500 font-medium text-lg">These actions are ordered by leverage. Do them in sequence.</p>
             </div>
             <div className="flex items-center bg-white border border-gray-100 px-8 py-4 rounded-[1.5rem] text-[10px] font-medium text-gray-500 uppercase tracking-[0.3em] shadow-sm">
               <i className="ri-list-check-2 mr-4 text-orange-500 text-lg"></i>
@@ -486,53 +437,94 @@ export default function Results() {
             </div>
           </div>
 
-          <div className="space-y-4">
-            {businessStrategies.map((action, index) => (
-              <StrategyCard
-                key={action.id}
-                action={action}
-                index={index}
-                hasAITool={aiTools[index]}
-              />
-            ))}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+            <div className="lg:col-span-8 space-y-4">
+              {businessStrategies.map((action, index) => (
+                <StrategyCard
+                  key={action.id}
+                  action={action}
+                  index={index}
+                  hasAITool={aiTools[index]}
+                  effort={aiTools[index]?.implementation?.difficulty}
+                />
+              ))}
+            </div>
+
+            <div className="lg:col-span-4 space-y-8">
+              <div className="bg-white border border-gray-100 rounded-3xl p-10 shadow-xl">
+                <div className="text-[12px] font-bold text-gray-900 uppercase tracking-[0.2em] mb-6 flex items-center">
+                  Note on exclusions:
+                </div>
+                <p className="text-sm text-gray-500 leading-relaxed italic font-medium">
+                  {analysisData.objective?.toLowerCase().includes('ad')
+                    ? "I excluded actions related to \"paid advertising\" and \"increasing post frequency\" because you have already promoted heavily without results. Fixing the offer is the prerequisite for success."
+                    : "This plan specifically excludes traditional ad-spend strategies and complex technical builds that would exceed your current 10-hour weekly capacity."}
+                </p>
+              </div>
+
+              <div className="bg-orange-900 rounded-[2.5rem] p-10 text-white shadow-2xl relative overflow-hidden">
+                <div className="relative z-10">
+                  <div className="text-[12px] font-bold uppercase tracking-[0.3em] text-orange-400 mb-8 opacity-80">Execution Roadmap: 7-Day Sprint</div>
+
+                  <div className="space-y-10">
+                    <div>
+                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Days 1-2: The Fix</div>
+                      <div className="space-y-4">
+                        <div className="flex items-start gap-4">
+                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
+                          <div className="text-sm font-medium opacity-90">Analyze competitor 1-star reviews. List the top 3 missing features.</div>
+                        </div>
+                        <div className="flex items-start gap-4">
+                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
+                          <div className="text-sm font-medium opacity-90">Rewrite Headline & Bullets to target those missing features.</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Day 3: The Build</div>
+                      <div className="flex items-start gap-4">
+                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
+                        <div className="text-sm font-medium opacity-90">Update your sales page/landing page with the new copy only. Do not change the design.</div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Days 4-7: The Test (No Ads)</div>
+                      <div className="space-y-4">
+                        <div className="flex items-start gap-4">
+                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
+                          <div className="text-sm font-medium opacity-90">Post the new concept in 3 relevant niche communities. Ask for specific feedback.</div>
+                        </div>
+                        <div className="flex items-start gap-4">
+                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
+                          <div className="text-sm font-medium opacity-90">Engage with commenters. Track interest levels. Do not sell.</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-6 border-t border-orange-800">
+                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Decision Point (Day 8)</div>
+                      <div className="space-y-3">
+                        <div className="text-sm opacity-90"><span className="font-bold">High Interest:</span> Resume paid ads.</div>
+                        <div className="text-sm opacity-90"><span className="font-bold">Silence:</span> Your headline is still too generic. Iterate again.</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-center pt-8">
+                <div className="bg-orange-50 border border-orange-100 rounded-2xl p-8 inline-block">
+                  <p className="text-orange-900 italic font-medium text-lg">"{inspirationalMessage}"</p>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
-        {/* Reasoning Trace */}
-        <section className="mt-32">
-          <button
-            onClick={() => setShowReasoningTrace(!showReasoningTrace)}
-            className="group w-full flex items-center justify-between border-t border-gray-200 pt-16"
-          >
-            <div className="flex items-center gap-8">
-              <div className="w-20 h-20 bg-gray-50 rounded-[1.5rem] flex items-center justify-center text-gray-400 group-hover:bg-orange-50 group-hover:text-orange-500 transition-all duration-300 shadow-sm">
-                <i className="ri-node-tree text-4xl"></i>
-              </div>
-              <div className="text-left">
-                <h3 className="text-3xl font-medium text-gray-900 uppercase tracking-tight">Why we recommended this</h3>
-                <p className="text-base text-gray-500 font-medium">Explore the logic behind your custom strategy</p>
-              </div>
-            </div>
-            <div className="w-16 h-16 rounded-full border border-gray-100 flex items-center justify-center group-hover:border-orange-200 group-hover:bg-orange-100/50 transition-all duration-300">
-              <i className={`ri-arrow-${showReasoningTrace ? 'up' : 'down'}-s-line text-3xl text-gray-400 group-hover:text-orange-600`}></i>
-            </div>
-          </button>
+        {/* Reasonable Trace / Logic Section removed per request */}
 
-          {showReasoningTrace && (
-            <div className="mt-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 animate-in fade-in slide-in-from-top-10 duration-700">
-              {reasoningSteps.map((step, idx) => (
-                <div key={idx} className="bg-white border border-gray-100 p-10 rounded-[2rem] shadow-sm hover:shadow-2xl transition-all duration-500 hover:-translate-y-2">
-                  <div className="w-12 h-12 bg-orange-100 rounded-2xl flex items-center justify-center text-orange-600 font-medium text-base mb-8 shadow-inner">
-                    {String(idx + 1).padStart(2, '0')}
-                  </div>
-                  <p className="text-gray-700 leading-relaxed font-medium text-lg">
-                    {step}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
       </div>
 
       <div className="fixed bottom-12 right-12 z-50">
