@@ -41,7 +41,7 @@ function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCard
                 <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
                 <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">What to do:</div>
               </div>
-              <div className="text-gray-700 leading-relaxed font-medium text-base">
+              <div className="text-gray-700 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
                 {action.description.split('.')[0]}.
               </div>
             </div>
@@ -52,7 +52,7 @@ function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCard
                 <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
                 <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">Why this matters:</div>
               </div>
-              <div className="text-gray-600 leading-relaxed font-medium text-base">
+              <div className="text-gray-600 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
                 {steps[1] || "This represents the highest leverage move for your current business stage."}
               </div>
             </div>
@@ -68,19 +68,32 @@ function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCard
             </div>
             <div className="bg-orange-50/30 rounded-3xl p-10 border border-orange-100/50">
               <div className="space-y-8">
-                <div>
-                  <span className="text-base font-bold text-gray-900 uppercase tracking-tight">Tool Name:</span>
-                  <span className="ml-2 text-xl font-black text-orange-600 tracking-tight">{hasAITool.title}</span>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-base font-bold text-gray-900 uppercase tracking-tight">Tool Name:</span>
+                    <span className="ml-2 text-xl font-black text-orange-600 tracking-tight">{hasAITool.title}</span>
+                  </div>
+                  {hasAITool.website && (
+                    <a
+                      href={hasAITool.website.startsWith('http') ? hasAITool.website : `https://${hasAITool.website}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-4 py-2 bg-orange-100 text-orange-700 text-[10px] font-bold rounded-lg uppercase tracking-widest hover:bg-orange-600 hover:text-white transition-all shadow-sm group-hover:scale-105 active:scale-95"
+                    >
+                      Explore
+                      <i className="ri-external-link-line"></i>
+                    </a>
+                  )}
                 </div>
                 <div>
                   <div className="text-base font-bold text-gray-900 mb-2 uppercase tracking-tight">What it helps with:</div>
-                  <p className="text-gray-700 leading-relaxed font-medium text-base">
+                  <p className="text-gray-700 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
                     {hasAITool.description}
                   </p>
                 </div>
                 <div>
                   <div className="text-base font-bold text-gray-900 mb-2 uppercase tracking-tight">Why this tool:</div>
-                  <p className="text-gray-700 leading-relaxed font-medium text-base">
+                  <p className="text-gray-700 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
                     {hasAITool.pros?.[0] || `Built specifically for rapid ${hasAITool.title[0]} generation with minimal technical overhead.`}
                   </p>
                 </div>
