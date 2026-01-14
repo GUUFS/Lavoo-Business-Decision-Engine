@@ -327,6 +327,10 @@ from db.pg_connections import SessionLocal
 
 class FirewallMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # 0. Skip firewall for OPTIONS requests (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # 1. Skip firewall for specific paths (metrics, health, static, auth)
         if request.url.path.startswith(("/health", "/docs", "/openapi.json", "/assets", "/api/me", "/users/me")):
              return await call_next(request)

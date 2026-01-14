@@ -30,14 +30,18 @@ def log_debug(message):
 """Generating and storing the secret key"""
 
 class Settings(BaseSettings):
-    secret_key: str = os.getenv("SECRET_KEY")
+    secret_key: str = os.getenv("SECRET_KEY") or os.getenv("JWT_SECRET")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.secret_key:
-            print("⚠️  SECRET_KEY not found in environment. Generating a new one and saving it to .env...")
-            self.secret_key = secrets.token_hex(32)
-            self._save_to_env("SECRET_KEY", self.secret_key)
+            # Check if we have JWT_SECRET again (in case BaseSettings didn't pick it up)
+            self.secret_key = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY")
+            
+            if not self.secret_key:
+                print("⚠️  Neither SECRET_KEY nor JWT_SECRET found in environment. Generating a new one and saving it to .env...")
+                self.secret_key = secrets.token_hex(32)
+                self._save_to_env("SECRET_KEY", self.secret_key)
     
     def _save_to_env(self, key, value):
         try:

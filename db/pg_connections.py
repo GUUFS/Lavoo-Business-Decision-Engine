@@ -46,14 +46,17 @@ print("✓ Connecting to PostgreSQL database...")
 
 try:
     # Create PostgreSQL engine
-    # Connection pooling settings optimized for cloud deployments
+    # Connection pooling settings optimized for cloud deployments like Neon/Railway
+    # pool_recycle: Set to 120 (2 mins) because Neon's proxy/pooler often terminates 
+    # idle connections after 5 minutes. Recycling sooner prevents "SSL SYSCALL error: EOF detected".
     engine = create_engine(
         DATABASE_URL,
         pool_pre_ping=True,  # Verify connections before using
-        pool_recycle=300,  # Recycle connections every 5 minutes (prevents stale connections)
-        pool_size=15,  # Number of permanent connections
-        max_overflow=20,  # Additional connections when needed
-        echo=False,  # Set to True for SQL query logging (debugging)
+        pool_recycle=120,    # Recycle every 2 minutes (lower than 300 to beat server timeout)
+        pool_timeout=30,     # Prevent infinite hangs if the server is unresponsive
+        pool_size=10,        # Standard pool size
+        max_overflow=20,     # Additional connections when needed
+        echo=False,          # Set to True for SQL query logging (debugging)
         connect_args={"sslmode": "require"}, # Ensure SSL is enforced
     )
 

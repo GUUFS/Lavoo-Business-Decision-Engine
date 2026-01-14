@@ -12,6 +12,7 @@ import { ProtectedRoute } from "../components/protectedRoute";
 import DashboardLayout, { AdminLayout } from "../components/dashboard-layouts";
 // User Dashboard pages
 import OpportunityAlerts from '../pages/dashboard/alerts/page';
+import AlertDetail from '../pages/dashboard/alerts/detail/page';
 import Earnings from '../pages/dashboard/earnings/page';
 import Profile from "../pages/dashboard/profile/page";
 import AIInsights from "../pages/dashboard/insights/page";
@@ -94,6 +95,7 @@ const routes: RouteObject[] = [
           { path: "", element: <Dashboard /> },
           { path: "profile", element: <Profile /> },
           { path: "alerts", element: <OpportunityAlerts /> },
+          { path: "alerts/:id", element: <AlertDetail /> },
           { path: "insights", element: <AIInsights /> },
           { path: "earnings", element: <Earnings /> },
           { path: "customer-service", element: <CustomerService /> },

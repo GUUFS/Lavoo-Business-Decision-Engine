@@ -7,7 +7,8 @@ This file contains all ORM models for the application.
 from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, ForeignKey, JSON, Boolean, DECIMAL, Enum, Numeric, Index
 from sqlalchemy.dialects.postgresql import UUID, INET, JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import relationship, synonym
 from sqlalchemy.sql import func
 from sqlalchemy.sql.sqltypes import VARCHAR
 from datetime import datetime
@@ -534,6 +535,25 @@ class Conversation(Base):
     review = relationship("Review", back_populates="conversations")
 
 
+
+class DisplayedReview(Base):
+    """
+    Stores reviews selected by admin to be displayed on the homepage.
+    This allows dynamic control of which reviews appear to visitors.
+    """
+    __tablename__ = "displayed_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    review_id = Column(Integer, ForeignKey("reviews.id", ondelete="CASCADE"), unique=True, nullable=False)
+    display_order = Column(Integer, default=0, nullable=False)  # Lower number = higher priority
+    added_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    added_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+
+    # Relationships
+    review = relationship("Review", backref="display_info")
+    admin = relationship("User", foreign_keys=[added_by])
+
+
 class ReviewCreate(BaseModel):
     business_name: str
     review_title: str
@@ -687,25 +707,25 @@ class PayoutAccount(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
-    payment_method = Column(String(50), nullable=False)  # stripe, flutterwave, paypal
+    payment_method = Column("default_payout_method", String(50), nullable=False)
 
     # Stripe fields
     stripe_account_id = Column(String(255), nullable=True)
+    stripe_account_status = Column(String(50), nullable=True)
 
     # Flutterwave/Bank fields
     bank_name = Column(String(255), nullable=True)
     account_number = Column(String(100), nullable=True)
     account_name = Column(String(255), nullable=True)
+    bank_code = Column(String(50), nullable=True)
+    flutterwave_recipient_code = Column(String(255), nullable=True)
 
     # PayPal fields
     paypal_email = Column(String(255), nullable=True)
 
-    # Legacy fields (for backward compatibility)
-    provider = Column(String(50), nullable=True)
-    account_id = Column(String(255), nullable=True)
-    account_details = Column(JSON, nullable=True)
 
     is_verified = Column(Boolean, default=False)
+    verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -1041,16 +1061,6 @@ class TrendResponse(BaseModel):
         from_attributes = True
 
 
-class PayoutResponse(BaseModel):
-    id: int
-    amount: float
-    currency: str
-    status: str
-    payment_method: str
-    requested_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 '''Commission and Payout Pydantic Models'''
@@ -1062,29 +1072,8 @@ class ApproveCommissionsRequest(BaseModel):
         from_attributes = True
 
 
-class CommissionResponse(BaseModel):
-    id: int
-    amount: float
-    currency: str
-    status: str
-    created_at: datetime
-    referred_user_id: int
-    subscription_id: int
-
-    class Config:
-        from_attributes = True
 
 
-class CommissionSummary(BaseModel):
-    month: str
-    revenue: float
-    transactions: int
-
-
-class PayoutAccountCreate(BaseModel):
-    provider: str  # stripe, paypal, bank_transfer
-    account_id: Optional[str] = None
-    account_details: Optional[dict] = None
 
 
 '''Security Architecture Tables'''
@@ -1328,6 +1317,7 @@ class PayoutAccountCreate(BaseModel):
     bank_name: Optional[str] = None
     account_number: Optional[str] = None
     account_name: Optional[str] = None
+    bank_code: Optional[str] = None
     paypal_email: Optional[str] = None
 
     class Config:

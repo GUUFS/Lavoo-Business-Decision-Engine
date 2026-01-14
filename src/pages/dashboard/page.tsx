@@ -69,16 +69,14 @@ function Dashboard() {
                 {/* Quick Stats */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 md:mb-8">
                     {/* Total Analyses */}
-                    <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
-                        <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                                <p className="text-sm text-gray-600 mb-1">Total Analyses</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_insights || 0}</p>
-                            </div>
-                            <div className="w-10 h-10 md:w-12 md:h-12 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-search-line text-purple-600 text-lg md:text-xl"></i>
+                    <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                                <i className="ri-line-chart-line text-blue-600"></i>
                             </div>
                         </div>
+                        <p className="text-sm text-gray-600 mb-1">Total Analyses</p>
+                        <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_insights || 0}</p>
                     </div>
 
                     {/* Active Alerts */}
@@ -231,14 +229,14 @@ function Dashboard() {
                         </div>
                         <div className="p-4 md:p-6">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-                                <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-green-200 hover:bg-green-50/30 transition-all duration-200">
+                                {/* <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-green-200 hover:bg-green-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
                                         <h4 className="font-medium text-gray-900 text-sm md:text-base">Total Chops</h4>
                                         <i className="ri-coin-line text-green-600 text-xl"></i>
                                     </div>
                                     <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{chopsData?.total_chops || 0}</div>
                                     <div className="text-sm text-gray-500">All-time earnings</div>
-                                </div>
+                                </div> */}
 
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
