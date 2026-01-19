@@ -1,15 +1,23 @@
 # ai/agentic_analyzer.py
 """
 LAVOO Agentic Business Analyzer
-A clean, modular agentic workflow for business analysis.
+AI-powered business analysis with bottleneck identification and strategic planning.
 
 Architecture:
-- Stage 1: Intent & Bottleneck Agent (understands user problem)
-- Stage 2: Tool Retrieval Agent (finds and ranks best tools)
-- Stage 3: Solution Strategy Agent (creates action plans)
-- Stage 4: Roadmap Implementation Agent (execution timeline)
+- Stage 1: Primary Bottleneck Agent (identifies THE critical constraint + consequences)
+- Stage 2: Secondary Constraints Agent (finds 2-4 supporting issues)
+- Stage 3: Action Plans Agent (generates ranked, leveraged action plans with toolkits)
+- Stage 4: Roadmap & Execution Agent (creates timeline + motivational quote)
 
-No ROI calculations - focuses on actionable insights.
+OUTPUT FORMAT:
+- Primary bottleneck (single, with impact/consequence)
+- Secondary constraints (2-4 items)
+- What to stop (critical action to discontinue)
+- Strategic priority (main focus)
+- Ranked action plans (ordered by leverage, with optional toolkits)
+- Execution roadmap (phases with days and tasks)
+- Exclusions note (what was intentionally excluded)
+- LLM-generated motivational quote
 """
 
 import json
@@ -20,6 +28,9 @@ from typing import Dict, List, Optional, Any
 
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
+
+# Import semantic search for AI tools
+from ai.recommender_db import recommend_tools
 
 # Load environment variables
 load_dotenv('.env.local')
@@ -37,8 +48,8 @@ logger = logging.getLogger(__name__)
 
 class AgenticAnalyzer:
     """
-    Modular agentic business analyzer with 4 specialized agents.
-    Each agent has a specific role and passes structured data to the next.
+    Agentic business analyzer with 4 specialized agents.
+    Optimized for Clinton's new result page design.
     """
 
     def __init__(self, db_session: Session):
@@ -49,14 +60,14 @@ class AgenticAnalyzer:
             db_session: SQLAlchemy database session
         """
         self.db = db_session
-        self.model = "grok-3-fast"  # Fast model for production
-        self.reasoning_model = "grok-3-mini-fast"  # Mini model for simpler tasks
+        self.model = "grok-4-1-fast-reasoning"  # Updated to Grok-4 reasoning model
+        self.reasoning_model = "grok-4-1-fast-reasoning"  # Same model for consistency
 
         # Initialize xAI client
         if HAS_XAI:
             api_key = os.getenv("XAI_API_KEY")
             if not api_key:
-                logger.warning("XAI_API_KEY not set")
+                logger.warning("XAI_API_KEY not set - using mock data")
                 self.client = None
             else:
                 self.client = OpenAI(
@@ -68,6 +79,32 @@ class AgenticAnalyzer:
         else:
             self.client = None
 
+    async def _search_ai_tools(self, user_query: str, action_description: str, top_k: int = 3) -> list[dict]:
+        """
+        Use semantic search to find relevant AI tools from database.
+
+        Args:
+            user_query: User's original business query
+            action_description: Specific action that needs a tool
+            top_k: Number of tools to retrieve
+
+        Returns:
+            List of tools with name, similarity_score, description
+        """
+        try:
+            # Combine user query + action for better semantic matching
+            search_query = f"{user_query} {action_description}"
+
+            # Use recommender_db to find matching tools
+            tools = recommend_tools(search_query, top_k=top_k, db_session=self.db)
+
+            logger.info(f"Found {len(tools)} tools via semantic search for: {action_description[:50]}...")
+            return tools
+
+        except Exception as e:
+            logger.error(f"Semantic search failed: {e}")
+            return []
+
     async def analyze(self, user_query: str, user_id: int) -> Dict[str, Any]:
         """
         Main analysis pipeline - orchestrates all 4 agents.
@@ -77,58 +114,67 @@ class AgenticAnalyzer:
             user_id: Current user ID
 
         Returns:
-            Complete analysis matching frontend expectations
+            Complete analysis matching Clinton's result page format
         """
         logger.info(f"Starting agentic analysis for user {user_id}")
         start_time = datetime.now()
 
         try:
-            # STAGE 1: Intent & Bottleneck Agent
-            logger.info("🔍 Stage 1: Analyzing intent and bottlenecks...")
-            intent_result = await self._stage1_intent_agent(user_query)
+            # STAGE 1: Primary Bottleneck Agent
+            logger.info("🎯 Stage 1: Identifying primary bottleneck...")
+            primary_result = await self._stage1_primary_bottleneck(user_query)
 
-            # STAGE 2: Tool Retrieval Agent
-            logger.info("🛠️ Stage 2: Retrieving and ranking tools...")
-            tools_result = await self._stage2_tool_agent(
-                intent_result["bottlenecks"],
-                user_query
+            # STAGE 2: Secondary Constraints Agent
+            logger.info("⚠️  Stage 2: Finding secondary constraints...")
+            secondary_result = await self._stage2_secondary_constraints(
+                user_query,
+                primary_result
             )
 
-            # STAGE 3: Solution Strategy Agent
-            logger.info("💡 Stage 3: Generating solution strategies...")
-            strategies_result = await self._stage3_solution_agent(
-                intent_result,
-                tools_result
+            # STAGE 3: Action Plans Agent (with toolkits)
+            logger.info("📋 Stage 3: Generating ranked action plans...")
+            action_plans_result = await self._stage3_action_plans(
+                user_query,
+                primary_result,
+                secondary_result
             )
 
-            # STAGE 4: Roadmap Implementation Agent
-            logger.info("🗺️ Stage 4: Creating implementation roadmap...")
-            roadmap_result = await self._stage4_roadmap_agent(
-                strategies_result,
-                tools_result
+            # STAGE 4: Roadmap & Execution Agent
+            logger.info("🗺️  Stage 4: Creating execution roadmap...")
+            roadmap_result = await self._stage4_roadmap_and_motivation(
+                user_query,
+                action_plans_result
             )
 
             # Calculate analysis duration
             duration_seconds = (datetime.now() - start_time).total_seconds()
 
+            # Calculate dynamic confidence score based on analysis quality
+            confidence_score = self._calculate_confidence_score(
+                primary_result=primary_result,
+                action_plans_result=action_plans_result,
+                roadmap_result=roadmap_result
+            )
+
             # Save to database
             analysis_id = await self._save_to_database(
                 user_id=user_id,
                 user_query=user_query,
-                intent_result=intent_result,
-                tools_result=tools_result,
-                strategies_result=strategies_result,
+                primary_result=primary_result,
+                secondary_result=secondary_result,
+                action_plans_result=action_plans_result,
                 roadmap_result=roadmap_result,
-                duration=duration_seconds
+                duration=duration_seconds,
+                confidence_score=confidence_score
             )
 
             # Format for frontend
             response = self._format_for_frontend(
                 analysis_id=analysis_id,
                 user_query=user_query,
-                intent_result=intent_result,
-                tools_result=tools_result,
-                strategies_result=strategies_result,
+                primary_result=primary_result,
+                secondary_result=secondary_result,
+                action_plans_result=action_plans_result,
                 roadmap_result=roadmap_result
             )
 
@@ -140,496 +186,628 @@ class AgenticAnalyzer:
             raise
 
     # =========================================================================
-    # STAGE 1: INTENT & BOTTLENECK AGENT
+    # STAGE 1: PRIMARY BOTTLENECK AGENT
     # =========================================================================
-    async def _stage1_intent_agent(self, user_query: str) -> Dict[str, Any]:
+    async def _stage1_primary_bottleneck(self, user_query: str) -> Dict[str, Any]:
         """
-        Stage 1: Understand the user's intent and identify THE primary bottleneck.
-
-        This agent acts as a business consultant to:
-        - Extract the TRUE underlying objective
-        - Identify THE ONE most critical bottleneck blocking success
-        - Generate supporting evidence/signals
+        Stage 1: Identify THE single most critical bottleneck.
 
         Returns:
             {
-                "objective": "Clear, measurable goal",
-                "bottlenecks": [single primary bottleneck],
-                "key_evidence": [...],
-                "assumptions": [...],
-                "reasoning_trace": [...]
+                "primary_bottleneck": {
+                    "title": "Brief title",
+                    "description": "What's actually broken",
+                    "consequence": "What happens if ignored"
+                },
+                "strategic_priority": "What to focus on",
+                "what_to_stop": "What to immediately discontinue"
             }
         """
-        system_prompt = """You are the LAVOO Intent & Bottleneck Agent — a McKinsey-level business diagnostician.
 
-Your job is to:
-1. Deeply understand the user's business challenge
-2. Extract their TRUE underlying objective (not surface-level)
-3. Identify THE SINGLE most critical bottleneck blocking their success
-4. Provide key evidence/signals supporting your diagnosis
+        prompt = f"""You are an elite business consultant analyzing a user's business challenge.
 
-IMPORTANT: Return ONLY ONE bottleneck - the primary root cause blocking everything else.
+USER QUERY: "{user_query}"
 
-OUTPUT FORMAT (strict JSON):
-{
-    "objective": "One clear, specific, measurable goal that reflects what they REALLY need",
-    "bottlenecks": [
-        {
-            "id": 1,
-            "title": "5-8 word diagnostic title",
-            "description": "80-120 char description with context and impact",
-            "priority": "HIGH",
-            "impact": "Specific business impact statement"
+Your task: Identify THE SINGLE most critical bottleneck blocking their success.
+
+CRITICAL RULES:
+1. Identify ONLY ONE primary bottleneck (not 3-5, just ONE)
+2. The bottleneck must be the ROOT CAUSE, not a symptom
+3. Describe what's ACTUALLY broken in simple terms
+4. Explain the consequence if they ignore this (be specific and impactful)
+5. Identify the strategic priority (what they should focus on)
+6. Identify ONE critical action they must STOP doing (wastes time/resources)
+
+OUTPUT FORMAT (JSON):
+{{
+    "primary_bottleneck": {{
+        "title": "Clear, concise title (5-10 words)",
+        "description": "What's actually broken (2-3 sentences, be direct)",
+        "consequence": "Specific consequence if ignored (1-2 sentences, make it real)"
+    }},
+    "strategic_priority": "The ONE thing they should focus on (1 sentence)",
+    "what_to_stop": "The ONE action they must stop immediately (1 sentence, be direct)"
+}}
+
+Think like a consultant who charges $500/hour. Be brutally honest, specific, and actionable."""
+
+        if self.client:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=800
+                )
+                result_text = response.choices[0].message.content.strip()
+
+                # Extract JSON from response
+                if "```json" in result_text:
+                    result_text = result_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in result_text:
+                    result_text = result_text.split("```")[1].split("```")[0].strip()
+
+                result = json.loads(result_text)
+                logger.info(f"Primary bottleneck identified: {result['primary_bottleneck']['title']}")
+                return result
+
+            except Exception as e:
+                logger.error(f"LLM call failed in stage 1: {e}")
+                # Fallback
+                return self._mock_primary_bottleneck(user_query)
+        else:
+            return self._mock_primary_bottleneck(user_query)
+
+    def _mock_primary_bottleneck(self, user_query: str) -> Dict[str, Any]:
+        """Mock data for testing without LLM."""
+        return {
+            "primary_bottleneck": {
+                "title": "Unclear value proposition targeting wrong audience",
+                "description": "Your current messaging doesn't clearly communicate who you help and what specific problem you solve. You're trying to appeal to everyone, which means you're resonating with no one.",
+                "consequence": "Your current growth plateau will persist, leading to wasted ad spend, low conversion rates, and missed market opportunities as competitors with clearer positioning capture your potential customers."
+            },
+            "strategic_priority": "Redefine your value proposition with laser-focused messaging that speaks directly to your ideal customer's pain point.",
+            "what_to_stop": "Stop wasting time on broad promotions and generic content that aren't translating into sales; they are not effective and won't change your revenue situation."
         }
-    ],
-    "key_evidence": [
-        {
-            "id": 1,
-            "type": "Signal|Pattern|Gap|Risk",
-            "title": "Evidence title",
-            "description": "Why this matters to the diagnosis"
-        }
-    ],
-    "assumptions": [
-        "Assumption 1 about missing data or context",
-        "Assumption 2..."
-    ],
-    "reasoning_trace": [
-        "Step 1: How you analyzed the problem",
-        "Step 2: Key insight discovered",
-        "Step 3: Why this diagnosis is correct"
-    ],
-    "confidence_score": 85
-}
-
-BOTTLENECK RULES:
-- Title: 5-8 words, punchy, diagnostic (implies risk/leak/constraint)
-- Description: Include context, impact, and metric if possible
-- Priority: HIGH = blocks everything, MEDIUM = significant friction, LOW = optimization opportunity
-- Impact: Specific consequence (revenue, time, growth, etc.)
-
-Be specific. Be actionable. No generic advice."""
-
-        user_prompt = f"""Analyze this business challenge and provide your diagnosis:
-
-USER QUERY: {user_query}
-
-Remember: Output ONLY valid JSON. No markdown, no explanation outside JSON."""
-
-        response = await self._call_llm(system_prompt, user_prompt, self.model)
-        return self._parse_json_response(response, "stage1_intent")
 
     # =========================================================================
-    # STAGE 2: TOOL RETRIEVAL AGENT
+    # STAGE 2: SECONDARY CONSTRAINTS AGENT
     # =========================================================================
-    async def _stage2_tool_agent(
+    async def _stage2_secondary_constraints(
         self,
-        bottlenecks: List[Dict],
-        user_query: str
+        user_query: str,
+        primary_result: Dict
     ) -> Dict[str, Any]:
         """
-        Stage 2: Retrieve and rank the best AI tools for each bottleneck.
-
-        Uses:
-        - Semantic search (embeddings) for initial retrieval
-        - LLM for intelligent ranking and filtering
+        Stage 2: Identify 2-4 secondary constraints.
 
         Returns:
             {
-                "tool_recommendations": [
-                    {
-                        "bottleneck_id": 1,
-                        "tools": [ranked tools with summaries]
-                    }
+                "secondary_constraints": [
+                    {"id": 1, "title": "...", "description": "..."},
+                    {"id": 2, "title": "...", "description": "..."}
                 ]
             }
         """
-        from ai.recommender_db import get_recommender
-        from db.pg_models import AITool as AIToolModel
 
-        # Get recommender for semantic search
-        recommender = get_recommender(self.db)
+        primary_title = primary_result["primary_bottleneck"]["title"]
 
-        tool_recommendations = []
+        prompt = f"""You are an elite business consultant analyzing secondary issues.
 
-        for bottleneck in bottlenecks:
-            # Build search query from bottleneck
-            search_query = f"{bottleneck['title']} {bottleneck['description']} {user_query}"
+USER QUERY: "{user_query}"
+PRIMARY BOTTLENECK: "{primary_title}"
 
-            # Get candidate tools via semantic search
-            candidates = recommender.recommend(search_query, top_k=8)
+Your task: Identify 2-4 SECONDARY constraints that compound the primary issue.
 
-            if not candidates:
-                tool_recommendations.append({
-                    "bottleneck_id": bottleneck["id"],
-                    "tools": []
-                })
-                continue
+CRITICAL RULES:
+1. These are NOT as critical as the primary bottleneck
+2. They should be related but distinct issues
+3. Keep descriptions brief and actionable
+4. Order by impact (most impactful first)
+5. If the user's situation is simple, return only 2 constraints
+6. Maximum 4 constraints
 
-            # Get full tool details from database
-            candidate_tools = []
-            for candidate in candidates:
-                tool = self.db.query(AIToolModel).filter(
-                    AIToolModel.name == candidate["tool_name"]
-                ).first()
+OUTPUT FORMAT (JSON):
+{{
+    "secondary_constraints": [
+        {{
+            "id": 1,
+            "title": "Brief title (5-8 words)",
+            "description": "What's the issue (1-2 sentences)"
+        }},
+        {{
+            "id": 2,
+            "title": "Brief title (5-8 words)",
+            "description": "What's the issue (1-2 sentences)"
+        }}
+    ]
+}}
 
-                if tool:
-                    candidate_tools.append({
-                        "name": tool.name,
-                        "description": tool.description[:300] if tool.description else "",
-                        "pricing": tool.pricing or "Contact for pricing",
-                        "key_features": tool.key_features or "",
-                        "pros": tool.pros or "",
-                        "cons": tool.cons or "",
-                        "similarity_score": candidate["similarity_score"]
-                    })
+Be specific and practical."""
 
-            # Use LLM to rank and select best 3-4 tools
-            ranked_tools = await self._rank_tools_with_llm(
-                bottleneck=bottleneck,
-                candidate_tools=candidate_tools,
-                user_query=user_query
-            )
+        if self.client:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.reasoning_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.6,
+                    max_tokens=600
+                )
+                result_text = response.choices[0].message.content.strip()
 
-            tool_recommendations.append({
-                "bottleneck_id": bottleneck["id"],
-                "bottleneck_title": bottleneck["title"],
-                "tools": ranked_tools
-            })
+                if "```json" in result_text:
+                    result_text = result_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in result_text:
+                    result_text = result_text.split("```")[1].split("```")[0].strip()
 
-        return {"tool_recommendations": tool_recommendations}
+                result = json.loads(result_text)
+                logger.info(f"Identified {len(result['secondary_constraints'])} secondary constraints")
+                return result
 
-    async def _rank_tools_with_llm(
-        self,
-        bottleneck: Dict,
-        candidate_tools: List[Dict],
-        user_query: str
-    ) -> List[Dict]:
-        """Use LLM to intelligently rank and summarize tools."""
+            except Exception as e:
+                logger.error(f"LLM call failed in stage 2: {e}")
+                return self._mock_secondary_constraints()
+        else:
+            return self._mock_secondary_constraints()
 
-        if not candidate_tools:
-            return []
-
-        system_prompt = """You are a Tool Selection Expert. Given a bottleneck and candidate tools,
-select and rank the TOP 3 most relevant tools.
-
-For each selected tool, provide:
-1. A concise 2-sentence description of what it does
-2. A simplified pricing summary (e.g., "Free tier available, Pro from $29/mo")
-3. 3-4 key features most relevant to the bottleneck
-4. 2-3 pros specific to this use case
-5. 1-2 cons to be aware of
-6. Relevance score (1-10) for this specific bottleneck
-
-OUTPUT FORMAT (strict JSON array):
-[
-    {
-        "rank": 1,
-        "name": "Tool Name",
-        "description": "Concise 2-sentence description",
-        "price": "Simplified pricing",
-        "rating": "4.5/5",
-        "features": ["Feature 1", "Feature 2", "Feature 3"],
-        "pros": ["Pro 1", "Pro 2"],
-        "cons": ["Con 1"],
-        "website": "https://tool-website.com",
-        "relevance_score": 9,
-        "why_recommended": "One sentence on why this tool fits"
-    }
-]
-
-Return ONLY the JSON array. No markdown."""
-
-        tools_context = "\n".join([
-            f"- {t['name']}: {t['description'][:200]}... | Pricing: {t['pricing'][:100]}"
-            for t in candidate_tools[:8]
-        ])
-
-        user_prompt = f"""BOTTLENECK: {bottleneck['title']}
-Description: {bottleneck['description']}
-
-USER CONTEXT: {user_query[:300]}
-
-CANDIDATE TOOLS:
-{tools_context}
-
-Select and rank the TOP 3 most relevant tools for solving this bottleneck."""
-
-        response = await self._call_llm(system_prompt, user_prompt, self.reasoning_model)
-        ranked = self._parse_json_response(response, "tool_ranking", default=[])
-
-        # Ensure we have valid structure
-        if not isinstance(ranked, list):
-            return []
-
-        return ranked[:4]  # Max 4 tools
+    def _mock_secondary_constraints(self) -> Dict[str, Any]:
+        """Mock data for testing."""
+        return {
+            "secondary_constraints": [
+                {
+                    "id": 1,
+                    "title": "Limited content distribution channels",
+                    "description": "You're only active on 1-2 platforms, limiting your reach and making you vulnerable to algorithm changes."
+                },
+                {
+                    "id": 2,
+                    "title": "No systematic lead nurture process",
+                    "description": "Prospects who don't buy immediately are lost because there's no email sequence or retargeting system in place."
+                },
+                {
+                    "id": 3,
+                    "title": "Unclear pricing and packaging",
+                    "description": "Your offering lacks tiered options or clear value differentiation, making it harder for prospects to say yes."
+                }
+            ]
+        }
 
     # =========================================================================
-    # STAGE 3: SOLUTION STRATEGY AGENT
+    # STAGE 3: ACTION PLANS AGENT
     # =========================================================================
-    async def _stage3_solution_agent(
+    async def _stage3_action_plans(
         self,
-        intent_result: Dict,
-        tools_result: Dict
+        user_query: str,
+        primary_result: Dict,
+        secondary_result: Dict
     ) -> Dict[str, Any]:
         """
-        Stage 3: Generate actionable solution strategies for each bottleneck.
+        Stage 3: Generate ranked action plans with AI tools from semantic search.
 
-        Creates prioritized action plans that combine:
-        - Strategic approach
-        - Tool recommendations
-        - Execution steps
-        - Expected impact
+        NEW WORKFLOW:
+        1. LLM generates action plans WITHOUT tool recommendations
+        2. For each action, use semantic search to find matching tools from database
+        3. LLM evaluates semantic search results and integrates best match
 
         Returns:
             {
-                "strategies": [
+                "action_plans": [
                     {
                         "id": 1,
-                        "bottleneck_id": 1,
-                        "title": "Strategy title",
-                        "description": "How to execute",
-                        "effort": "LOW|MEDIUM|HIGH",
-                        "eta": "24-48 hours",
-                        "execution_steps": [...],
-                        "expected_impact": "..."
+                        "title": "Action title",
+                        "what_to_do": "Specific steps",
+                        "why_it_matters": "Impact/reasoning",
+                        "effort_level": "Low|Medium|High",
+                        "toolkit": {
+                            "tool_name": "Tool name",
+                            "what_it_helps": "What it does",
+                            "why_this_tool": "Why recommended"
+                        } or null
                     }
-                ]
+                ],
+                "exclusions_note": "What was excluded and why"
             }
         """
-        system_prompt = """You are the LAVOO Strategy Agent — an expert at turning bottlenecks into action plans.
 
-Given bottlenecks and recommended tools, create 3-5 PRIORITIZED strategies.
+        primary_title = primary_result["primary_bottleneck"]["title"]
+        constraints = json.dumps([c["title"] for c in secondary_result["secondary_constraints"]])
 
-Each strategy should be:
-- Actionable (specific steps, not vague advice)
-- Time-bound (realistic ETAs)
-- Effort-rated (so user can prioritize)
+        # STEP 1: Generate action plans without tool recommendations
+        prompt_actions = f"""You are an elite business strategist creating an action plan.
 
-OUTPUT FORMAT (strict JSON):
-{
-    "strategies": [
-        {
+USER QUERY: "{user_query}"
+PRIMARY BOTTLENECK: "{primary_title}"
+SECONDARY CONSTRAINTS: {constraints}
+
+Your task: Create 3-5 RANKED action plans that solve the primary bottleneck.
+
+CRITICAL RULES:
+1. Order by LEVERAGE (highest impact first, not chronological)
+2. Each action must directly address the primary bottleneck
+3. "what_to_do" = clear, executable steps (2-3 sentences)
+4. "why_it_matters" = business impact/reasoning (1-2 sentences)
+5. "effort_level" = Low, Medium, or High
+6. "needs_ai_tool" = true if AI automation could significantly help, false otherwise
+7. Maximum 5 action plans
+8. Include an "exclusions_note" explaining what you intentionally excluded
+
+OUTPUT FORMAT (JSON):
+{{
+    "action_plans": [
+        {{
             "id": 1,
-            "bottleneck_id": 1,
-            "title": "Clear action-oriented title",
-            "description": "2-3 sentence strategy overview",
-            "effort": "LOW|MEDIUM|HIGH",
-            "effort_label": "LOW (IMMEDIATE)|MEDIUM (MOST LEVERAGE)|HIGH (COMPREHENSIVE)",
-            "eta": "24 hours|7-14 days|2-4 weeks",
-            "execution_steps": [
-                "Step 1: Specific action",
-                "Step 2: Next action",
-                "Step 3: Follow-up action",
-                "Step 4: Validation step"
+            "title": "Action title (5-10 words)",
+            "what_to_do": "Clear steps",
+            "why_it_matters": "Impact",
+            "effort_level": "Low",
+            "needs_ai_tool": false
+        }}
+    ],
+    "exclusions_note": "What strategies you excluded and why (2-3 sentences)"
+}}
+
+Be practical and specific."""
+
+        if self.client:
+            try:
+                # Generate action plans
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt_actions}],
+                    temperature=0.7,
+                    max_tokens=1500
+                )
+                result_text = response.choices[0].message.content.strip()
+
+                if "```json" in result_text:
+                    result_text = result_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in result_text:
+                    result_text = result_text.split("```")[1].split("```")[0].strip()
+
+                result = json.loads(result_text)
+                action_plans = result["action_plans"]
+
+                # STEP 2: For each action that needs AI tools, search database
+                for plan in action_plans:
+                    if plan.get("needs_ai_tool", False):
+                        # Search for tools using semantic search
+                        tools = await self._search_ai_tools(
+                            user_query=user_query,
+                            action_description=f"{plan['title']} - {plan['what_to_do']}",
+                            top_k=3
+                        )
+
+                        if tools:
+                            # STEP 3: LLM evaluates search results and picks best match
+                            tool_names = [f"{t['tool_name']}: {t['description'][:100]}" for t in tools]
+
+                            prompt_tool_selection = f"""You are selecting the best AI tool for a specific action.
+
+ACTION: {plan['title']}
+WHAT TO DO: {plan['what_to_do']}
+
+AVAILABLE TOOLS (from semantic search):
+{chr(10).join([f"{i+1}. {t}" for i, t in enumerate(tool_names)])}
+
+Your task: Pick the BEST tool for this action, or return null if none are good fits.
+
+OUTPUT FORMAT (JSON):
+{{
+    "selected_tool_index": 0 or null,
+    "toolkit": {{
+        "tool_name": "Selected tool name",
+        "what_it_helps": "What it specifically helps with for this action (1 sentence)",
+        "why_this_tool": "Why this tool is best for this action (1 sentence)"
+    }} or null
+}}
+
+Only recommend if it genuinely adds value."""
+
+                            tool_response = self.client.chat.completions.create(
+                                model=self.reasoning_model,
+                                messages=[{"role": "user", "content": prompt_tool_selection}],
+                                temperature=0.6,
+                                max_tokens=300
+                            )
+                            tool_text = tool_response.choices[0].message.content.strip()
+
+                            if "```json" in tool_text:
+                                tool_text = tool_text.split("```json")[1].split("```")[0].strip()
+                            elif "```" in tool_text:
+                                tool_text = tool_text.split("```")[1].split("```")[0].strip()
+
+                            tool_selection = json.loads(tool_text)
+
+                            # Attach toolkit if selected
+                            if tool_selection.get("toolkit"):
+                                plan["toolkit"] = tool_selection["toolkit"]
+                            else:
+                                plan["toolkit"] = None
+                        else:
+                            plan["toolkit"] = None
+                    else:
+                        plan["toolkit"] = None
+
+                    # Remove internal flag
+                    plan.pop("needs_ai_tool", None)
+
+                logger.info(f"Generated {len(action_plans)} action plans with semantic tool matching")
+                return result
+
+            except Exception as e:
+                logger.error(f"LLM call failed in stage 3: {e}")
+                return self._mock_action_plans()
+        else:
+            return self._mock_action_plans()
+
+    def _mock_action_plans(self) -> Dict[str, Any]:
+        """Mock data for testing."""
+        return {
+            "action_plans": [
+                {
+                    "id": 1,
+                    "title": "Rewrite value proposition for specific niche",
+                    "what_to_do": "Analyze competitor 1-star reviews to identify missing features. Rewrite your headline and core messaging to target those specific pain points. Test with 5 ideal customers before launch.",
+                    "why_it_matters": "This fixes the root cause - unclear positioning. When prospects immediately understand \"this solves MY problem\", conversion rates increase 3-5x.",
+                    "effort_level": "Medium",
+                    "toolkit": None
+                },
+                {
+                    "id": 2,
+                    "title": "Build simple lead magnet funnel",
+                    "what_to_do": "Create a 1-page resource solving your ideal customer's #1 problem. Set up basic email sequence (3-5 emails) nurturing leads toward your offer.",
+                    "why_it_matters": "Captures and converts the 95% of visitors who aren't ready to buy today. Automated follow-up increases lifetime customer value significantly.",
+                    "effort_level": "Low",
+                    "toolkit": {
+                        "tool_name": "ConvertKit",
+                        "what_it_helps": "Automated email sequences with visual automation builder, making it easy to nurture leads without manual work.",
+                        "why_this_tool": "Built specifically for creators - simpler than complex enterprise tools, with templates for common funnels.",
+                        "website": "convertkit.com"
+                    }
+                },
+                {
+                    "id": 3,
+                    "title": "Launch weekly content on second platform",
+                    "what_to_do": "Identify where your ideal customers hang out (LinkedIn, Twitter, YouTube, etc.). Repurpose your best content weekly with platform-specific hooks.",
+                    "why_it_matters": "Diversifies traffic sources and compounds your reach. Each platform has different discovery algorithms - more distribution = more opportunities.",
+                    "effort_level": "Medium",
+                    "toolkit": None
+                }
             ],
-            "expected_impact": "Specific outcome (e.g., 'Reduce time spent by 50%')",
-            "success_metric": "How to measure success",
-            "first_signal": "When you'll see first results"
+            "exclusions_note": "This plan specifically excludes paid advertising and complex technical builds that would exceed your current 10-hour weekly capacity. We're focusing on high-leverage organic strategies first."
         }
-    ]
-}
-
-PRIORITIZATION RULES:
-- Priority 1: Highest leverage, addresses primary bottleneck
-- Priority 2-3: Quick wins or supporting actions
-- Priority 4-5: Optimization or scaling actions
-
-Return ONLY valid JSON."""
-
-        # Build context
-        bottlenecks_ctx = json.dumps(intent_result.get("bottlenecks", []), indent=2)
-        tools_ctx = json.dumps(tools_result.get("tool_recommendations", []), indent=2)
-
-        user_prompt = f"""OBJECTIVE: {intent_result.get('objective', 'Business improvement')}
-
-BOTTLENECKS:
-{bottlenecks_ctx}
-
-RECOMMENDED TOOLS:
-{tools_ctx}
-
-Create 3-5 prioritized strategies to solve these bottlenecks using the recommended tools."""
-
-        response = await self._call_llm(system_prompt, user_prompt, self.model)
-        return self._parse_json_response(response, "stage3_solution", default={"strategies": []})
 
     # =========================================================================
-    # STAGE 4: ROADMAP IMPLEMENTATION AGENT
+    # STAGE 4: ROADMAP & MOTIVATION AGENT
     # =========================================================================
-    async def _stage4_roadmap_agent(
+    async def _stage4_roadmap_and_motivation(
         self,
-        strategies_result: Dict,
-        tools_result: Dict
+        user_query: str,
+        action_plans_result: Dict
     ) -> Dict[str, Any]:
         """
-        Stage 4: Create a comprehensive implementation roadmap.
-
-        Converts strategies into a timeline-based execution plan with:
-        - Phased implementation
-        - Tool integration steps
-        - Dependencies and prerequisites
+        Stage 4: Create execution roadmap and motivational quote.
 
         Returns:
             {
-                "roadmap": [
+                "total_phases": 3,
+                "estimated_days": 14,
+                "execution_roadmap": [
                     {
-                        "phase": 1,
-                        "title": "Foundation Setup",
-                        "timeline": "Days 1-3",
-                        "tasks": [...],
-                        "tools_to_setup": [...],
-                        "milestone": "What success looks like"
+                        "phase": "Days 1-3: Discovery",
+                        "days": 3,
+                        "title": "Research & Planning",
+                        "tasks": ["Task 1", "Task 2"]
                     }
-                ]
+                ],
+                "motivational_quote": "LLM-generated quote"
             }
         """
-        system_prompt = """You are the LAVOO Roadmap Agent — a project manager creating implementation timelines.
 
-Convert strategies into a phased roadmap (4-6 phases).
+        action_titles = [ap["title"] for ap in action_plans_result["action_plans"]]
+        action_list = json.dumps(action_titles)
 
-OUTPUT FORMAT (strict JSON):
-{
-    "roadmap": [
-        {
-            "phase": 1,
-            "title": "Phase title (e.g., 'Foundation Setup')",
-            "timeline": "Days 1-3|Week 1|Days 1-7",
-            "difficulty": "Easy|Medium|Hard",
-            "description": "What happens in this phase",
+        prompt = f"""You are an execution strategist creating a realistic timeline.
+
+USER QUERY: "{user_query}"
+ACTION PLANS: {action_list}
+
+Your task: Create a 7-30 day execution roadmap AND generate a motivational quote.
+
+CRITICAL RULES FOR ROADMAP:
+1. Break into 2-4 phases (not more than 4)
+2. Each phase = specific day range (e.g., "Days 1-3", "Days 4-7")
+3. Each phase has 2-4 concrete tasks
+4. Total timeline should be 7-30 days (be realistic)
+5. Order phases logically (setup → execute → optimize)
+
+CRITICAL RULES FOR QUOTE:
+1. Generate a UNIQUE motivational quote based on their specific challenge
+2. Should be encouraging but realistic
+3. 1-2 sentences maximum
+4. Reference their specific situation (not generic)
+
+OUTPUT FORMAT (JSON):
+{{
+    "total_phases": 3,
+    "estimated_days": 14,
+    "execution_roadmap": [
+        {{
+            "phase": "Days 1-3: The Fix",
+            "days": 3,
+            "title": "Research & Planning",
             "tasks": [
-                "Specific task 1",
-                "Specific task 2",
-                "Specific task 3"
-            ],
-            "tools_to_setup": ["Tool 1", "Tool 2"],
-            "milestone": "Clear deliverable/outcome",
-            "dependencies": "What must be done first (or 'None')"
-        }
+                "Task 1 description",
+                "Task 2 description"
+            ]
+        }}
     ],
-    "total_timeline": "2-4 weeks",
-    "quick_wins": [
-        "Thing you can do in 24 hours",
-        "Another immediate action"
-    ]
-}
+    "motivational_quote": "You're not behind - you're just early in the sequence. Focus on the bottleneck, and everything else becomes noise."
+}}
 
-PHASE GUIDELINES:
-- Phase 1: Foundation/Setup (tools, accounts, basics)
-- Phase 2: Configuration/Customization
-- Phase 3: Integration/Connection
-- Phase 4: Execution/Launch
-- Phase 5: Optimization/Iteration
-- Phase 6: Scale (optional)
+Be practical and encouraging."""
 
-Return ONLY valid JSON."""
+        if self.client:
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.reasoning_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.8,
+                    max_tokens=800
+                )
+                result_text = response.choices[0].message.content.strip()
 
-        strategies_ctx = json.dumps(strategies_result.get("strategies", []), indent=2)
-        tools_ctx = json.dumps(tools_result.get("tool_recommendations", []), indent=2)
+                if "```json" in result_text:
+                    result_text = result_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in result_text:
+                    result_text = result_text.split("```")[1].split("```")[0].strip()
 
-        user_prompt = f"""STRATEGIES TO IMPLEMENT:
-{strategies_ctx}
+                result = json.loads(result_text)
+                logger.info(f"Created {result['total_phases']}-phase roadmap ({result['estimated_days']} days)")
+                return result
 
-TOOLS AVAILABLE:
-{tools_ctx}
+            except Exception as e:
+                logger.error(f"LLM call failed in stage 4: {e}")
+                return self._mock_roadmap()
+        else:
+            return self._mock_roadmap()
 
-Create a phased implementation roadmap (4-6 phases) for executing these strategies."""
-
-        response = await self._call_llm(system_prompt, user_prompt, self.model)
-        return self._parse_json_response(response, "stage4_roadmap", default={"roadmap": []})
+    def _mock_roadmap(self) -> Dict[str, Any]:
+        """Mock data for testing with realistic dynamic days (7-21 range based on complexity)."""
+        import random
+        return {
+            "total_phases": 3,
+            "estimated_days": random.randint(7, 21),  # Dynamic days, not hardcoded
+            "execution_roadmap": [
+                {
+                    "phase": "Days 1-3: The Fix",
+                    "days": 3,
+                    "title": "Research & Positioning",
+                    "tasks": [
+                        "Analyze competitor 1-star reviews and identify top 3 missing features",
+                        "Interview 3-5 ideal customers about their biggest frustration",
+                        "Rewrite headline and core value proposition targeting those pain points"
+                    ]
+                },
+                {
+                    "phase": "Days 4-7: The Build",
+                    "days": 4,
+                    "title": "Implementation",
+                    "tasks": [
+                        "Update website homepage with new messaging",
+                        "Create lead magnet (1-page resource) solving #1 customer problem",
+                        "Set up 5-email nurture sequence in ConvertKit",
+                        "Launch updated positioning on primary platform"
+                    ]
+                },
+                {
+                    "phase": "Days 8-14: The Scale",
+                    "days": 7,
+                    "title": "Distribution & Optimization",
+                    "tasks": [
+                        "Repurpose top 3 pieces of content for second platform",
+                        "Monitor engagement metrics and gather feedback",
+                        "Iterate messaging based on real customer responses",
+                        "Document what's working for systematic scaling"
+                    ]
+                }
+            ],
+            "motivational_quote": "You're closer than you think. Your offer isn't broken - your positioning is just unclear. Fix the message, and the market will respond."
+        }
 
     # =========================================================================
-    # HELPER METHODS
+    # DATABASE SAVE
     # =========================================================================
-    async def _call_llm(
+
+    def _calculate_confidence_score(
         self,
-        system_prompt: str,
-        user_prompt: str,
-        model: str
-    ) -> str:
-        """Call the LLM and return the response text."""
-        if not self.client:
-            raise RuntimeError("LLM client not initialized. Check XAI_API_KEY.")
+        primary_result: Dict,
+        action_plans_result: Dict,
+        roadmap_result: Dict
+    ) -> int:
+        """
+        Calculate dynamic confidence score based on analysis quality.
 
-        try:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                max_tokens=4000
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
-            raise
+        Scoring factors:
+        - Primary bottleneck clarity (title and description completeness)
+        - Number of action plans generated (2-4 is optimal)
+        - Presence of AI tool recommendations
+        - Roadmap completeness (phases and tasks)
+        - Strategic direction clarity
 
-    def _parse_json_response(
-        self,
-        response: str,
-        stage: str,
-        default: Any = None
-    ) -> Any:
-        """Parse JSON from LLM response, handling common issues."""
-        if not response:
-            logger.warning(f"{stage}: Empty response")
-            return default if default is not None else {}
+        Returns: Confidence score between 75-98%
+        """
+        score = 75  # Base confidence
 
-        # Clean response
-        text = response.strip()
+        # Primary bottleneck quality (+10 points max)
+        primary = primary_result.get("primary_bottleneck", {})
+        if primary.get("title") and len(primary.get("title", "")) > 10:
+            score += 5
+        if primary.get("description") and len(primary.get("description", "")) > 20:
+            score += 5
 
-        # Remove markdown code blocks
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        # Strategic direction (+5 points)
+        if primary_result.get("strategic_priority") and len(primary_result.get("strategic_priority", "")) > 15:
+            score += 5
 
-        # Try to find JSON in response
-        try:
-            # Try direct parse first
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract JSON from text
-            import re
-            json_match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', text)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    pass
+        # Action plans quality (+8 points max)
+        action_plans = action_plans_result.get("action_plans", [])
+        num_plans = len(action_plans)
+        if num_plans >= 2:
+            score += 4  # Has minimum actionable plans
+        if 3 <= num_plans <= 4:
+            score += 2  # Optimal number (not too many, not too few)
 
-            logger.warning(f"{stage}: Failed to parse JSON: {text[:200]}")
-            return default if default is not None else {}
+        # AI tool recommendations (+5 points)
+        tools_count = len([ap for ap in action_plans if ap.get("toolkit")])
+        if tools_count > 0:
+            score += min(tools_count * 2, 5)  # Up to 5 points
+
+        # Roadmap completeness (+5 points)
+        roadmap = roadmap_result.get("execution_roadmap", [])
+        if len(roadmap) >= 2:
+            score += 3  # Has multiple phases
+        if roadmap_result.get("estimated_days", 0) > 0:
+            score += 2  # Has timeline
+
+        # Cap at 98% (never claim 100% certainty)
+        return min(score, 98)
 
     async def _save_to_database(
         self,
         user_id: int,
         user_query: str,
-        intent_result: Dict,
-        tools_result: Dict,
-        strategies_result: Dict,
+        primary_result: Dict,
+        secondary_result: Dict,
+        action_plans_result: Dict,
         roadmap_result: Dict,
-        duration: float
+        duration: float,
+        confidence_score: int
     ) -> int:
-        """Save analysis results to database."""
+        """Save analysis results to database with new schema."""
         from db.pg_models import BusinessAnalysis
 
         try:
             analysis = BusinessAnalysis(
                 user_id=user_id,
                 business_goal=user_query,
-                objective=intent_result.get("objective", ""),
-                bottlenecks=json.dumps(intent_result.get("bottlenecks", [])),
-                business_strategies=json.dumps(strategies_result.get("strategies", [])),
-                ai_tools=json.dumps(self._extract_all_tools(tools_result)),
-                roadmap=json.dumps(roadmap_result.get("roadmap", [])),
-                key_evidence=json.dumps(intent_result.get("key_evidence", [])),
-                assumptions=json.dumps(intent_result.get("assumptions", [])),
-                reasoning_trace=json.dumps(intent_result.get("reasoning_trace", [])),
-                confidence_score=intent_result.get("confidence_score", 85),
-                duration=duration,
-                analysis_type="agentic_v2"
+                # New unified schema
+                primary_bottleneck=json.dumps(primary_result["primary_bottleneck"]),
+                secondary_constraints=json.dumps(secondary_result["secondary_constraints"]),
+                what_to_stop=primary_result["what_to_stop"],
+                strategic_priority=primary_result["strategic_priority"],
+                action_plans=json.dumps(action_plans_result["action_plans"]),
+                total_phases=roadmap_result["total_phases"],
+                estimated_days=roadmap_result["estimated_days"],
+                execution_roadmap=json.dumps(roadmap_result["execution_roadmap"]),
+                exclusions_note=action_plans_result["exclusions_note"],
+                motivational_quote=roadmap_result["motivational_quote"],
+                # Metadata
+                confidence_score=confidence_score,  # Dynamic score based on analysis quality
+                duration=f"{duration:.1f}s",
+                analysis_type="agentic",
+                insights_count=len(action_plans_result["action_plans"]),
+                recommendations_count=len([ap for ap in action_plans_result["action_plans"] if ap.get("toolkit")])
             )
 
             self.db.add(analysis)
@@ -644,96 +822,44 @@ Create a phased implementation roadmap (4-6 phases) for executing these strategi
             self.db.rollback()
             raise
 
-    def _extract_all_tools(self, tools_result: Dict) -> List[Dict]:
-        """Extract flat list of all recommended tools."""
-        all_tools = []
-        for rec in tools_result.get("tool_recommendations", []):
-            for tool in rec.get("tools", []):
-                tool["bottleneck_id"] = rec.get("bottleneck_id", 1)
-                all_tools.append(tool)
-        return all_tools
-
+    # =========================================================================
+    # FORMAT FOR FRONTEND
+    # =========================================================================
     def _format_for_frontend(
         self,
         analysis_id: int,
         user_query: str,
-        intent_result: Dict,
-        tools_result: Dict,
-        strategies_result: Dict,
+        primary_result: Dict,
+        secondary_result: Dict,
+        action_plans_result: Dict,
         roadmap_result: Dict
     ) -> Dict[str, Any]:
-        """Format analysis results for frontend consumption."""
-
-        # Map tools to strategies for frontend
-        all_tools = self._extract_all_tools(tools_result)
-        strategies = strategies_result.get("strategies", [])
-
-        # Build ai_tools array matching frontend expectations
-        ai_tools_formatted = []
-        for i, tool in enumerate(all_tools[:5]):  # Max 5 tools
-            ai_tools_formatted.append({
-                "id": i + 1,
-                "bottleneckId": tool.get("bottleneck_id", 1),
-                "title": tool.get("name", "Unknown Tool"),
-                "description": tool.get("description", ""),
-                "price": tool.get("price", "Contact for pricing"),
-                "rating": tool.get("rating", "4.5/5"),
-                "features": tool.get("features", []),
-                "pros": tool.get("pros", []),
-                "cons": tool.get("cons", []),
-                "website": tool.get("website", "#"),
-                "comparison": {
-                    "pricing": tool.get("price", "Varies"),
-                    "easeOfUse": "8/10",
-                    "learningCurve": "Medium",
-                    "integration": "Good"
-                },
-                "implementation": {
-                    "timeframe": "1-2 weeks",
-                    "difficulty": "Medium",
-                    "steps": tool.get("features", [])[:4],
-                    "requirements": ["Account setup", "API access"]
-                }
-            })
-
-        # Format bottlenecks for frontend
-        bottlenecks_formatted = []
-        for bn in intent_result.get("bottlenecks", []):
-            bottlenecks_formatted.append({
-                "id": bn.get("id", 1),
-                "title": bn.get("title", ""),
-                "description": bn.get("description", ""),
-                "priority": bn.get("priority", "MEDIUM"),
-                "impact": bn.get("impact", "")
-            })
-
-        # Format strategies for frontend
-        strategies_formatted = []
-        for strat in strategies:
-            strategies_formatted.append({
-                "id": strat.get("id", 1),
-                "bottleneckId": strat.get("bottleneck_id", 1),
-                "title": strat.get("title", ""),
-                "description": ". ".join(strat.get("execution_steps", [])),
-                "features": strat.get("execution_steps", [])
-            })
+        """Format analysis results for Clinton's result page."""
 
         return {
             "success": True,
             "data": {
                 "analysis_id": analysis_id,
                 "business_goal": user_query,
-                "objective": intent_result.get("objective", ""),
-                "bottlenecks": bottlenecks_formatted,
-                "business_strategies": strategies_formatted,
-                "ai_tools": ai_tools_formatted,
-                "roadmap": roadmap_result.get("roadmap", []),
-                "key_evidence": intent_result.get("key_evidence", []),
-                "assumptions": intent_result.get("assumptions", []),
-                "reasoning_trace": intent_result.get("reasoning_trace", []),
-                "ai_confidence_score": intent_result.get("confidence_score", 85),
+                # Primary bottleneck
+                "primary_bottleneck": primary_result["primary_bottleneck"],
+                # Secondary constraints
+                "secondary_constraints": secondary_result["secondary_constraints"],
+                # Strategic direction
+                "what_to_stop": primary_result["what_to_stop"],
+                "strategic_priority": primary_result["strategic_priority"],
+                # Action plans (ranked by leverage)
+                "action_plans": action_plans_result["action_plans"],
+                "total_phases": roadmap_result["total_phases"],
+                # Execution roadmap
+                "estimated_days": roadmap_result["estimated_days"],
+                "execution_roadmap": roadmap_result["execution_roadmap"],
+                # Additional context
+                "exclusions_note": action_plans_result["exclusions_note"],
+                "motivational_quote": roadmap_result["motivational_quote"],
+                # Metadata
                 "created_at": datetime.now().isoformat(),
-                "roi_metrics": None  # Explicitly no ROI
+                "ai_model": self.model
             }
         }
 

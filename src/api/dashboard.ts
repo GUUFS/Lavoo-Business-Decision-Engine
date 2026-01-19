@@ -13,6 +13,7 @@ export interface Alert {
   why_act_now: string;
   potential_reward: string;
   action_required: string;
+  is_pinned?: boolean; // Support for pinned alerts
 }
 
 export interface Insight {
@@ -103,9 +104,26 @@ export const useDashboardStats = (userId: number | null) => {
       });
 
       let totalAnalyses = 0;
+      let avgConfidence = 0;
       if (statsResponse.ok) {
         const statsData = await statsResponse.json();
         totalAnalyses = statsData.total_analyses || 0;
+        avgConfidence = statsData.avg_confidence || 0;
+      }
+
+      // Fetch reviews for average rating
+      const reviewsResponse = await fetch(`${API_BASE_URL}/api/reviews`, {
+        headers: getAuthHeaders(),
+      });
+
+      let avgRating = 0;
+      if (reviewsResponse.ok) {
+        const reviews = await reviewsResponse.json();
+        const reviewsArray = Array.isArray(reviews) ? reviews : [];
+        if (reviewsArray.length > 0) {
+          const totalRating = reviewsArray.reduce((sum: number, r: any) => sum + (r.rating || 0), 0);
+          avgRating = totalRating / reviewsArray.length;
+        }
       }
 
       return {
@@ -114,7 +132,7 @@ export const useDashboardStats = (userId: number | null) => {
         new_alerts_today: 0,
         total_insights: totalAnalyses, // This will be displayed as "Total Analyses"
         new_insights_today: 0,
-        average_rating: averageRating,
+        average_rating: avgRating,
         rating_change: 0,
         total_chops: userData.total_chops || userData.chops || 0,
         unattended_alerts: activeAlerts,
@@ -124,19 +142,20 @@ export const useDashboardStats = (userId: number | null) => {
       };
     },
     enabled: !!userId,
-    staleTime: 30 * 1000, // 30 seconds
-    gcTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: true,
-    refetchInterval: 30 * 1000, // Auto-refresh every 30 seconds in background
+    staleTime: 5 * 60 * 1000, // 5 minutes - prevents reloads when switching tabs
+    gcTime: 15 * 60 * 1000, // 15 minutes
+    refetchOnWindowFocus: false, // Don't refetch on window focus to prevent reloads
+    refetchInterval: false, // Disable auto-refresh to prevent constant reloads
   });
 };
 
 /**
  * Hook to fetch urgent alerts
- * Shows the same 3 alerts as the opportunity alerts tab (no re-sorting)
- * Cached for 1 minute, refetches in background every 1 minute
+ * Shows first 5 alerts for free users, first 3 for dashboard widget
+ * Matches behavior of alerts tab exactly
+ * Cached for 5 minutes to prevent constant reloads
  */
-export const useUrgentAlerts = (userId: number | null, limit = 3) => {
+export const useUrgentAlerts = (userId: number | null, limit = 5) => {
   return useQuery({
     queryKey: ["dashboard", "urgent-alerts", userId, limit],
     queryFn: async (): Promise<Alert[]> => {
@@ -153,15 +172,21 @@ export const useUrgentAlerts = (userId: number | null, limit = 3) => {
       const alerts = await response.json();
       const alertsArray = Array.isArray(alerts) ? alerts : [];
 
-      // Return the first N alerts in the same order as the alerts tab
-      // (already sorted by pinned first, then by created_at desc from the API)
-      return alertsArray.slice(0, limit);
+      // Sort: pinned first, then by score (matches alerts page behavior)
+      const sortedAlerts = alertsArray.sort((a: Alert, b: Alert) => {
+        if (a.is_pinned && !b.is_pinned) return -1;
+        if (!a.is_pinned && b.is_pinned) return 1;
+        return b.score - a.score;
+      });
+
+      // Return first N alerts (5 for free users to match alerts page, 3 for dashboard widget)
+      return sortedAlerts.slice(0, limit);
     },
     enabled: !!userId,
-    staleTime: 1 * 60 * 1000, // 1 minute
-    gcTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: false,
-    refetchInterval: 1 * 60 * 1000, // Auto-refresh every 1 minute
+    staleTime: 5 * 60 * 1000, // 5 minutes (matches alerts list cache)
+    gcTime: 10 * 60 * 1000, // 10 minutes
+    refetchOnWindowFocus: false, // Don't refetch on focus
+    refetchInterval: false, // Disable auto-refresh
   });
 };
 
@@ -186,8 +211,9 @@ export const useTopInsights = (limit = 3) => {
       return insightsArray.slice(0, limit);
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 15 * 60 * 1000, // 15 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
     refetchOnWindowFocus: false,
+    refetchInterval: false, // Disable auto-refresh
   });
 };
 
@@ -212,8 +238,9 @@ export const useRecentReviews = (limit = 3) => {
       return reviewsArray.slice(0, limit);
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 15 * 60 * 1000, // 15 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
     refetchOnWindowFocus: false,
+    refetchInterval: false, // Disable auto-refresh
   });
 };
 

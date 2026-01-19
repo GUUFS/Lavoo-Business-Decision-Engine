@@ -352,7 +352,6 @@ def get_analysis_detail(
             "intent_analysis": analysis.intent_analysis,
             "tool_combinations": analysis.tool_combinations,
             "roadmap": analysis.roadmap,
-            "roi_projections": analysis.roi_projections,
             "estimated_cost": analysis.estimated_cost,
             "timeline_weeks": analysis.timeline_weeks,
             "insights_count": analysis.insights_count,
@@ -651,13 +650,7 @@ def update_existing_analyses(
         updated_count = 0
         for analysis in analyses:
             try:
-                # 1. Extract confidence score from ROI projections
-                if analysis.roi_projections:
-                    roi_data = analysis.roi_projections if isinstance(analysis.roi_projections, dict) else json.loads(analysis.roi_projections)
-                    confidence_score = roi_data.get("confidence_score")
-                    if confidence_score:
-                        analysis.confidence_score = confidence_score
-
+                # 1. Set default confidence score if missing
                 if not analysis.confidence_score:
                     analysis.confidence_score = 75  # Default moderate confidence
 

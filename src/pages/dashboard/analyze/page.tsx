@@ -196,10 +196,18 @@ export default function Analyze() {
                         year: 'numeric'
                       });
 
-                      // Calculate metrics from analysis data
-                      const bottlenecksCount = analysis.bottlenecks?.length || 0;
-                      const solutionsCount = (analysis.business_strategies?.length || 0) + (analysis.ai_tools?.length || 0);
-                      const confidenceScore = analysis.ai_confidence_score || 85;
+                      // Calculate metrics from NEW analysis schema
+                      const primaryBottleneck = analysis.primary_bottleneck || {};
+                      const secondaryConstraints = analysis.secondary_constraints || [];
+                      const actionPlans = analysis.action_plans || [];
+
+                      // Count issues: 1 primary + secondary constraints
+                      const issuesCount = (primaryBottleneck.title ? 1 : 0) + secondaryConstraints.length;
+
+                      // Count solutions: action plans
+                      const solutionsCount = actionPlans.length;
+
+                      const confidenceScore = analysis.ai_confidence_score || 90;
                       const analysisId = analysis.analysis_id || analysis.id;
 
                       return (
@@ -230,11 +238,11 @@ export default function Analyze() {
                             <div className="flex items-center space-x-4 text-gray-600">
                               <span className="flex items-center">
                                 <i className="ri-alert-line mr-1 text-orange-500"></i>
-                                {bottlenecksCount} issues
+                                {issuesCount} issue{issuesCount !== 1 ? 's' : ''}
                               </span>
                               <span className="flex items-center">
                                 <i className="ri-lightbulb-line mr-1 text-blue-500"></i>
-                                {solutionsCount} solutions
+                                {solutionsCount} solution{solutionsCount !== 1 ? 's' : ''}
                               </span>
                             </div>
                           </div>

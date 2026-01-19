@@ -17,8 +17,12 @@ function Dashboard() {
     const { data: chopsData, isLoading: isLoadingChops } = useUserChops();
     const userId = currentUser?.id || null;
 
+    // Determine user subscription status
+    const isProUser = currentUser?.subscription_status === 'Active';
+    const alertsLimit = 3; // Always show 3 alerts on dashboard widget (free users get 5 total on alerts page)
+
     const { data: stats, isLoading: isLoadingStats } = useDashboardStats(userId);
-    const { data: urgentAlerts = [], isLoading: isLoadingAlerts } = useUrgentAlerts(userId);
+    const { data: urgentAlerts = [], isLoading: isLoadingAlerts } = useUrgentAlerts(userId, alertsLimit);
     const { data: topInsights = [], isLoading: isLoadingInsights } = useTopInsights();
     const { data: recentReviews = [], isLoading: isLoadingReviews } = useRecentReviews();
 

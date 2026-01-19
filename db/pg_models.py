@@ -119,7 +119,15 @@ class AITool(Base):
 class BusinessAnalysis(Base):
     """
     Stores complete business analysis results from AI analyzer.
-    Each analysis contains goals, capabilities, tool recommendations, and roadmap.
+    NEW SCHEMA (redesigned 2026-01-14):
+    - Primary bottleneck with consequences
+    - Secondary constraints
+    - What to stop
+    - Strategic priority
+    - Ranked action plans with toolkits
+    - Execution roadmap with timeline
+    - Exclusions note
+    - LLM-generated motivational quote
     """
     __tablename__ = "business_analyses"
 
@@ -129,98 +137,33 @@ class BusinessAnalysis(Base):
     # Original user input
     business_goal = Column(Text, nullable=False)  # Original user query
 
-    # V2 Agentic Analysis Fields (new structured format)
-    objective = Column(Text, nullable=True)  # Clear business objective
-    bottlenecks = Column(JSON, nullable=True)  # List of identified bottlenecks
-    business_strategies = Column(JSON, nullable=True)  # Prioritized action plans
-    ai_tools = Column(JSON, nullable=True)  # Recommended AI tools
-    key_evidence = Column(JSON, nullable=True)  # Supporting evidence/signals
-    assumptions = Column(JSON, nullable=True)  # Assumptions made in analysis
-    reasoning_trace = Column(JSON, nullable=True)  # AI reasoning steps
+    # NEW UNIFIED SCHEMA
+    primary_bottleneck = Column(JSON, nullable=True)  # {title, description, consequence}
+    secondary_constraints = Column(JSON, nullable=True)  # [{id, title, description}]
+    what_to_stop = Column(Text, nullable=True)  # Critical action to discontinue
+    strategic_priority = Column(Text, nullable=True)  # Main strategic focus
+    action_plans = Column(JSON, nullable=True)  # [{id, title, what_to_do, why_it_matters, effort_level, toolkit}]
+    total_phases = Column(Integer, nullable=True)  # Number of delivery phases
+    estimated_days = Column(Integer, nullable=True)  # Total days for execution
+    execution_roadmap = Column(JSON, nullable=True)  # [{phase, days, title, tasks}]
+    exclusions_note = Column(Text, nullable=True)  # What was excluded and why
+    motivational_quote = Column(Text, nullable=True)  # LLM-generated quote
 
-    # Legacy fields (kept for backward compatibility)
-    intent_analysis = Column(JSON)  # Objective, capabilities, stages, metrics
-    tool_combinations = Column(JSON)  # 2-3 recommended tool combos with synergies
-    roadmap = Column(JSON)  # Actionable plan with timeline
-    roi_projections = Column(JSON)  # ROI calculations, break-even, revenue impact
-    ai_tools_data = Column(JSON)  # Generated AI efficiency tools with LLM processing
-    estimated_cost = Column(Float)  # Monthly cost estimate
-    timeline_weeks = Column(Integer)  # Implementation timeline
-
-    # Admin Monitoring Fields (added for admin dashboard)
+    # Admin Monitoring Fields
     confidence_score = Column(Integer, nullable=True)  # 0-100 confidence score
-    duration = Column(String(50), nullable=True)  # e.g., "2m 34s" or seconds as float
-    analysis_type = Column(String(100), nullable=True)  # Sales, Customer, Market, agentic_v2
+    duration = Column(String(50), nullable=True)  # e.g., "2.5s"
+    analysis_type = Column(String(100), nullable=True)  # agentic
     insights_count = Column(Integer, default=0)  # Number of insights generated
     recommendations_count = Column(Integer, default=0)  # Number of recommendations
 
     # Metadata
     status = Column(String(50), default="completed")  # pending, completed, failed
-    ai_model_used = Column(String(100), default="grok-3-fast")
+    ai_model_used = Column(String(100), default="grok-4-1-fast-reasoning")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
     user = relationship("User", backref="business_analyses")
-
-
-class ToolCombination(Base):
-    """
-    Stores recommended tool combinations for a business analysis.
-    Each combination represents a set of 2+ tools that work together.
-    """
-    __tablename__ = "tool_combinations"
-
-    id = Column(Integer, primary_key=True, index=True)
-    analysis_id = Column(Integer, ForeignKey("business_analyses.id"), nullable=False)
-
-    # Combination details
-    combo_name = Column(String(255))  # e.g., "Email Growth Stack"
-    tools = Column(JSON)  # List of tool IDs and names
-    synergy_score = Column(Float)  # AI-calculated synergy (0-100)
-
-    # Integration details
-    integration_flow = Column(JSON)  # How tools connect (data flow)
-    setup_difficulty = Column(String(50))  # Easy, Medium, Hard
-    total_monthly_cost = Column(Float)
-
-    # AI reasoning
-    why_this_combo = Column(Text)  # AI explanation
-    expected_outcome = Column(Text)  # What user can achieve
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    analysis = relationship("BusinessAnalysis", backref="combinations")
-
-
-class RoadmapStage(Base):
-    """
-    Individual stages in the implementation roadmap.
-    Each analysis has multiple stages (setup, execution, optimization).
-    """
-    __tablename__ = "roadmap_stages"
-
-    id = Column(Integer, primary_key=True, index=True)
-    analysis_id = Column(Integer, ForeignKey("business_analyses.id"), nullable=False)
-
-    # Stage details
-    stage_number = Column(Integer, nullable=False)  # 1, 2, 3...
-    stage_name = Column(String(255))  # Setup, Execute, Optimize
-    duration_weeks = Column(Integer)
-
-    # Tasks and deliverables
-    tasks = Column(JSON)  # List of action items
-    deliverables = Column(JSON)  # Expected outputs
-    metrics = Column(JSON)  # KPIs to track
-
-    # Cost breakdown
-    cost_this_stage = Column(Float)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    analysis = relationship("BusinessAnalysis", backref="roadmap_stages")
 
 
 # Pydantic models for API validation and serialization

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from db.pg_connections import get_db
 from typing import Optional
 from db.pg_models import ShowUser, User, AuthResponse, FailedLoginAttempt, SecurityEvent, IPBlacklist
+from api.utils.subscription_sync import sync_user_subscription
 
 bearer_scheme = HTTPBearer()
 router = APIRouter(prefix="", tags=["authenticate"])
@@ -37,12 +38,12 @@ class Settings(BaseSettings):
         if not self.secret_key:
             # Check if we have JWT_SECRET again (in case BaseSettings didn't pick it up)
             self.secret_key = os.getenv("JWT_SECRET") or os.getenv("SECRET_KEY")
-            
+
             if not self.secret_key:
                 print("⚠️  Neither SECRET_KEY nor JWT_SECRET found in environment. Generating a new one and saving it to .env...")
                 self.secret_key = secrets.token_hex(32)
                 self._save_to_env("SECRET_KEY", self.secret_key)
-    
+
     def _save_to_env(self, key, value):
         try:
             env_path = os.path.join(os.getcwd(), ".env")
@@ -54,7 +55,7 @@ class Settings(BaseSettings):
                 # Check if key exists
                 with open(env_path, "r") as f:
                     lines = f.readlines()
-                
+
                 key_exists = False
                 with open(env_path, "w") as f:
                     for line in lines:
@@ -63,13 +64,13 @@ class Settings(BaseSettings):
                             key_exists = True
                         else:
                             f.write(line)
-                    
+
                     if not key_exists:
                         # Append if not found
                         if lines and not lines[-1].endswith('\n'):
                              f.write('\n')
                         f.write(f"{key}={value}\n")
-                        
+
             print(f"✅ Saved new {key} to {env_path}")
             # Also update current process env
             os.environ[key] = value
@@ -176,7 +177,11 @@ def me(
 ):
     """
     Get current user details.
+    Syncs subscription status lazily without blocking.
     """
+    # Sync subscription status (non-blocking lazy load)
+    sync_user_subscription(current_user, db)
+
     # Helper to get user role
     role = "user"
     if current_user.is_admin:
@@ -370,22 +375,22 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
         # This section records the failure in two places:
         # 1. failed_login_attempts table (for tracking patterns)
         # 2. security_events table (triggers auto-blocking after 3 attempts)
-        
+
         client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
         user_agent = fastapi_request.headers.get("user-agent", "unknown")
-        
+
         # Convert integer user_id to UUID format for database compatibility
         user_uuid = uuid.UUID(int=user.id) if isinstance(user.id, int) else user.id
-        
+
         # Record in failed_login_attempts and create security event
         try:
             failed_attempt = FailedLoginAttempt(
-                email=request.email,  
+                email=request.email,
                 ip_address=client_ip,
                 user_agent=user_agent
             )
             db.add(failed_attempt)
-            
+
             event = SecurityEvent(
                 type="failed_login",
                 severity="medium",
@@ -416,25 +421,8 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
     user.updated_at = datetime.utcnow()
     user.last_login = datetime.utcnow()
 
-    # Check and sync subscription status on login
-    if user.subscriptions:
-        has_active_sub = False
-        for sub in user.subscriptions:
-            if sub.status == 'active' and sub.end_date:
-                end_date = sub.end_date.replace(tzinfo=None) if sub.end_date.tzinfo else sub.end_date
-                if end_date > datetime.utcnow():
-                    has_active_sub = True
-                    user.subscription_status = 'active'
-                    user.subscription_plan = sub.subscription_plan or 'Pro'
-                    break
-                else:
-                    # Subscription expired
-                    sub.status = 'expired'
-
-        if not has_active_sub:
-            # Revert to Free if no active subscription
-            user.subscription_status = 'Free'
-            user.subscription_plan = 'Free'
+    # Note: Subscription status sync moved to dashboard load (lazy loading)
+    # to prevent blocking login endpoint
 
     db.commit()
 

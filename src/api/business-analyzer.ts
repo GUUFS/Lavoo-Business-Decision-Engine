@@ -30,7 +30,71 @@ const getAuthConfig = () => {
   return config;
 };
 
-// Type definitions matching backend models
+// Type definitions matching backend V3 models
+
+// Primary Bottleneck
+export interface PrimaryBottleneck {
+  title: string;
+  description: string;
+  consequence: string;
+}
+
+// Secondary Constraint
+export interface SecondaryConstraint {
+  id: number;
+  title: string;
+  description: string;
+}
+
+// Action Plan with optional toolkit
+export interface ActionPlan {
+  id: number;
+  title: string;
+  what_to_do: string;
+  why_it_matters: string;
+  effort_level: "Low" | "Medium" | "High";
+  toolkit?: {
+    tool_name: string;
+    what_it_helps: string;
+    why_this_tool: string;
+    website: string;
+  } | null;
+}
+
+// Execution Roadmap Phase
+export interface ExecutionPhase {
+  phase: string; // e.g., "Days 1-3: The Fix"
+  days: number;
+  title: string;
+  tasks: string[];
+}
+
+// Complete Analysis Result (V3)
+export interface BusinessAnalysisResult {
+  analysis_id: number;
+  business_goal: string;
+  // Primary bottleneck
+  primary_bottleneck: PrimaryBottleneck;
+  // Secondary constraints
+  secondary_constraints: SecondaryConstraint[];
+  // Strategic direction
+  what_to_stop: string;
+  strategic_priority: string;
+  // Action plans
+  action_plans: ActionPlan[];
+  total_phases: number;
+  // Execution roadmap
+  estimated_days: number;
+  execution_roadmap: ExecutionPhase[];
+  // Additional context
+  exclusions_note: string;
+  motivational_quote: string;
+  // Metadata
+  created_at: string;
+  ai_model?: string;
+}
+
+// DEPRECATED: Legacy types for backward compatibility
 export interface Bottleneck {
   id: number;
   title: string;
@@ -88,19 +152,6 @@ export interface ROIMetrics {
   break_even_months: number;
   time_savings_per_week: number;
   efficiency_gain_percent: number;
-}
-
-export interface BusinessAnalysisResult {
-  analysis_id: number;
-  business_goal: string;
-  bottlenecks: Bottleneck[];
-  business_strategies: BusinessStrategy[];
-  ai_tools: AITool[];
-  roadmap: RoadmapStage[];
-  roi_metrics: ROIMetrics;
-  ai_confidence_score: number;
-  created_at: string;
-  objective: string;
 }
 
 /**

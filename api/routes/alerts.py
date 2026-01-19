@@ -7,6 +7,7 @@ from db.pg_models import (User, Alert, Referral, UserAlert, UserResponse, UserCr
                             ViewAlertRequest, ShareAlertRequest, ChopsBreakdown, PinAlertRequest, UserPinnedAlert)
 from api.routes.login import get_current_user
 from api.cache import get_cached, set_cached, delete_cached, CacheTTL
+from api.utils.subscription_sync import sync_user_subscription
 
 from typing import Optional, List
 
@@ -20,8 +21,12 @@ def is_pro_user(subscription_status: str) -> bool:
 
 # API Endpoints
 @router.get("/users/me")
-def get_current_user_route(current_user=Depends(get_current_user)):
+def get_current_user_route(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     user = current_user  # extract actual user object
+
+    # Sync subscription status (non-blocking, called lazily on dashboard load)
+    sync_user_subscription(user, db)
+
     return {
         "id": user.id,
         "email": user.email,
@@ -282,7 +287,7 @@ async def view_alert(request: ViewAlertRequest, current_user = Depends(get_curre
         user.total_chops += chops_to_award
         user.alert_reading_chops += chops_to_award
         chops_earned = chops_to_award
-        
+
         # Update alert view count
         alert.total_views += 1
 
@@ -351,7 +356,7 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
         user.total_chops += chops_to_award
         user.alert_sharing_chops += chops_to_award
         chops_earned = chops_to_award
-        
+
         # Update alert share count
         alert.total_shares += 1
 
@@ -380,7 +385,7 @@ def share_alert(request: ShareAlertRequest, current_user = Depends(get_current_u
         user.total_chops += chops_to_award
         user.alert_sharing_chops += chops_to_award
         chops_earned = chops_to_award
-        
+
         # Update alert share count
         alert.total_shares += 1
 

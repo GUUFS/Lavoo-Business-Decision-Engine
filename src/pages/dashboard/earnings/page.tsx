@@ -1,84 +1,44 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { calculateUserLevel } from './levelcalculator';
 import type { UserLevelInfo } from './levelcalculator';
-import { earningsAPI } from './service';
 import ReferralLinkModal from './referralLink';
-
-interface EarningsSummary {
-  totalCommissions: number;
-  totalPaidReferrals: number;
-  referralChops: number;
-  growthRate: number;
-  totalRevenue: number;
-  transactions: number;
-  avgOrderValue: number;
-  commissionRate: number;
-  paidCommissions: number;
-  pendingCommissions: number;
-}
-
-interface ReferralData {
-  total_referrals: number;
-  total_chops_earned: number;
-  referrals_this_month: number;
-  recent_referrals: Array<{
-    id: number;
-    referred_user_email: string;
-    referred_user_name: string;
-    chops_awarded: number;
-    created_at: string;
-  }>;
-}
-
-interface UserData {
-  id: number;
-  name: string;
-  email: string;
-  total_chops: number;
-  referral_chops: number;
-  referral_count: number;
-  referral_code: string;
-}
-
-interface MonthlyMetrics {
-  month: string;
-  month_number?: number;
-  year: number;
-  referral_count: number;
-  paid_referral_count: number;
-  referral_chops: number;
-  commission: number;
-  revenue: number;
-}
-
-interface LoadingState {
-  user: boolean;
-  referrals: boolean;
-  earnings: boolean;
-  years: boolean;
-  specificMonth: boolean;
-}
+import {
+  useEarningsUser,
+  useReferralStats,
+  useEarningsSummary,
+  useAvailableYears,
+  useMonthlyPerformance,
+} from '@/api/earnings';
 
 export default function EarningsPage() {
-  const [userLevelInfo, setUserLevelInfo] = useState<UserLevelInfo | null>(null);
-  const [earningsData, setEarningsData] = useState<EarningsSummary | null>(null);
-  const [referralData, setReferralData] = useState<ReferralData | null>(null);
-  // const [userData, setUserData] = useState<UserData | null>(null);
-  const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
-  const [specificMonthData, setSpecificMonthData] = useState<MonthlyMetrics | null>(null);
-
-  const [loadingState, setLoadingState] = useState<LoadingState>({
-    user: true,
-    referrals: true,
-    earnings: true,
-    years: true,
-    specificMonth: false
-  });
-  const [error, setError] = useState<string | null>(null);
   const [showReferralModal, setShowReferralModal] = useState(false);
-  const [referralLink, setReferralLink] = useState('');
+
+  // Use TanStack Query hooks for all data fetching with automatic caching
+  const { data: userData, isLoading: isLoadingUser, error: userError } = useEarningsUser();
+  const { data: referralData, isLoading: isLoadingReferrals } = useReferralStats();
+  const { data: earningsData, isLoading: isLoadingEarnings } = useEarningsSummary();
+  const { data: availableYears = [], isLoading: isLoadingYears } = useAvailableYears();
+  const { data: specificMonthData, isLoading: isLoadingMonth } = useMonthlyPerformance(selectedYear, selectedMonth);
+
+  // Calculate user level from chops (memoized)
+  const userLevelInfo: UserLevelInfo | null = useMemo(() => {
+    if (!userData) return null;
+    const totalChops = userData.total_chops || 0;
+    return calculateUserLevel(totalChops);
+  }, [userData]);
+
+  // Generate referral link (memoized)
+  const referralLink = useMemo(() => {
+    if (!userData?.referral_code) return '';
+    const baseUrl = window.location.origin;
+    return `${baseUrl}/signup?ref=${userData.referral_code}`;
+  }, [userData?.referral_code]);
+
+  // Combined loading state
+  const loading = isLoadingUser || isLoadingReferrals || isLoadingEarnings;
+  const error = userError ? 'Your session has expired. Please log in again.' : null;
 
   const months = [
     { value: 1, label: 'January' },
@@ -95,119 +55,11 @@ export default function EarningsPage() {
     { value: 12, label: 'December' },
   ];
 
-  useEffect(() => {
-    fetchAllData();
-    fetchAvailableYears();
-  }, []);
-
-  useEffect(() => {
-    if (selectedYear && selectedMonth) {
-      fetchSpecificMonthData();
-    }
-  }, [selectedYear, selectedMonth]);
-
-  const fetchAllData = () => {
-    setLoadingState({
-      user: true,
-      referrals: true,
-      earnings: true,
-      years: false,
-      specificMonth: false
-    });
-    setError(null);
-
-    fetchUserData();
-    fetchReferralStats();
-    fetchEarningsSummary();
-  };
-
-  const fetchAvailableYears = async () => {
-    try {
-      setLoadingState(prev => ({ ...prev, years: true }));
-      const response = await earningsAPI.getAvailableYears();
-
-      if (response?.data?.years) {
-        setAvailableYears(response.data.years);
-      }
-    } catch (err: any) {
-      console.error('Error fetching available years:', err);
-    } finally {
-      setLoadingState(prev => ({ ...prev, years: false }));
-    }
-  };
-
-  const fetchSpecificMonthData = async () => {
-    try {
-      setLoadingState(prev => ({ ...prev, specificMonth: true }));
-      const response = await earningsAPI.getMonthlyPerformance(selectedYear, selectedMonth);
-
-      if (response?.data) {
-        setSpecificMonthData(response.data);
-      }
-    } catch (err: any) {
-      console.error('Error fetching specific month data:', err);
-    } finally {
-      setLoadingState(prev => ({ ...prev, specificMonth: false }));
-    }
-  };
-
-  const fetchUserData = async () => {
-    try {
-      const response = await earningsAPI.getCurrentUser();
-
-      if (response?.data) {
-        // const { data: userData } = useQuery({
-        const userData: UserData = response.data;
-        // setUserData(userData);
-
-        const baseUrl = window.location.origin;
-        setReferralLink(`${baseUrl}/signup?ref=${userData.referral_code}`);
-
-        const totalChops = userData.total_chops || 0;
-        const levelInfo = calculateUserLevel(totalChops);
-        setUserLevelInfo(levelInfo);
-      }
-    } catch (err: any) {
-      console.error('Error fetching user data:', err);
-      if (err.response?.status === 401) {
-        setError('Your session has expired. Please log in again.');
-      }
-    } finally {
-      setLoadingState(prev => ({ ...prev, user: false }));
-    }
-  };
-
-  const fetchReferralStats = async () => {
-    try {
-      const response = await earningsAPI.getReferralStats();
-      if (response?.data) {
-        setReferralData(response.data);
-      }
-    } catch (err: any) {
-      console.error('Error fetching referral stats:', err);
-    } finally {
-      setLoadingState(prev => ({ ...prev, referrals: false }));
-    }
-  };
-
-  const fetchEarningsSummary = async () => {
-    try {
-      const response = await earningsAPI.getEarningsSummary();
-      if (response?.data) {
-        setEarningsData(response.data);
-      }
-    } catch (err: any) {
-      console.error('Error fetching earnings summary:', err);
-    } finally {
-      setLoadingState(prev => ({ ...prev, earnings: false }));
-    }
-  };
-
   const handleShareReferralLink = () => {
     setShowReferralModal(true);
   };
 
-  if (loadingState.user && loadingState.referrals && loadingState.earnings) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center">
         <div className="text-center">
@@ -227,8 +79,8 @@ export default function EarningsPage() {
             <h3 className="text-lg font-bold text-red-800 mb-2">Unable to Load Earnings Data</h3>
             <p className="text-red-700 mb-4">{error}</p>
             <div className="flex gap-3 justify-center">
-              <button onClick={fetchAllData} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
-                Try Again
+              <button onClick={() => window.location.reload()} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors">
+                Reload Page
               </button>
               <button onClick={() => window.location.href = '/dashboard'} className="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors">
                 Back to Dashboard
@@ -273,7 +125,7 @@ export default function EarningsPage() {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Total Commissions</p>
-                {loadingState.earnings ? (
+                {isLoadingEarnings ? (
                   <LoadingSkeleton className="h-8 w-20 mt-1" />
                 ) : (
                   <p className="text-xl sm:text-2xl font-bold text-gray-900">
@@ -291,7 +143,7 @@ export default function EarningsPage() {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Paid Commissions</p>
-                {loadingState.earnings ? (
+                {isLoadingEarnings ? (
                   <LoadingSkeleton className="h-8 w-20 mt-1" />
                 ) : (
                   <p className="text-xl sm:text-2xl font-bold text-gray-900">
@@ -309,7 +161,7 @@ export default function EarningsPage() {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Pending Commissions</p>
-                {loadingState.earnings ? (
+                {isLoadingEarnings ? (
                   <LoadingSkeleton className="h-8 w-20 mt-1" />
                 ) : (
                   <p className="text-xl sm:text-2xl font-bold text-gray-900">
@@ -327,7 +179,7 @@ export default function EarningsPage() {
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Paid Referrals</p>
-                {loadingState.earnings ? (
+                {isLoadingReferrals ? (
                   <LoadingSkeleton className="h-8 w-16 mt-1" />
                 ) : (
                   <p className="text-xl sm:text-2xl font-bold text-gray-900">
@@ -347,7 +199,7 @@ export default function EarningsPage() {
                 <p className="text-xs sm:text-sm font-medium text-gray-600">
                   Referral Chops
                 </p>
-                {loadingState.earnings ? (
+                {isLoadingReferrals ? (
                   <LoadingSkeleton className="h-8 w-16 mt-1" />
                 ) : (
                   <p className="text-xl sm:text-2xl font-bold text-gray-900">
@@ -419,10 +271,10 @@ export default function EarningsPage() {
                     <select
                       value={selectedYear}
                       onChange={(e) => setSelectedYear(Number(e.target.value))}
-                      disabled={loadingState.years}
+                      disabled={isLoadingYears}
                       className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                     >
-                      {loadingState.years ? (
+                      {isLoadingYears ? (
                         <option>Loading...</option>
                       ) : availableYears.length > 0 ? (
                         availableYears.map(year => (
@@ -446,7 +298,7 @@ export default function EarningsPage() {
                 </div>
 
                 {/* Selected Month Data */}
-                {loadingState.specificMonth ? (
+                {isLoadingMonth ? (
                   <div className="p-4 bg-gradient-to-r from-gray-50 to-white rounded-lg border border-gray-200">
                     <LoadingSkeleton className="h-32 w-full" />
                   </div>
@@ -517,7 +369,7 @@ export default function EarningsPage() {
                       <p className="text-sm text-gray-600">All time</p>
                     </div>
                   </div>
-                  {loadingState.referrals ? (
+                  {isLoadingReferrals ? (
                     <LoadingSkeleton className="h-7 w-12" />
                   ) : (
                     <p className="text-xl font-bold text-gray-900">{totalReferrals}</p>
@@ -532,14 +384,14 @@ export default function EarningsPage() {
                     <div>
                       <p className="font-semibold text-gray-900">Total Chops</p>
                       <p className="text-sm text-gray-600">From referrals</p>
-                    </div> 
+                    </div>
                   </div>
-                  {loadingState.referrals ? (
+                  {isLoadingReferrals ? (
                     <LoadingSkeleton className="h-7 w-12" />
                   ) : (
                     <p className="text-xl font-bold text-green-600">{totalChopsEarned}</p>
                   )} */}
-                </div> 
+                </div>
 
                 <div className="pt-4 border-t border-gray-200">
                   <button

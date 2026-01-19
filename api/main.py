@@ -45,10 +45,10 @@ setup_logging(level=logging.INFO if os.getenv("DEBUG") != "true" else logging.DE
 logger = get_logger(__name__)
 
 # import the router page
-from api.routes import ai_db as ai  # PostgreSQL-based AI routes
+# from api.routes import ai_db as ai  # PostgreSQL-based AI routes - DEPRECATED (uses deleted analyst_db)
 from api.routes import analyzer, index, login, signup, admin, dependencies, earnings
-from api.routes import analyzer_v2  # Agentic analyzer v2
-from api.routes import customer_service, reviews, alerts, insights, referrals, security, firewall_scanner
+from api.routes import business_analyzer  # Business analysis routes
+from api.routes import customer_service, reviews, alerts, insights, referrals, security, firewall_scanner, user_stats
 from api.routes.control import revenue, users, dashboard, settings
 
 #  Payment routes
@@ -229,7 +229,7 @@ async def startup_event():
                 try:
                     # Add created_at and updated_at to system_settings
                     db.execute(text("""
-                        ALTER TABLE system_settings 
+                        ALTER TABLE system_settings
                         ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
                     """))
@@ -339,12 +339,13 @@ if os.path.exists(os.path.join(out_dir, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(out_dir, "assets")), name="assets")
 
 # Include API routers (specific routes)
-app.include_router(ai.router, prefix="/api")
+# app.include_router(ai.router, prefix="/api")  # DEPRECATED: ai_db uses deleted analyst_db module
 app.include_router(signup.router, prefix="/api")  # For React frontend that uses /api/signup
 app.include_router(login.router, prefix="/api")  # For React frontend that uses /api/login
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
-app.include_router(analyzer_v2.router)  # Agentic analyzer v2
+app.include_router(business_analyzer.router)  # Business analysis
+app.include_router(user_stats.router)  # User statistics
 app.include_router(analyzer.router)
 app.include_router(admin.router)
 app.include_router(paypal.router)

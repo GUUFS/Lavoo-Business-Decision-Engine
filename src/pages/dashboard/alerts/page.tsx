@@ -28,7 +28,6 @@ interface Alert {
 
 interface UserStats {
     total_alerts: number;
-    total_chops: number;
     is_pro: boolean;
     pending_alerts: number;
 }
@@ -51,7 +50,6 @@ export default function AlertsPage() {
     const [alerts, setAlerts] = useState<Alert[]>([]);
     const [displayAlerts, setDisplayAlerts] = useState<Alert[]>([]);
     const [userStats, setUserStats] = useState<UserStats>({
-        total_chops: 0,
         is_pro: false,
         total_alerts: 0,
         pending_alerts: 0
@@ -109,14 +107,7 @@ export default function AlertsPage() {
     }, [cachedAlertsData, alertsLoading, user, currentPage]);
 
     // Sync chops data
-    useEffect(() => {
-        if (chopsData) {
-            setUserStats(prev => ({
-                ...prev,
-                total_chops: chopsData.total_chops
-            }));
-        }
-    }, [chopsData]);
+    // Removed chops tracking - feature deprecated
 
     // Share modal state
     const [showShareModal, setShowShareModal] = useState(false);
@@ -358,9 +349,9 @@ export default function AlertsPage() {
 
                 {/* Content */}
                 <div style={{ flex: 1, padding: '24px' }}>
-                    {/* Stats Cards */}
-                    {/* Stats Cards - Commented out as requested */}
-                    {/* <div style={{
+                    {/* Stats Cards - Commented out (chops feature deprecated) */}
+                    {/*
+                    <div style={{
                         display: 'grid',
                         gridTemplateColumns: window.innerWidth >= 1024 ? 'repeat(4, 1fr)' : window.innerWidth >= 640 ? 'repeat(2, 1fr)' : '1fr', gap: '24px', marginBottom: '32px'
                     }}>
@@ -395,20 +386,6 @@ export default function AlertsPage() {
                         <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <div>
-                                    <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>Total Chops</p>
-                                    <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
-                                        {userStats.total_chops}
-                                    </p>
-                                </div>
-                                <div style={{ width: '48px', height: '48px', backgroundColor: '#dcfce7', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <i className="ri-star-line" style={{ color: '#16a34a', fontSize: '20px' }}></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <div>
                                     <p style={{ fontSize: '14px', color: '#6b7280', margin: '0 0 4px 0' }}>Subscription</p>
                                     <p style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
                                         {userStats.is_pro ? 'Pro' : 'Free'}
@@ -419,7 +396,8 @@ export default function AlertsPage() {
                                 </div>
                             </div>
                         </div>
-                    </div> */}
+                    </div>
+                    */}
 
                     {/* Loading State */}
                     {loading && (

@@ -3,17 +3,16 @@ import Button from '../../components/base/Button';
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { getUserAnalyses, getAnalysisById, type BusinessAnalysisResult, type BusinessStrategy } from '../../api/business-analyzer';
+import { getUserAnalyses, getAnalysisById, type BusinessAnalysisResult, type ActionPlan } from '../../api/business-analyzer';
 
 interface StrategyCardProps {
-  action: BusinessStrategy;
+  action: ActionPlan;
   index: number;
-  hasAITool: any;
-  effort?: string;
 }
 
-function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCardProps) {
-  const steps = action.description.split('.').filter(s => s.trim()).map(s => s.trim() + '.');
+function StrategyCard({ action, index }: StrategyCardProps) {
+  const hasAITool = action.toolkit;
+  const effort = action.effort_level || 'Medium';
 
   return (
     <div className="bg-white border border-gray-100 rounded-[2rem] shadow-2xl overflow-hidden group hover:border-orange-200 transition-all duration-500 hover:shadow-orange-100/50 mb-12 last:mb-0">
@@ -41,8 +40,8 @@ function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCard
                 <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
                 <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">What to do:</div>
               </div>
-              <div className="text-gray-700 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
-                {action.description.split('.')[0]}.
+              <div className="text-gray-700 leading-relaxed font-medium text-base">
+                {action.what_to_do}
               </div>
             </div>
           </div>
@@ -52,8 +51,8 @@ function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCard
                 <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
                 <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">Why this matters:</div>
               </div>
-              <div className="text-gray-600 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
-                {steps[1] || "This represents the highest leverage move for your current business stage."}
+              <div className="text-gray-600 leading-relaxed font-medium text-base">
+                {action.why_it_matters}
               </div>
             </div>
           </div>
@@ -71,7 +70,7 @@ function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCard
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-base font-bold text-gray-900 uppercase tracking-tight">Tool Name:</span>
-                    <span className="ml-2 text-xl font-black text-orange-600 tracking-tight">{hasAITool.title}</span>
+                    <span className="ml-2 text-xl font-black text-orange-600 tracking-tight">{hasAITool.tool_name}</span>
                   </div>
                   {hasAITool.website && (
                     <a
@@ -87,14 +86,14 @@ function StrategyCard({ action, index, hasAITool, effort = 'Low' }: StrategyCard
                 </div>
                 <div>
                   <div className="text-base font-bold text-gray-900 mb-2 uppercase tracking-tight">What it helps with:</div>
-                  <p className="text-gray-700 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
-                    {hasAITool.description}
+                  <p className="text-gray-700 leading-relaxed font-medium text-base">
+                    {hasAITool.what_it_helps}
                   </p>
                 </div>
                 <div>
                   <div className="text-base font-bold text-gray-900 mb-2 uppercase tracking-tight">Why this tool:</div>
-                  <p className="text-gray-700 leading-relaxed font-medium text-base overflow-hidden" style={{ maxHeight: '3rem', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2 }}>
-                    {hasAITool.pros?.[0] || `Built specifically for rapid ${hasAITool.title[0]} generation with minimal technical overhead.`}
+                  <p className="text-gray-700 leading-relaxed font-medium text-base">
+                    {hasAITool.why_this_tool}
                   </p>
                 </div>
               </div>
@@ -130,19 +129,6 @@ export default function Results() {
   const [error, setError] = useState<string | null>(null);
 
   const [showReasoningTrace, setShowReasoningTrace] = useState(false);
-  const [inspirationalMessage, setInspirationalMessage] = useState('');
-
-  const motivationalQuotes = [
-    "You are not behind. You are just early in the sequence.",
-    "Precision beats speed when the direction is right.",
-    "Focus on the bottleneck, and the rest becomes noise.",
-    "Growth is a series of solved problems. You're on the next one.",
-    "The best time to optimize was yesterday. The second best time is NOW."
-  ];
-
-  useEffect(() => {
-    setInspirationalMessage(motivationalQuotes[Math.floor(Math.random() * motivationalQuotes.length)]);
-  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -254,14 +240,16 @@ export default function Results() {
   }
 
   const {
-    bottlenecks = [],
-    business_strategies: businessStrategies = [],
-    ai_tools: aiTools = [],
-    ai_confidence_score: aiConfidenceScore = 92,
+    primary_bottleneck: primaryBottleneck,
+    secondary_constraints: secondaryBottlenecks = [],
+    what_to_stop: whatToStop,
+    strategic_priority: strategicPriority,
+    action_plans: actionPlans = [],
+    execution_roadmap: executionRoadmap = [],
+    exclusions_note: exclusionsNote,
+    motivational_quote: motivationalQuote,
+    ai_confidence_score: aiConfidenceScore = 90,
   } = analysisData;
-
-  const primaryBottleneck = bottlenecks[0];
-  const secondaryBottlenecks = bottlenecks.slice(1);
   const reasoningSteps = [
     'Addresses cognitive shortcut: "DON\'t try to generate $200/m rapidly vs. reach $5000/m"',
     'The "Safe Creator" is a VEE: illustrated in Business / Podcaster / Thread platforms',
@@ -330,7 +318,7 @@ export default function Results() {
           <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-32 -mt-32"></div>
           <div className="relative z-10 mb-6 md:mb-0">
             <h1 className="text-3xl md:text-5xl font-medium mb-4 uppercase tracking-tighter leading-tight">
-              Your growth is being slowed down by <span className="font-extrabold text-white">{bottlenecks.length} critical bottlenecks</span>
+              Your growth is being slowed down by <span className="font-extrabold text-white">{1 + secondaryBottlenecks.length} critical bottlenecks</span>
             </h1>
             <p className="text-orange-100 opacity-90 text-lg font-medium">
               Precision analysis triggered by current ecosystem signals.
@@ -376,7 +364,7 @@ export default function Results() {
                       <div className="text-[10px] font-bold text-gray-900 uppercase tracking-widest">Consequence if ignored</div>
                     </div>
                     <p className="text-gray-600 font-medium leading-relaxed text-lg">
-                      {primaryBottleneck?.impact || "Your current growth plateau will persist, leading to wasted resources and missed market opportunities."}
+                      {primaryBottleneck?.consequence || "Your current growth plateau will persist, leading to wasted resources and missed market opportunities."}
                     </p>
                   </div>
                 </div>
@@ -391,7 +379,7 @@ export default function Results() {
                 <h2 className="text-xl font-bold text-gray-900 uppercase tracking-widest">Strategic Priority</h2>
               </div>
               <p className="text-3xl font-extrabold text-gray-900 tracking-tighter leading-tight">
-                {businessStrategies[0]?.description || "Execute the primary action plan item to resolve the core bottleneck."}
+                {strategicPriority || "Execute the primary action plan item to resolve the core bottleneck."}
               </p>
             </div>
           </div>
@@ -431,7 +419,7 @@ export default function Results() {
                 STOP
               </div>
               <p className="text-base text-gray-500 leading-relaxed font-medium">
-                Stop wasting time on broad promotions that aren't translating into sales; they are not effective and won't change your revenue situation.
+                {whatToStop || "Stop wasting time on broad promotions that aren't translating into sales; they are not effective and won't change your revenue situation."}
               </p>
             </div>
           </div>
@@ -446,19 +434,17 @@ export default function Results() {
             </div>
             <div className="flex items-center bg-white border border-gray-100 px-8 py-4 rounded-[1.5rem] text-[10px] font-medium text-gray-500 uppercase tracking-[0.3em] shadow-sm">
               <i className="ri-list-check-2 mr-4 text-orange-500 text-lg"></i>
-              {businessStrategies.length} Phase Delivery Strategy
+              {actionPlans.length} Action Strategy
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
             <div className="lg:col-span-8 space-y-4">
-              {businessStrategies.map((action, index) => (
+              {actionPlans.map((action, index) => (
                 <StrategyCard
                   key={action.id}
                   action={action}
                   index={index}
-                  hasAITool={aiTools[index]}
-                  effort={aiTools[index]?.implementation?.difficulty}
                 />
               ))}
             </div>
@@ -469,67 +455,43 @@ export default function Results() {
                   Note on exclusions:
                 </div>
                 <p className="text-sm text-gray-500 leading-relaxed italic font-medium">
-                  {analysisData.objective?.toLowerCase().includes('ad')
-                    ? "I excluded actions related to \"paid advertising\" and \"increasing post frequency\" because you have already promoted heavily without results. Fixing the offer is the prerequisite for success."
-                    : "This plan specifically excludes traditional ad-spend strategies and complex technical builds that would exceed your current 10-hour weekly capacity."}
+                  {exclusionsNote || "This plan specifically excludes traditional ad-spend strategies and complex technical builds that would exceed your current capacity."}
                 </p>
               </div>
 
               <div className="bg-orange-900 rounded-[2.5rem] p-10 text-white shadow-2xl relative overflow-hidden">
                 <div className="relative z-10">
-                  <div className="text-[12px] font-bold uppercase tracking-[0.3em] text-orange-400 mb-8 opacity-80">Execution Roadmap: 7-Day Sprint</div>
+                  <div className="text-[12px] font-bold uppercase tracking-[0.3em] text-orange-400 mb-8 opacity-80">
+                    Execution Roadmap: {analysisData.estimated_days || 0}-Day Plan
+                  </div>
 
                   <div className="space-y-10">
-                    <div>
-                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Days 1-2: The Fix</div>
-                      <div className="space-y-4">
-                        <div className="flex items-start gap-4">
-                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
-                          <div className="text-sm font-medium opacity-90">Analyze competitor 1-star reviews. List the top 3 missing features.</div>
+                    {executionRoadmap && executionRoadmap.length > 0 ? (
+                      executionRoadmap.map((phase, index) => (
+                        <div key={index}>
+                          <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">
+                            {phase.phase || `Phase ${index + 1}`}
+                          </div>
+                          <div className="space-y-4">
+                            {phase.tasks && phase.tasks.map((task, taskIndex) => (
+                              <div key={taskIndex} className="flex items-start gap-4">
+                                <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
+                                <div className="text-sm font-medium opacity-90">{task}</div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="flex items-start gap-4">
-                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
-                          <div className="text-sm font-medium opacity-90">Rewrite Headline & Bullets to target those missing features.</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Day 3: The Build</div>
-                      <div className="flex items-start gap-4">
-                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
-                        <div className="text-sm font-medium opacity-90">Update your sales page/landing page with the new copy only. Do not change the design.</div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Days 4-7: The Test (No Ads)</div>
-                      <div className="space-y-4">
-                        <div className="flex items-start gap-4">
-                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
-                          <div className="text-sm font-medium opacity-90">Post the new concept in 3 relevant niche communities. Ask for specific feedback.</div>
-                        </div>
-                        <div className="flex items-start gap-4">
-                          <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
-                          <div className="text-sm font-medium opacity-90">Engage with commenters. Track interest levels. Do not sell.</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-6 border-t border-orange-800">
-                      <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">Decision Point (Day 8)</div>
-                      <div className="space-y-3">
-                        <div className="text-sm opacity-90"><span className="font-bold">High Interest:</span> Resume paid ads.</div>
-                        <div className="text-sm opacity-90"><span className="font-bold">Silence:</span> Your headline is still too generic. Iterate again.</div>
-                      </div>
-                    </div>
+                      ))
+                    ) : (
+                      <div className="text-sm opacity-80">No roadmap available</div>
+                    )}
                   </div>
                 </div>
               </div>
 
               <div className="text-center pt-8">
                 <div className="bg-orange-50 border border-orange-100 rounded-2xl p-8 inline-block">
-                  <p className="text-orange-900 italic font-medium text-lg">"{inspirationalMessage}"</p>
+                  <p className="text-orange-900 italic font-medium text-lg">"{motivationalQuote || "Stay focused and keep pushing forward."}"</p>
                 </div>
               </div>
             </div>

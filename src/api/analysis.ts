@@ -153,28 +153,42 @@ const getAuthHeaders = () => {
 
 /**
  * Transform backend analysis data to UI format
+ * Uses NEW SCHEMA: primary_bottleneck, secondary_constraints, action_plans
  */
-const transformAnalysis = (analysis: BusinessAnalysis): TransformedAnalysis => ({
-  id: analysis.analysis_id,
-  title: `Business Analysis - ${new Date(analysis.created_at).toLocaleDateString('en-US', {
-    month: '2-digit',
-    day: '2-digit',
-    year: 'numeric'
-  })}`,
-  date: new Date(analysis.created_at).toLocaleDateString('en-US', {
-    month: '2-digit',
-    day: '2-digit',
-    year: 'numeric'
-  }),
-  description: analysis.objective || analysis.business_goal || 'Business analysis report',
-  bottlenecks: analysis.bottlenecks?.length || 0,
-  solutions: (analysis.business_strategies?.length || 0) + (analysis.ai_tools?.length || 0),
-  confidence: `${analysis.ai_confidence_score || 85}%`,
-  status: 'completed',
-  industry: 'Business',
-  created_at: analysis.created_at,
-  raw: analysis,
-});
+const transformAnalysis = (analysis: BusinessAnalysis): TransformedAnalysis => {
+  // Extract data from new schema
+  const primaryBottleneck = (analysis as any).primary_bottleneck || {};
+  const secondaryConstraints = (analysis as any).secondary_constraints || [];
+  const actionPlans = (analysis as any).action_plans || [];
+
+  // Count issues: 1 primary + secondary constraints
+  const issuesCount = (primaryBottleneck.title ? 1 : 0) + secondaryConstraints.length;
+
+  // Count solutions: action plans
+  const solutionsCount = actionPlans.length;
+
+  return {
+    id: analysis.analysis_id,
+    title: `Business Analysis - ${new Date(analysis.created_at).toLocaleDateString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric'
+    })}`,
+    date: new Date(analysis.created_at).toLocaleDateString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric'
+    }),
+    description: (analysis as any).strategic_priority || analysis.objective || analysis.business_goal || 'Business analysis report',
+    bottlenecks: issuesCount,
+    solutions: solutionsCount,
+    confidence: `${analysis.ai_confidence_score || 90}%`,
+    status: 'completed',
+    industry: 'Business',
+    created_at: analysis.created_at,
+    raw: analysis,
+  };
+};
 
 /**
  * Hook to fetch user's analysis history
