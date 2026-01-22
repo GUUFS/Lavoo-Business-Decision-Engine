@@ -100,14 +100,14 @@ export default function ProfilePage() {
             {/* Profile Header */}
             <div className="bg-gradient-to-r from-orange-500 to-red-600 px-6 py-10 md:px-10 md:py-14 relative">
               <div className="flex flex-col md:flex-row items-center gap-8 relative z-10">
-                <div className="w-24 h-24 md:w-32 md:h-32 bg-white rounded-3xl flex items-center justify-center shadow-2xl transform rotate-3 hover:rotate-0 transition-transform duration-300">
+                {/* <div className="w-24 h-24 md:w-32 md:h-32 bg-white rounded-3xl flex items-center justify-center shadow-2xl transform rotate-3 hover:rotate-0 transition-transform duration-300">
                   <span className="text-6xl md:text-7xl">{levelInfo?.currentLevel.badge || '🏗️'}</span>
-                </div>
+                </div> */}
                 <div className="text-center md:text-left">
                   <div className="flex items-center gap-3 mb-2 justify-center md:justify-start">
                     <h2 className="text-2xl md:text-4xl font-extrabold text-white tracking-tight">{user?.name}</h2>
                     <span className={`px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold text-white border border-white/30 uppercase tracking-widest`}>
-                      {user?.subscription_status === 'active' ? 'PRO' : 'FREE'}
+                      {user?.subscription_status?.toLowerCase() === 'active' ? 'PRO' : 'FREE'}
                     </span>
                   </div>
                   <p className="text-orange-100 text-lg opacity-90">Joined Lavoo since <span className="font-bold border-b border-orange-200/50 pb-0.5">{joinDate}</span></p>

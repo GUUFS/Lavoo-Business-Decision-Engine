@@ -47,6 +47,8 @@ export interface DashboardStats {
   total_referrals: number;
   referrals_this_month: number;
   referral_chops: number;
+  total_commissions: number;
+  paid_commissions: number;
 }
 
 // --- AUTH HELPERS ---
@@ -105,8 +107,9 @@ export const useDashboardStats = (userId: number | null) => {
 
       let totalAnalyses = 0;
       let avgConfidence = 0;
+      let statsData: any = {};
       if (statsResponse.ok) {
-        const statsData = await statsResponse.json();
+        statsData = await statsResponse.json();
         totalAnalyses = statsData.total_analyses || 0;
         avgConfidence = statsData.avg_confidence || 0;
       }
@@ -139,6 +142,8 @@ export const useDashboardStats = (userId: number | null) => {
         total_referrals: userData.referral_count || 0,
         referrals_this_month: userData.referrals_this_month || 0,
         referral_chops: userData.referral_chops || 0,
+        total_commissions: statsData.total_commissions || 0,
+        paid_commissions: statsData.paid_commissions || 0,
       };
     },
     enabled: !!userId,
@@ -294,3 +299,38 @@ export const useAllInsights = () => {
     refetchOnWindowFocus: false,
   });
 };
+
+export interface BusinessAnalysis {
+  analysis_id: number;
+  business_goal: string;
+  primary_bottleneck: {
+    title: string;
+    description: string;
+    priority: string;
+    impact: string;
+  };
+  strategic_priority: string;
+  created_at: string;
+  ai_confidence_score: number;
+}
+
+export const useRecentAnalyses = (limit = 3) => {
+  return useQuery({
+    queryKey: ["business", "analyses", "recent", limit],
+    queryFn: async (): Promise<BusinessAnalysis[]> => {
+      const response = await fetch(`${API_BASE_URL}/api/business/analyses?limit=${limit}`, {
+        headers: getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result.data || [];
+    },
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+};
+

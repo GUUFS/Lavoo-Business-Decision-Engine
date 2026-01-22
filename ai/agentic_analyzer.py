@@ -395,8 +395,8 @@ Be specific and practical."""
                     {
                         "id": 1,
                         "title": "Action title",
-                        "what_to_do": "Specific steps",
-                        "why_it_matters": "Impact/reasoning",
+                        "what_to_do": ["Step 1", "Step 2"],
+                        "why_it_matters": ["Impact 1", "Impact 2"],
                         "effort_level": "Low|Medium|High",
                         "toolkit": {
                             "tool_name": "Tool name",
@@ -424,8 +424,8 @@ Your task: Create 3-5 RANKED action plans that solve the primary bottleneck.
 CRITICAL RULES:
 1. Order by LEVERAGE (highest impact first, not chronological)
 2. Each action must directly address the primary bottleneck
-3. "what_to_do" = clear, executable steps (2-3 sentences)
-4. "why_it_matters" = business impact/reasoning (1-2 sentences)
+3. "what_to_do" = a LIST of clear, executable steps (complete, meaningful sentences)
+4. "why_it_matters" = a LIST of business impact/reasoning points (complete, meaningful sentences)
 5. "effort_level" = Low, Medium, or High
 6. "needs_ai_tool" = true if AI automation could significantly help, false otherwise
 7. Maximum 5 action plans
@@ -437,8 +437,8 @@ OUTPUT FORMAT (JSON):
         {{
             "id": 1,
             "title": "Action title (5-10 words)",
-            "what_to_do": "Clear steps",
-            "why_it_matters": "Impact",
+            "what_to_do": ["Step 1", "Step 2"],
+            "why_it_matters": ["Impact 1"],
             "effort_level": "Low",
             "needs_ai_tool": false
         }}
@@ -547,16 +547,30 @@ Only recommend if it genuinely adds value."""
                 {
                     "id": 1,
                     "title": "Rewrite value proposition for specific niche",
-                    "what_to_do": "Analyze competitor 1-star reviews to identify missing features. Rewrite your headline and core messaging to target those specific pain points. Test with 5 ideal customers before launch.",
-                    "why_it_matters": "This fixes the root cause - unclear positioning. When prospects immediately understand \"this solves MY problem\", conversion rates increase 3-5x.",
+                    "what_to_do": [
+                        "Analyze competitor 1-star reviews to identify missing features.",
+                        "Rewrite your headline and core messaging to target those specific pain points.",
+                        "Test with 5 ideal customers before launch and iterate based on feedback."
+                    ],
+                    "why_it_matters": [
+                        "This fixes the root cause of low conversion - unclear positioning.",
+                        "Directly addresses customer pain points that competitors are ignoring.",
+                        "Increases your organic conversion rate by 3-5x without increasing ad spend."
+                    ],
                     "effort_level": "Medium",
                     "toolkit": None
                 },
                 {
                     "id": 2,
                     "title": "Build simple lead magnet funnel",
-                    "what_to_do": "Create a 1-page resource solving your ideal customer's #1 problem. Set up basic email sequence (3-5 emails) nurturing leads toward your offer.",
-                    "why_it_matters": "Captures and converts the 95% of visitors who aren't ready to buy today. Automated follow-up increases lifetime customer value significantly.",
+                    "what_to_do": [
+                        "Create a high-value 1-page resource solving your ideal customer's #1 problem.",
+                        "Set up a basic email sequence (3-5 emails) nurturing leads toward your primary offer."
+                    ],
+                    "why_it_matters": [
+                        "Captures and converts the 95% of visitors who aren't ready to buy immediately.",
+                        "Automated follow-up increases lifetime customer value and brand trust significantly."
+                    ],
                     "effort_level": "Low",
                     "toolkit": {
                         "tool_name": "ConvertKit",
@@ -568,8 +582,14 @@ Only recommend if it genuinely adds value."""
                 {
                     "id": 3,
                     "title": "Launch weekly content on second platform",
-                    "what_to_do": "Identify where your ideal customers hang out (LinkedIn, Twitter, YouTube, etc.). Repurpose your best content weekly with platform-specific hooks.",
-                    "why_it_matters": "Diversifies traffic sources and compounds your reach. Each platform has different discovery algorithms - more distribution = more opportunities.",
+                    "what_to_do": [
+                        "Identify where your real customers hang out (e.g., LinkedIn, Twitter, or Discord).",
+                        "Repurpose your best content weekly with platform-specific hooks to maximize reach."
+                    ],
+                    "why_it_matters": [
+                        "Diversifies your traffic sources and reduces vulnerability to algorithm changes.",
+                        "Compounds your reach by leveraging different discovery algorithms across platforms."
+                    ],
                     "effort_level": "Medium",
                     "toolkit": None
                 }

@@ -1,12 +1,11 @@
-import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Button from '@/components/base/Button';
 import { useCurrentUser, useUserChops } from '@/api/user';
 import {
     useDashboardStats,
     useUrgentAlerts,
-    useTopInsights,
     useRecentReviews,
+    useRecentAnalyses,
 } from '@/api/dashboard';
 
 function Dashboard() {
@@ -14,20 +13,19 @@ function Dashboard() {
 
     // Use TanStack Query hooks for all data fetching with caching
     const { data: currentUser, isLoading: isLoadingUser } = useCurrentUser();
-    const { data: chopsData, isLoading: isLoadingChops } = useUserChops();
+    const { isLoading: isLoadingChops } = useUserChops();
     const userId = currentUser?.id || null;
 
     // Determine user subscription status
-    const isProUser = currentUser?.subscription_status === 'Active';
     const alertsLimit = 3; // Always show 3 alerts on dashboard widget (free users get 5 total on alerts page)
 
     const { data: stats, isLoading: isLoadingStats } = useDashboardStats(userId);
     const { data: urgentAlerts = [], isLoading: isLoadingAlerts } = useUrgentAlerts(userId, alertsLimit);
-    const { data: topInsights = [], isLoading: isLoadingInsights } = useTopInsights();
+    const { data: recentAnalyses = [] } = useRecentAnalyses();
     const { data: recentReviews = [], isLoading: isLoadingReviews } = useRecentReviews();
 
     // Combined loading state
-    const loading = isLoadingUser || isLoadingChops || isLoadingStats || isLoadingAlerts || isLoadingInsights || isLoadingReviews;
+    const loading = isLoadingUser || isLoadingChops || isLoadingStats || isLoadingAlerts || isLoadingReviews;
 
     const formatTimeAgo = (dateString: string) => {
         const date = new Date(dateString);
@@ -75,12 +73,14 @@ function Dashboard() {
                     {/* Total Analyses */}
                     <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
                         <div className="flex items-center justify-between mb-2">
+                            <div>
+                                <p className="text-sm text-gray-600 mb-1">Total Analyses</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_insights || 0}</p>
+                            </div>
                             <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-blue-50 flex items-center justify-center">
                                 <i className="ri-line-chart-line text-blue-600"></i>
                             </div>
                         </div>
-                        <p className="text-sm text-gray-600 mb-1">Total Analyses</p>
-                        <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_insights || 0}</p>
                     </div>
 
                     {/* Active Alerts */}
@@ -96,17 +96,30 @@ function Dashboard() {
                         </div>
                     </div>
 
-                    {/* Average Rating */}
+                    {/* Commissions */}
                     <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
                         <div className="flex items-center justify-between">
                             <div className="flex-1">
-                                <p className="text-sm text-gray-600 mb-1">Avg Rating</p>
+                                <p className="text-sm text-gray-600 mb-1">Total Commissions</p>
                                 <p className="text-xl md:text-2xl font-bold text-gray-900">
-                                    {typeof stats?.average_rating === 'number' ? stats.average_rating.toFixed(1) : '0.0'}
+                                    ${(stats?.total_commissions || 0).toLocaleString()}
                                 </p>
                             </div>
-                            <div className="w-10 h-10 md:w-12 md:h-12 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
-                                <i className="ri-star-line text-yellow-600 text-lg md:text-xl"></i>
+                            <div className="w-10 h-10 md:w-12 md:h-12 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                                <i className="ri-wallet-3-line text-purple-600 text-lg md:text-xl"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Total Referrals */}
+                    <div className="bg-white rounded-xl p-4 md:p-6 shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
+                        <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                                <p className="text-sm text-gray-600 mb-1">Total Referrals</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_referrals || 0}</p>
+                            </div>
+                            <div className="w-10 h-10 md:w-12 md:h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0 ml-3">
+                                <i className="ri-group-line text-green-600 text-lg md:text-xl"></i>
                             </div>
                         </div>
                     </div>
@@ -130,32 +143,38 @@ function Dashboard() {
                                     size="sm"
                                     className="whitespace-nowrap"
                                 >
-                                    View All <i className="ri-arrow-right-line ml-1"></i>
+                                    Go To <i className="ri-arrow-right-line ml-1"></i>
                                 </Button>
                             </div>
                         </div>
                         <div className="p-4 md:p-6">
-                            {topInsights.length > 0 ? (
-                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-                                    {topInsights.map((insight) => (
-                                        <div key={insight.id} className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200 cursor-pointer"
-                                            onClick={() => navigate('/dashboard/insights')}>
+                            {recentAnalyses.length > 0 ? (
+                                <div className={`grid grid-cols-1 ${recentAnalyses.length === 1 ? 'lg:grid-cols-1' : recentAnalyses.length === 2 ? 'md:grid-cols-2' : 'lg:grid-cols-3'} gap-4 md:gap-6`}>
+                                    {recentAnalyses.slice(0, 3).map((analysis) => (
+                                        <div key={analysis.analysis_id} className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200 cursor-default">
                                             <div className="flex items-center justify-between mb-3">
                                                 <span className="text-xs px-2 py-1 rounded-full font-medium bg-purple-100 text-purple-600">
                                                     Analysis Result
                                                 </span>
                                             </div>
                                             <h4 className="font-medium text-gray-900 mb-2 truncate">
-                                                {insight.title}
+                                                {analysis.business_goal}
                                             </h4>
                                             <p className="text-sm text-gray-600 leading-relaxed line-clamp-2">
-                                                {insight.why_it_matters}
+                                                {analysis.primary_bottleneck?.title || "Analysis completed"}
                                             </p>
                                         </div>
                                     ))}
                                 </div>
                             ) : (
-                                <p className="text-center text-gray-500 py-8">No insights available</p>
+                                <div className="flex flex-col items-center justify-center py-12 text-center bg-gray-50 rounded-lg border border-dashed border-gray-200">
+                                    <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mb-4">
+                                        <i className="ri-magic-line text-purple-600 text-2xl"></i>
+                                    </div>
+                                    <p className="text-lg font-medium text-gray-900 max-w-md">
+                                        Experience Lavoo's cutting edge solutions to your business constraints
+                                    </p>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -233,24 +252,31 @@ function Dashboard() {
                         </div>
                         <div className="p-4 md:p-6">
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-                                {/* <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-green-200 hover:bg-green-50/30 transition-all duration-200">
-                                    <div className="flex items-center justify-between mb-3">
-                                        <h4 className="font-medium text-gray-900 text-sm md:text-base">Total Chops</h4>
-                                        <i className="ri-coin-line text-green-600 text-xl"></i>
-                                    </div>
-                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">{chopsData?.total_chops || 0}</div>
-                                    <div className="text-sm text-gray-500">All-time earnings</div>
-                                </div> */}
-
+                                {/* Total Commissions */}
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-purple-200 hover:bg-purple-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
-                                        <h4 className="font-medium text-gray-900 text-sm md:text-base">Commissions</h4>
-                                        <i className="ri-user-add-line text-purple-600 text-xl"></i>
+                                        <h4 className="font-medium text-gray-900 text-sm md:text-base">Total Commissions</h4>
+                                        <i className="ri-wallet-3-line text-purple-600 text-xl"></i>
                                     </div>
-                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">$0</div>
-                                    <div className="text-sm text-gray-500">From referrals</div>
+                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">
+                                        ${(stats?.total_commissions || 0).toLocaleString()}
+                                    </div>
+                                    <div className="text-sm text-gray-500">All recorded commissions</div>
                                 </div>
 
+                                {/* Paid Commissions */}
+                                <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-green-200 hover:bg-green-50/30 transition-all duration-200">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h4 className="font-medium text-gray-900 text-sm md:text-base">Paid Commissions</h4>
+                                        <i className="ri-check-double-line text-green-600 text-xl"></i>
+                                    </div>
+                                    <div className="text-xl md:text-2xl font-bold text-gray-900 mb-1">
+                                        ${(stats?.paid_commissions || 0).toLocaleString()}
+                                    </div>
+                                    <div className="text-sm text-gray-500">Successfully paid out</div>
+                                </div>
+
+                                {/* Total Referrals */}
                                 <div className="border border-gray-200 rounded-lg p-4 md:p-5 hover:border-blue-200 hover:bg-blue-50/30 transition-all duration-200">
                                     <div className="flex items-center justify-between mb-3">
                                         <h4 className="font-medium text-gray-900 text-sm md:text-base">Total Referrals</h4>

@@ -21,16 +21,39 @@ export default function Footer() {
             </p>
             <div className="flex space-x-4">
               <button className="w-9 h-9 sm:w-10 sm:h-10 bg-white border border-gray-200 rounded-lg flex items-center justify-center hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-colors">
-                <i className="ri-twitter-fill text-base sm:text-lg"></i>
+                <a href="https://twitter.com/aitugo" target="_blank" rel="noopener noreferrer">
+                  <i className="ri-twitter-x-fill text-base sm:text-lg"></i>
+                </a>
               </button>
               <button className="w-9 h-9 sm:w-10 sm:h-10 bg-white border border-gray-200 rounded-lg flex items-center justify-center hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-colors">
-                <i className="ri-linkedin-fill text-base sm:text-lg"></i>
+                <a
+                  href="https://www.linkedin.com/search/results/all/?heroEntityKey=urn%3Ali%3Aorganization%3A106447017&keywords=AITugo&origin=ENTITY_SEARCH_HOME_HISTORY&sid=%40)H"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center hover:bg-white/20 transition-colors cursor-pointer"
+                >
+                  <i className="ri-linkedin-fill text-base sm:text-lg"></i>
+                </a>
               </button>
               <button className="w-9 h-9 sm:w-10 sm:h-10 bg-white border border-gray-200 rounded-lg flex items-center justify-center hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-colors">
-                <i className="ri-facebook-fill text-base sm:text-lg"></i>
+                <a
+                  href="https://web.facebook.com/aitugo"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center hover:bg-white/20 transition-colors cursor-pointer"
+                >
+                  <i className="ri-facebook-fill text-base sm:text-lg"></i>
+                </a>
               </button>
               <button className="w-9 h-9 sm:w-10 sm:h-10 bg-white border border-gray-200 rounded-lg flex items-center justify-center hover:bg-orange-500 hover:text-white hover:border-orange-500 transition-colors">
-                <i className="ri-instagram-fill text-base sm:text-lg"></i>
+                <a
+                  href="https://www.instagram.com/aitugo_?igsh=YzRtNjRjczFwdW51"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center hover:bg-white/20 transition-colors cursor-pointer"
+                >
+                  <i className="ri-instagram-fill text-base sm:text-lg"></i>
+                </a>
               </button>
             </div>
           </div>

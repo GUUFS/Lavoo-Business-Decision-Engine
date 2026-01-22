@@ -92,7 +92,7 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
 
             {/* Desktop Navigation */}
             <nav className="hidden md:flex items-center space-x-6 lg:space-x-8">
-              {!isLoggedIn && !isDashboard && (
+              {!isLoggedIn && !isDashboard && location.pathname !== '/' && (
                 <>
                   <button
                     onClick={() => navigate("/")}
@@ -100,18 +100,6 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
                   >
                     Home
                   </button>
-                  <button
-                    onClick={() => scrollToSection("blog")}
-                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap">
-                    Chopsticks
-                  </button>
-                  <a
-                    href="https://aitugo.com/shop"
-                    target="_blank"
-                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap flex items-center"
-                  >
-                    Momentum Vault
-                  </a>
                 </>
               )}
 
@@ -125,13 +113,7 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
                     <i className="ri-play-circle-line mr-2"></i>
                     Watch a Demo
                   </button>
-                  <a
-                    href="https://aitugo.com/shop"
-                    target="_blank"
-                    className="text-gray-700 hover:text-orange-500 font-medium transition-colors whitespace-nowrap"
-                  >
-                    Momentum Vault
-                  </a>
+
                 </>
               )}
 

@@ -14,6 +14,31 @@ function StrategyCard({ action, index }: StrategyCardProps) {
   const hasAITool = action.toolkit;
   const effort = action.effort_level || 'Medium';
 
+  const renderBulletPoints = (content: string | string[], textClass: string) => {
+    if (Array.isArray(content)) {
+      return (
+        <div className="space-y-4">
+          {content.map((point, i) => (
+            <div key={i} className="flex items-start gap-4">
+              <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-2.5 flex-shrink-0"></div>
+              <div className={`${textClass} leading-relaxed font-medium text-base`}>
+                {point}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-start gap-4">
+        <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-2.5 flex-shrink-0"></div>
+        <div className={`${textClass} leading-relaxed font-medium text-base`}>
+          {content}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="bg-white border border-gray-100 rounded-[2rem] shadow-2xl overflow-hidden group hover:border-orange-200 transition-all duration-500 hover:shadow-orange-100/50 mb-12 last:mb-0">
       <div className="p-10 md:p-14">
@@ -22,7 +47,7 @@ function StrategyCard({ action, index }: StrategyCardProps) {
             <span className="w-8 h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-lg shadow-orange-200 flex-shrink-0">
               {index + 1}
             </span>
-            <h3 className="text-sm font-bold text-gray-900 group-hover:text-orange-600 transition-colors tracking-tight leading-tight truncate uppercase tracking-widest">
+            <h3 className="text-sm font-bold text-gray-900 group-hover:text-orange-600 transition-colors tracking-tight leading-tight uppercase tracking-widest">
               {action.title}
             </h3>
           </div>
@@ -36,24 +61,14 @@ function StrategyCard({ action, index }: StrategyCardProps) {
         <div className="space-y-8 mb-10">
           <div>
             <div className="flex flex-col space-y-2">
-              <div className="flex items-center space-x-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
-                <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">What to do:</div>
-              </div>
-              <div className="text-gray-700 leading-relaxed font-medium text-base">
-                {action.what_to_do}
-              </div>
+              <div className="text-sm font-bold text-gray-900 uppercase tracking-widest mb-1">What to do:</div>
+              {renderBulletPoints(action.what_to_do, 'text-gray-700')}
             </div>
           </div>
           <div>
             <div className="flex flex-col space-y-2">
-              <div className="flex items-center space-x-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-900"></div>
-                <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">Why this matters:</div>
-              </div>
-              <div className="text-gray-600 leading-relaxed font-medium text-base">
-                {action.why_it_matters}
-              </div>
+              <div className="text-sm font-bold text-gray-900 uppercase tracking-widest mb-1">Why this matters:</div>
+              {renderBulletPoints(action.why_it_matters, 'text-gray-600')}
             </div>
           </div>
         </div>
@@ -128,7 +143,7 @@ export default function Results() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [showReasoningTrace, setShowReasoningTrace] = useState(false);
+
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -250,13 +265,7 @@ export default function Results() {
     motivational_quote: motivationalQuote,
     ai_confidence_score: aiConfidenceScore = 90,
   } = analysisData;
-  const reasoningSteps = [
-    'Addresses cognitive shortcut: "DON\'t try to generate $200/m rapidly vs. reach $5000/m"',
-    'The "Safe Creator" is a VEE: illustrated in Business / Podcaster / Thread platforms',
-    'Prioritizing a Hybrid sell reflects the sustainable revenue for weeks',
-    'User has strict time constraints (10h/week). Creating a course takes 10+ hours',
-    'Accountability lets the user ship fast because of direct outcome focus'
-  ];
+
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20" style={{ fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
@@ -360,8 +369,8 @@ export default function Results() {
 
                   <div className="mt-10 pt-10 border-t border-gray-100/50">
                     <div className="flex items-center gap-3 mb-4">
-                      <i className="ri-error-warning-line text-orange-500 text-lg"></i>
-                      <div className="text-[10px] font-bold text-gray-900 uppercase tracking-widest">Consequence if ignored</div>
+                      <i className="ri-error-warning-line text-orange-500 text-xl"></i>
+                      <div className="text-sm font-bold text-gray-900 uppercase tracking-widest">Consequence if ignored</div>
                     </div>
                     <p className="text-gray-600 font-medium leading-relaxed text-lg">
                       {primaryBottleneck?.consequence || "Your current growth plateau will persist, leading to wasted resources and missed market opportunities."}
@@ -398,8 +407,8 @@ export default function Results() {
                         {String(i + 2).padStart(2, '0')}
                       </div>
                       <div>
-                        <div className="font-bold text-gray-900 mb-1.5 text-base tracking-tight">{b.title}</div>
-                        <div className="text-xs text-gray-500 leading-relaxed font-medium">
+                        <div className="font-bold text-gray-900 mb-1.5 text-lg tracking-tight">{b.title}</div>
+                        <div className="text-base text-gray-500 leading-relaxed font-medium">
                           {b.description !== b.title ? b.description : "Secondary priority addressed after implementation of the primary solution."}
                         </div>
                       </div>
@@ -459,9 +468,9 @@ export default function Results() {
                 </p>
               </div>
 
-              <div className="bg-orange-900 rounded-[2.5rem] p-10 text-white shadow-2xl relative overflow-hidden">
+              <div className="bg-white border border-gray-100 rounded-[2.5rem] p-10 shadow-xl relative overflow-hidden">
                 <div className="relative z-10">
-                  <div className="text-[12px] font-bold uppercase tracking-[0.3em] text-orange-400 mb-8 opacity-80">
+                  <div className="text-[12px] font-bold uppercase tracking-[0.3em] text-gray-900 mb-8 opacity-80">
                     Execution Roadmap: {analysisData.estimated_days || 0}-Day Plan
                   </div>
 
@@ -469,21 +478,21 @@ export default function Results() {
                     {executionRoadmap && executionRoadmap.length > 0 ? (
                       executionRoadmap.map((phase, index) => (
                         <div key={index}>
-                          <div className="text-sm font-bold text-orange-300 mb-4 uppercase tracking-widest">
+                          <div className="text-sm font-bold text-gray-700 mb-4 uppercase tracking-widest">
                             {phase.phase || `Phase ${index + 1}`}
                           </div>
                           <div className="space-y-4">
                             {phase.tasks && phase.tasks.map((task, taskIndex) => (
                               <div key={taskIndex} className="flex items-start gap-4">
-                                <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
-                                <div className="text-sm font-medium opacity-90">{task}</div>
+                                <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-2 flex-shrink-0"></div>
+                                <div className="text-base font-medium text-gray-600 opacity-90">{task}</div>
                               </div>
                             ))}
                           </div>
                         </div>
                       ))
                     ) : (
-                      <div className="text-sm opacity-80">No roadmap available</div>
+                      <div className="text-sm opacity-80 text-gray-500">No roadmap available</div>
                     )}
                   </div>
                 </div>

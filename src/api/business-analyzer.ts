@@ -13,18 +13,22 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
  * Uses both cookies (httponly) and Authorization header (from js-cookie)
  */
 const getAuthConfig = () => {
-  // Try to get token from js-cookie (set by frontend)
-  const token = Cookies.get("access_token");
+  // Try to get token from localStorage (primary) or cookies
+  const token = localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("auth_token") ||
+    Cookies.get("access_token");
 
   const config: any = {
     withCredentials: true, // This sends httponly cookies automatically
+    headers: {
+      'Content-Type': 'application/json' // Good practice to include
+    }
   };
 
-  // If token exists in js-cookie, add Authorization header
+  // If token exists, add Authorization header
   if (token) {
-    config.headers = {
-      'Authorization': `Bearer ${token}`
-    };
+    config.headers['Authorization'] = `Bearer ${token}`;
   }
 
   return config;
@@ -50,8 +54,8 @@ export interface SecondaryConstraint {
 export interface ActionPlan {
   id: number;
   title: string;
-  what_to_do: string;
-  why_it_matters: string;
+  what_to_do: string | string[];
+  why_it_matters: string | string[];
   effort_level: "Low" | "Medium" | "High";
   toolkit?: {
     tool_name: string;
@@ -92,6 +96,7 @@ export interface BusinessAnalysisResult {
   // Metadata
   created_at: string;
   ai_model?: string;
+  ai_confidence_score?: number;
 }
 
 // DEPRECATED: Legacy types for backward compatibility
@@ -181,9 +186,9 @@ export const analyzeBusinessGoal = async (
 
     // Handle other errors
     const errorMessage = error.response?.data?.detail ||
-                         error.response?.data?.message ||
-                         error.message ||
-                         "Failed to analyze business goal. Please try again.";
+      error.response?.data?.message ||
+      error.message ||
+      "Failed to analyze business goal. Please try again.";
 
     throw new Error(errorMessage);
   }
