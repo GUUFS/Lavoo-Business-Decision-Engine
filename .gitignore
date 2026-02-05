@@ -84,3 +84,5 @@ Thumbs.db
 # Testing
 coverage/
 ai/cache/
+
+*Zone.Identifier

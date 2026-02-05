@@ -141,6 +141,7 @@ export default function Results() {
   // Dynamic data state
   const [analysisData, setAnalysisData] = useState<BusinessAnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [userData, setUserData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
 
@@ -200,7 +201,32 @@ export default function Results() {
       }
     };
 
+    const fetchUserData = async () => {
+      try {
+        const token = document.cookie
+          .split('; ')
+          .find((row) => row.startsWith('access_token='))
+          ?.split('=')[1] || localStorage.getItem('access_token') || localStorage.getItem('token');
+
+        if (!token) return;
+
+        const response = await fetch('http://localhost:8000/user/me', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setUserData(data);
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+      }
+    };
+
     fetchAnalysisData();
+    fetchUserData();
   }, [location.state, searchParams]);
 
   // PDF Generation (Enhanced, uses dynamic data)
@@ -221,6 +247,34 @@ export default function Results() {
 
       doc.save(`analysis-report-${(analysisData as any).id || 'selected'}.pdf`);
       toast.success('Report downloaded');
+
+      // Send report download email notification
+      if (userData) {
+        try {
+          const token = document.cookie
+            .split('; ')
+            .find((row) => row.startsWith('access_token='))
+            ?.split('=')[1] || localStorage.getItem('access_token') || localStorage.getItem('token');
+
+          fetch('http://localhost:8000/api/emails/report-download', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              user_email: userData.email,
+              user_name: userData.name,
+              report_name: customWatermark || 'Lavoo Business Analysis',
+              analysis_type: analysisData.primary_bottleneck?.title || 'General Strategy',
+              download_url: window.location.href // Using the current analysis page as the link
+            })
+          });
+          console.log('Report download email notification queued');
+        } catch (emailErr) {
+          console.error('Failed to queue report download email:', emailErr);
+        }
+      }
     } catch (error) {
       toast.error('Failed to generate PDF');
     } finally {

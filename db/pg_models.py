@@ -18,7 +18,7 @@ from .pg_connections import Base
 
 import enum
 from uuid import uuid4
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 class User(Base):
     """
@@ -339,6 +339,16 @@ class Subscriptions(Base):
     commission = relationship("Commission", back_populates="subscription", uselist=False)
 
 
+class CreateSubscriptionRequest(BaseModel):
+    payment_method_id: str
+    plan_type: str  # 'monthly' or 'yearly'
+    billing_details: Optional[Dict] = None
+
+
+class UpdatePaymentMethodRequest(BaseModel):
+    payment_method_id: str
+
+
 # Models for the stripe payment gateway
 class PaymentIntentCreate(BaseModel):
     amount: float
@@ -616,7 +626,7 @@ class Commission(Base):
     status = Column(String, nullable=False)  # pending, processing, paid, failed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     approved_at = Column(DateTime(timezone=True), nullable=True)
-    paid_at = Column(DateTime(timezone=True), nullable=False)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
     payout_id = Column(Integer, nullable=True)
 
     # Relationships
@@ -635,10 +645,17 @@ class Payout(Base):
     currency = Column(String(10), default="USD")
     status = Column(String, nullable=False)  # pending, processing, completed, failed
     provider = Column(String(50), nullable=True)  # stripe, paypal, etc.
+    payment_method = Column(String(50), nullable=True)
     provider_payout_id = Column(String(255), nullable=True)
     provider_response = Column(Text, nullable=True)
+    recipient_email = Column(String(255), nullable=True)
+    recipient_name = Column(String(255), nullable=True)
+    account_details = Column(Text, nullable=True)
+    failure_reason = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     processed_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    requested_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     user = relationship("User", foreign_keys=[user_id])
@@ -1009,7 +1026,9 @@ class TrendResponse(BaseModel):
 '''Commission and Payout Pydantic Models'''
 class ApproveCommissionsRequest(BaseModel):
     """Request model for approving commissions"""
-    commission_ids: List[int]
+    commission_ids: Optional[List[int]] = None
+    payment_method: Optional[str] = 'stripe'
+    amount: Optional[Decimal] = None
 
     class Config:
         from_attributes = True
@@ -1242,7 +1261,7 @@ class PayoutResponse(BaseModel):
         from_attributes = True
 
 
-class CommissionSummary(BaseModel):
+class CommissionSummaryResponse(BaseModel):
     """Summary model for commission statistics"""
     total_commissions: float
     paid_commissions: float

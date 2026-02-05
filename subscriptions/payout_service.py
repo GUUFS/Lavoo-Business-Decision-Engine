@@ -17,6 +17,8 @@ from db.pg_models import (
     User, Commission, Payout, PayoutAccount, 
     CommissionSummary
 )
+from fastapi import BackgroundTasks
+from emailing import email_service
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -133,7 +135,7 @@ class PayoutService:
     
 
     @staticmethod
-    def process_stripe_payout(payout: Payout, db: Session) -> Dict[str, Any]:
+    def process_stripe_payout(payout: Payout, background_tasks: BackgroundTasks, db: Session) -> Dict[str, Any]:
         """
         Process payout via Stripe Connect
         
@@ -174,8 +176,8 @@ class PayoutService:
                         }
             )
 
-            # Update payout record
-            payout.status = 'processing'
+            # Update payout record to completed immediately (synchronous flow)
+            payout.status = 'completed'
             payout.provider_transfer_id = transfer.id
             payout.provider_payout_id = payment.id
             payout.provider_response = json.dumps({
@@ -183,16 +185,38 @@ class PayoutService:
                                         "payout": payment.to_dict(),
             })
             payout.processed_at = datetime.utcnow()
+            payout.completed_at = datetime.utcnow()
+
+            # Update commissions linked to this payout
+            commissions = db.query(Commission).filter(
+                Commission.payout_id == payout.id
+            ).all()
+            
+            for commission in commissions:
+                commission.status = 'paid'
+                commission.paid_at = datetime.utcnow()
+            
+            # Update user's commission summary
+            PayoutService._update_summary_on_payout(payout, db)
 
             db.flush()
 
             logger.info(
-                f"Stripe payout initiated | payout={payout.id} "
+                f"Stripe payout completed synchronously | payout={payout.id} "
                 f"transfer={transfer.id} payment={payment.id}"
             )
             
+            background_tasks.add_task(
+                email_service.send_payout_success_email,
+                payout.user_id,
+                payout.amount,
+                payout.currency,
+                payout.id,
+                payout.processed_at
+            )
+            
             return {
-                "status": "processing",
+                "status": "success",
                 "payout_id": payout.id,
                 "stripe_transfer_id": transfer.id,
                 "stripe_payout_id": payment.id,
@@ -203,6 +227,7 @@ class PayoutService:
             payout.failure_reason = str(e)
             db.flush()
             raise
+
         
     
 
@@ -288,7 +313,7 @@ class PayoutService:
     
 
     @staticmethod
-    def complete_flutterwave_payout( payout_id: int, transfer_status: str, db: Session) -> None:
+    def complete_flutterwave_payout( payout_id: int, background_tasks: BackgroundTasks, transfer_status: str, db: Session) -> None:
         """
         Complete Flutterwave payout after webhook confirmation
         """
@@ -313,7 +338,14 @@ class PayoutService:
             
             # Update summary
             PayoutService._update_summary_on_payout(payout, db)
-            
+            background_tasks.add_task(
+                email_service.send_payout_success_email,
+                payout.user_id,
+                payout.amount,
+                payout.currency,
+                payout.id,
+                payout.processed_at
+            )
         elif transfer_status == "failed":
             payout.status = 'failed'
             payout.failed_at = datetime.utcnow()
@@ -330,6 +362,58 @@ class PayoutService:
         
         db.commit()
         logger.info(f"Flutterwave payout {payout_id} marked as {transfer_status}")
+    
+
+    @staticmethod
+    def complete_stripe_payout(payout_id: int, background_tasks: BackgroundTasks, status: str, db: Session) -> None:
+        """
+        Complete Stripe payout (simulated or via potential webhook)
+        """
+        payout = db.query(Payout).filter(Payout.id == payout_id).first()
+        
+        if not payout:
+            logger.error(f"Payout {payout_id} not found")
+            return
+        
+        if status == "paid":
+            payout.status = 'completed'
+            payout.completed_at = datetime.utcnow()
+            
+            # Update commissions
+            commissions = db.query(Commission).filter(
+                Commission.payout_id == payout.id
+            ).all()
+            
+            for commission in commissions:
+                commission.status = 'paid'
+                commission.paid_at = datetime.utcnow()
+            
+            # Update summary
+            PayoutService._update_summary_on_payout(payout, db)
+            
+            background_tasks.add_task(
+                email_service.send_payout_success_email,
+                payout.user_id,
+                payout.amount,
+                payout.currency,
+                payout.id,
+                payout.processed_at
+            )
+        elif status == "failed":
+            payout.status = 'failed'
+            payout.failed_at = datetime.utcnow()
+            
+            # Revert commissions
+            commissions = db.query(Commission).filter(
+                Commission.payout_id == payout.id
+            ).all()
+            
+            for commission in commissions:
+                commission.payout_id = None
+                commission.status = 'approved' # Keep as approved so they can be re-payout
+        
+        db.commit()
+        logger.info(f"Stripe payout {payout_id} marked as {status}")
     
 
     @staticmethod

@@ -70,6 +70,20 @@ export default function AdminUsers() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
 
+  // Confirmation modal state
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    message: string;
+    type: 'danger' | 'success';
+    onConfirm: () => void;
+  }>({
+    title: '',
+    message: '',
+    type: 'danger',
+    onConfirm: () => { }
+  });
+
 
   // TanStack Query hooks
   const { data: stats = { total: 0, pro: 0, free: 0, deactivated: 0, inactive: 0 } } = useUserStats();
@@ -256,7 +270,7 @@ export default function AdminUsers() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {loadingUsers ? (
+                    {loading ? (
                       <tr><td colSpan={6} className="text-center py-8">Loading users...</td></tr>
                     ) : users.length === 0 ? (
                       <tr><td colSpan={6} className="text-center py-8">No users found.</td></tr>
@@ -478,11 +492,10 @@ export default function AdminUsers() {
 
                       onClick={() => handleDeactivateUser(selectedUser)}
                       disabled={toggleStatusMutation.isPending}
-                      className={`w-full px-4 py-3 rounded-lg font-medium transition-colors ${
-                        selectedUser.status === 'suspended'
+                      className={`w-full px-4 py-3 rounded-lg font-medium transition-colors ${selectedUser.status === 'suspended'
                           ? 'bg-green-600 text-white hover:bg-green-700'
                           : 'bg-red-600 text-white hover:bg-red-700'
-                      } disabled:opacity-50`}
+                        } disabled:opacity-50`}
                     >
                       {toggleStatusMutation.isPending
                         ? 'Updating...'

@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { User, Brain, BadgePlus, Star, Globe, Search, Home, AlertTriangle, DollarSign, Headphones } from 'lucide-react';
+import { User, BadgePlus, Star, Search, Home, AlertTriangle, DollarSign, Headphones } from 'lucide-react';
 
 interface SidebarItem {
   id: string;
@@ -19,7 +19,7 @@ const sidebarItems: SidebarItem[] = [
   },
   {
     id: 'analyze',
-    label: 'AI Analyst',
+    label: 'Decision Engine',
     icon: <Search className="w-5 h-5" />,
     path: '/dashboard/analyze'
   },
@@ -30,10 +30,10 @@ const sidebarItems: SidebarItem[] = [
     path: '/dashboard/alerts'
   },
   // {
-    // id: 'insights',
-    // label: 'AI Insights',
-    // icon: <Brain className="w-5 h-5" />,
-    // path: '/dashboard/insights'
+  // id: 'insights',
+  // label: 'AI Insights',
+  // icon: <Brain className="w-5 h-5" />,
+  // path: '/dashboard/insights'
   // },
   {
     id: 'earnings',
@@ -54,10 +54,10 @@ const sidebarItems: SidebarItem[] = [
     path: '/dashboard/reviews'
   },
   // {
-    // id: 'ai_trends',
-    // label: 'AI Trends',
-    // icon: <Globe className="w-5 h-5" />,
-    // path: '/dashboard/ai_trends'
+  // id: 'ai_trends',
+  // label: 'AI Trends',
+  // icon: <Globe className="w-5 h-5" />,
+  // path: '/dashboard/ai_trends'
   // },
   {
     id: 'customer-service',
@@ -309,26 +309,25 @@ export default function DashboardSidebar({ isMobileMenuOpen = false,
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         ${isCollapsed ? 'md:w-16' : 'md:w-64'}
         w-64
-      `}>      {/* Sidebar Header */}
-        <div className="p-4 border-b border-gray-200 flex-shrink-0">
-          <div className="flex items-center justify-between">
+      `}>      {/* Sidebar Header - Fixed height so logo size doesn't affect nav */}
+        <div className="p-4 border-b border-gray-200 flex-shrink-0 h-[80px] overflow-hidden relative">
+          <div className="flex items-center justify-between h-full">
             {!isCollapsed && (
               <div
-                className="flex items-center cursor-pointer"
+                className="flex items-center cursor-pointer absolute left-4 top-1/2 -translate-y-1/2"
 
               >
-                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-500 rounded-lg flex items-center justify-center mr-2 sm:mr-3">
-                  <i className="ri-brain-line text-white text-lg sm:text-xl"></i>
-                </div>
-                <span className="text-lg sm:text-xl font-bold text-black">
-                  Lavoo
-                </span>
+                <img
+                  src="/logo.png"
+                  alt="Lavoo"
+                  className="h-[120px] sm:h-[220px] w-auto object-contain max-h-[120px]"
+                />
               </div>
               // <h2 className="text-lg font-semibold text-gray-800">Dashboard</h2>
             )}
             <button
               onClick={() => setIsCollapsed && setIsCollapsed(!isCollapsed)}
-              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors ml-auto"
             >
               <i className={`ri-menu-${isCollapsed ? 'unfold' : 'fold'}-line text-gray-600`}></i>
             </button>

@@ -447,3 +447,56 @@ SELECT * FROM active_user_sessions;
 -- Check security metrics
 SELECT * FROM security_metrics_summary;
 ```
+
+## 11. Email Integration
+
+### Prerequisites
+Ensure your `.env` file has the following variables set to ensure functionality and visibility:
+- `BREVO_API_KEY`: Your Brevo API Key
+- `BREVO_FROM_EMAIL`: Sender email
+- `BREVO_FROM_NAME`: Sender name
+- `FRONTEND_URL`: URL of the frontend (e.g., http://localhost:3000)
+- `DEBUG=true`: **Important** for seeing detailed console logs
+
+### Test 11.1: Verification Endpoints
+The email service exposes direct endpoints for testing email templates without completing a full user flow.
+
+**1. Welcome Email**
+```bash
+curl -X POST http://localhost:8000/api/emails/welcome \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_email": "your_email@example.com",
+    "user_name": "Test User"
+  }'
+```
+
+**2. Payout Email**
+```bash
+curl -X POST http://localhost:8000/api/emails/payout \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_email": "your_email@example.com",
+    "user_name": "Test User",
+    "amount": 150.00,
+    "commission_from": "Referral Bonus",
+    "transaction_id": "TXN-123456"
+  }'
+```
+
+**3. Payment Success Email**
+```bash
+curl -X POST http://localhost:8000/api/emails/payment-success \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_email": "your_email@example.com",
+    "user_name": "Test User",
+    "amount": 29.99,
+    "plan_name": "Pro Plan",
+    "next_billing_date": "February 22, 2026"
+  }'
+```
+
+**Verify**: 
+- Check your inbox for the emails.
+- Check the terminal where `uvicorn` is running. You should see `INFO: Email sent successfully. Message ID: ...` (or `DEBUG` logs if `DEBUG=true`).

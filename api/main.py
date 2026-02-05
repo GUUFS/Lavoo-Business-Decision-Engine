@@ -51,8 +51,12 @@ from api.routes import business_analyzer  # Business analysis routes
 from api.routes import customer_service, reviews, alerts, insights, referrals, security, firewall_scanner, user_stats
 from api.routes.control import revenue, users, dashboard, settings
 
-#  Payment routes
+# Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
+
+# Email service
+from emailing import email_service
+
 
 logger.info("✓ Using Neon PostgreSQL database")
 
@@ -365,6 +369,7 @@ app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
+app.include_router(email_service.router)
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)

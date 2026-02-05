@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from db.pg_connections import get_db
 from typing import Optional
 from db.pg_models import ShowUser, User, AuthResponse, FailedLoginAttempt, SecurityEvent, IPBlacklist
-from api.utils.subscription_sync import sync_user_subscription
+from api.utils.sub_utils import sync_user_subscription
 
 bearer_scheme = HTTPBearer()
 router = APIRouter(prefix="", tags=["authenticate"])
@@ -160,7 +160,7 @@ def get_current_user(authorization: Optional[str] = Header(None), access_token_c
 
     # Sync Subscription Status (Strictly based on FIRST transaction)
     try:
-        from api.utils.sub_utils import sync_user_subscription
+        # from api.utils.sub_utils import sync_user_subscription
         user = sync_user_subscription(db, user)
     except Exception as e:
         logger.error(f"Error checking subscription status: {e}")
@@ -180,7 +180,7 @@ def me(
     Syncs subscription status lazily without blocking.
     """
     # Sync subscription status (non-blocking lazy load)
-    sync_user_subscription(current_user, db)
+    sync_user_subscription(db, current_user)
 
     # Helper to get user role
     role = "user"

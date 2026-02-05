@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from db.pg_connections import get_db
-from db.pg_models import BusinessAnalysis, User
+from db.pg_models import BusinessAnalysis, User, Commission
 from api.routes.login import get_current_user
 
 router = APIRouter(prefix="/api/user", tags=["User Stats"])
@@ -66,11 +66,24 @@ async def get_user_stats(
                 except (ValueError, AttributeError):
                     pass
 
+        # Calculate total commissions (all status)
+        total_commissions = db.query(func.sum(Commission.amount)).filter(
+            Commission.user_id == user_id
+        ).scalar() or 0.0
+
+        # Calculate paid commissions
+        paid_commissions = db.query(func.sum(Commission.amount)).filter(
+            Commission.user_id == user_id,
+            Commission.status == 'paid'
+        ).scalar() or 0.0
+
         return {
             "total_analyses": total_analyses or 0,
             "avg_confidence": int(avg_confidence) if avg_confidence else 0,
             "total_duration_seconds": int(total_seconds),
-            "total_duration_formatted": f"{int(total_seconds / 60)}m {int(total_seconds % 60)}s" if total_seconds > 60 else f"{int(total_seconds)}s"
+            "total_duration_formatted": f"{int(total_seconds / 60)}m {int(total_seconds % 60)}s" if total_seconds > 60 else f"{int(total_seconds)}s",
+            "total_commissions": float(total_commissions),
+            "paid_commissions": float(paid_commissions)
         }
 
     except HTTPException:

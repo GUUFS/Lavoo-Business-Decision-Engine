@@ -40,7 +40,8 @@ export const instance: AxiosInstance = axios.create({
 // Request interceptor
 instance.interceptors.request.use(
   async (config) => {
-    const token = Cookies.get("access_token");
+    // Check both localStorage and Cookies for consistency
+    const token = Cookies.get("access_token") || localStorage.getItem("access_token") || localStorage.getItem("auth_token");
 
     // Normalize headers for Axios v1.x
     const headers =
@@ -96,10 +97,11 @@ instance.interceptors.response.use(
         //   }
         //   return instance(originalRequest);
         // }
-        return { message: "Not added" };
+        return Promise.reject(error);
       } catch (refreshError) {
         Cookies.remove("access_token");
-        Cookies.remove("refresh_token");
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("auth_token");
         window.location.href = "/login";
         return Promise.reject(refreshError);
       }

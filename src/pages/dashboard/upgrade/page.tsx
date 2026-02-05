@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import FlutterwaveCheckout from './flutterwave';
-import StripeCheckout from './stripe';
+// import FlutterwaveCheckout from './flutterwave';
+import StripeCheckoutWithSavedCard from './checkoutForm';
 
 export default function UpgradePage() {
   const [selectedPlan, setSelectedPlan] = useState<'monthly' | 'yearly'>('monthly');
-  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'flutterwave'>('stripe');
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [paymentError, setPaymentError] = useState('');
@@ -14,6 +13,8 @@ export default function UpgradePage() {
   const [payoutMethod, setPayoutMethod] = useState<'stripe' | 'flutterwave' | null>(null);
   const [payoutAccount, setPayoutAccount] = useState<any>(null);
   const [loadingPayoutAccount, setLoadingPayoutAccount] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
+
 
   // Flutterwave bank details
   const [bankDetails, setBankDetails] = useState({
@@ -617,7 +618,10 @@ export default function UpgradePage() {
         <div className="flex justify-center mb-8">
           <div className="bg-white rounded-full p-1 shadow-sm border border-gray-200">
             <button
-              onClick={() => setSelectedPlan('monthly')}
+              onClick={() => {
+                setSelectedPlan('monthly');
+                setShowCheckout(false); // Reset checkout when switching plans
+              }}
               className={`px-6 py-2 rounded-full font-medium transition-all ${selectedPlan === 'monthly'
                 ? 'bg-orange-500 text-white shadow-md'
                 : 'text-gray-600 hover:text-gray-900'
@@ -626,7 +630,10 @@ export default function UpgradePage() {
               Monthly
             </button>
             <button
-              onClick={() => setSelectedPlan('yearly')}
+              onClick={() => {
+                setSelectedPlan('yearly');
+                setShowCheckout(false); // Reset checkout when switching plans
+              }}
               className={`px-6 py-2 rounded-full font-medium transition-all ${selectedPlan === 'yearly'
                 ? 'bg-orange-500 text-white shadow-md'
                 : 'text-gray-600 hover:text-gray-900'
@@ -677,35 +684,6 @@ export default function UpgradePage() {
                 </div>
               </div>
 
-              {/* Payment Method Selection */}
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-3">
-                  Select Payment Method
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => setPaymentMethod('stripe')}
-                    className={`p-3 border-2 rounded-lg transition-all ${paymentMethod === 'stripe'
-                      ? 'border-purple-500 bg-purple-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                  >
-                    <div className="font-medium text-gray-900">Stripe</div>
-                    <div className="text-xs text-gray-500">Card Payment</div>
-                  </button>
-                  <button
-                    onClick={() => setPaymentMethod('flutterwave')}
-                    className={`p-3 border-2 rounded-lg transition-all ${paymentMethod === 'flutterwave'
-                      ? 'border-orange-500 bg-orange-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                  >
-                    <div className="font-medium text-gray-900">Flutterwave</div>
-                    <div className="text-xs text-gray-500">Multiple Options</div>
-                  </button>
-                </div>
-              </div>
-
               {/* Error Message */}
               {paymentError && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -713,59 +691,50 @@ export default function UpgradePage() {
                 </div>
               )}
 
-              {/* Payment Component */}
-              {userData.subscription_status === 'active' ? (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
-                  <i className="ri-information-line text-blue-600 text-2xl mb-2 block"></i>
-                  <p className="text-blue-800 font-medium">You already have an active subscription!</p>
-                  <p className="text-blue-600 text-sm mt-1">
-                    Your current {userData.subscription_plan} plan is active. You can only upgrade or renew once your current plan expires.
-                  </p>
-                </div>
-              ) : paymentMethod === 'stripe' && userData ? (
-                <StripeCheckout
-                  key={`stripe-checkout-${selectedPlan}`}
+              {/* Action Button or Checkout Form */}
+              {!showCheckout ? (
+                userData.subscription_status === 'active' &&
+                  (userData.subscription_plan === 'yearly' || (userData.subscription_plan === 'monthly' && selectedPlan === 'monthly')) ? (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                    <i className="ri-information-line text-blue-600 text-2xl mb-2 block"></i>
+                    <p className="text-blue-800 font-medium">You already have an active {userData.subscription_plan} subscription!</p>
+                    <p className="text-blue-600 text-sm mt-1">
+                      {userData.subscription_plan === 'monthly' && selectedPlan === 'monthly'
+                        ? "You're currently on the monthly plan. Switch to the Yearly plan above to save more!"
+                        : "You're already on our best value Yearly plan!"}
+                    </p>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowCheckout(true)}
+                    className="w-full bg-orange-600 text-white py-4 rounded-lg hover:bg-orange-700 font-semibold text-lg transition-colors flex items-center justify-center gap-2"
+                  >
+                    <i className="ri-lock-line"></i>
+                    Proceed to Secure Checkout
+                  </button>
+                )
+              ) : (
+                <StripeCheckoutWithSavedCard
                   amount={plans[selectedPlan].price}
                   email={userData.email}
                   name={userData.name}
                   planType={selectedPlan}
-                  userId={userData.id}
                   onSuccess={handlePaymentSuccess}
                   onError={handlePaymentError}
+                  onCancel={() => setShowCheckout(false)}
                 />
-              ) : paymentMethod === 'flutterwave' && userData ? (
-                <FlutterwaveCheckout
-                  key="flutterwave-checkout"
-                  amount={plans[selectedPlan].price}
-                  email={userData.email}
-                  name={userData.name}
-                  planType={selectedPlan}
-                  onSuccess={handlePaymentSuccess}
-                  onError={handlePaymentError}
-                />
-              ) : null}
+              )}
 
               {/* Security Badge */}
-              <div className="mt-4 text-center">
-                <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
-                  <i className="ri-lock-line"></i>
-                  Secure payment processing
-                </p>
-              </div>
+              {!showCheckout && (
+                <div className="mt-4 text-center">
+                  <p className="text-xs text-gray-500 flex items-center justify-center gap-1">
+                    <i className="ri-lock-line"></i>
+                    Secure payment processing with Stripe
+                  </p>
+                </div>
+              )}
             </div>
-          </div>
-        </div>
-
-        {/* Money-Back Guarantee */}
-        <div className="max-w-lg mx-auto mt-8 text-center">
-          <div className="bg-green-50 border border-green-200 rounded-xl p-6">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <i className="ri-shield-check-line text-green-600 text-2xl"></i>
-              <h3 className="font-semibold text-gray-900">30-Day Money-Back Guarantee</h3>
-            </div>
-            <p className="text-sm text-gray-600">
-              Not satisfied? Get a full refund within 30 days. No questions asked.
-            </p>
           </div>
         </div>
       </div>

@@ -79,8 +79,9 @@ export default function AdminSecurity() {
       setFirewallRules(rulesRes.data.rules || []);
 
       // Fetch vulnerability scans
-      const scansOffset = (scanPage - 1) * itemsPerPage;
-      const scansRes = await api.get(`/api/security/vulnerability-scans?limit=${itemsPerPage}&offset=${scansOffset}`);
+      const SCAN_ITEMS_PER_PAGE = 6;
+      const scansOffset = (scanPage - 1) * SCAN_ITEMS_PER_PAGE;
+      const scansRes = await api.get(`/api/security/vulnerability-scans?limit=${SCAN_ITEMS_PER_PAGE}&offset=${scansOffset}`);
       setVulnerabilityScans(scansRes.data.scans || []);
       setTotalScans(scansRes.data.total || 0);
 
@@ -111,7 +112,8 @@ export default function AdminSecurity() {
 
   // Pagination calculations
   const totalPages = Math.ceil(totalEvents / itemsPerPage);
-  const totalScanPages = Math.ceil(totalScans / itemsPerPage);
+  const SCAN_ITEMS_PER_PAGE = 6;
+  const totalScanPages = Math.ceil(totalScans / SCAN_ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const currentEvents = securityEvents; // Backend handles slice
 
@@ -378,7 +380,7 @@ export default function AdminSecurity() {
             </div>
 
             {/* Firewall Rules and Vulnerability Scans */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 items-start">
               {/* Firewall Rules */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200">
                 <div className="p-4 md:p-6 border-b border-gray-200">

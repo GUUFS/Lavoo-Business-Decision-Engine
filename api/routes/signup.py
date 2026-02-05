@@ -20,6 +20,10 @@ from db.pg_connections import get_db
 # import the user models for PostgreSQL
 from db.pg_models import User, Referral
 
+# import the email function
+from fastapi import BackgroundTasks
+from emailing.email_service import email_service
+
 import random, string
 
 router = APIRouter(prefix="", tags=["signup"])
@@ -40,6 +44,7 @@ def generate_referral_code(length=8):
 
 @router.post("/signup")
 def signup(
+    background_tasks: BackgroundTasks,
     name: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
@@ -57,10 +62,12 @@ def signup(
     # Check if email exists
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
+        print(f"DEBUG - Signup failed: User {email} already exists")
         raise HTTPException(status_code=400, detail="User already exists")
 
     # Validate passwords match
     if password != confirm_password:
+        print("DEBUG - Signup failed: Passwords do not match")
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
     # Validate and fetch referrer if code provided
@@ -108,27 +115,35 @@ def signup(
     db.add(new_user)
     db.flush()
 
-    # Process referral rewards
+    # Process referral rewards (Note: Chops awarding removed as per user request)
     if referrer:
-        # Determine chops based on subscription status
-        chops = 20 if referrer.subscription_status == "active" else 10
-
-        # Update referrer stats (handle None values)
-        referrer.total_chops = (referrer.total_chops or 0) + chops
-        referrer.referral_chops = (referrer.referral_chops or 0) + chops
+        # Update referrer stats (Increment count only, no chops)
         referrer.referral_count = (referrer.referral_count or 0) + 1
 
-        # Create referral record
+        # Create referral record with 0 chops
         referral = Referral(
             referrer_id=referrer.id,
             referred_user_id=new_user.id,
-            chops_awarded=chops,
+            chops_awarded=0,
             created_at=datetime.utcnow()
         )
         db.add(referral)
 
-    db.commit()
-    db.refresh(new_user)
+    try:
+        db.commit()
+        db.refresh(new_user)
+        print(f"INFO - User {new_user.email} created successfully in DB (ID: {new_user.id})")
+    except Exception as e:
+        db.rollback()
+        print(f"ERROR - Database commit failed during signup: {e}")
+        raise HTTPException(status_code=500, detail="Database error occurred during signup")
+
+    # Send welcome email
+    background_tasks.add_task(
+        email_service.send_welcome_email,
+        new_user.email,
+        new_user.name
+    )
 
     return {
         "message": "User created successfully",

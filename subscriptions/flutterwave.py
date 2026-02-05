@@ -14,6 +14,10 @@ from db.pg_connections import get_db
 from db.pg_models import User, Subscriptions
 from api.routes.login import get_current_user
 
+#import the email system
+from fastapi import BackgroundTasks
+from emailing.email_service import email_service
+
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -52,7 +56,7 @@ class BankVerifyRequest(BaseModel):
 
 
 @router.post("/flutterwave/verify")
-async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db: Annotated[Session, Depends(get_db)]):
+async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, background_tasks: BackgroundTasks, db: Annotated[Session, Depends(get_db)]):
     """
     Verify Flutterwave payment transaction and calculate commission
     """
@@ -82,7 +86,14 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db: Anno
         print(f"✅ User found: {user.email} (ID: {user.id})")
         
         # Verify with Flutterwave
-        url = f"{FLUTTERWAVE_BASE_URL}/transactions/{transaction_id}/verify"
+        # Support both numeric transaction ID and transaction reference (tx_ref)
+        if transaction_id.startswith("TX-") or not transaction_id.isdigit():
+            print(f"ℹ️  Verifying by reference: {transaction_id}")
+            url = f"{FLUTTERWAVE_BASE_URL}/transactions/verify_by_reference?tx_ref={transaction_id}"
+        else:
+            print(f"ℹ️  Verifying by ID: {transaction_id}")
+            url = f"{FLUTTERWAVE_BASE_URL}/transactions/{transaction_id}/verify"
+            
         headers = {
             "Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}",
             "Content-Type": "application/json"
@@ -201,6 +212,15 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db: Anno
                 db.refresh(user)
                 db.refresh(new_subscription)
 
+                # send success payment email
+                background_tasks.add_task(
+                    email_service.send_payment_success_email,
+                    user.email,
+                    user.name,
+                    float(verified_amount),
+                    current_plan,
+                    end_date.strftime("%B %d, %Y")
+                )
                 print(f"✅ Subscription created for {user_email}")
                 
                 return {
@@ -219,11 +239,28 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, db: Anno
                     }
                 }
             else:
+                # Send failed email
+                background_tasks.add_task(
+                    email_service.send_payment_failed_email,
+                    user.email,
+                    user.name,
+                    float(verified_amount),
+                    f"Transaction status: {transaction_data.get('status')}"
+                )
+                
                 raise HTTPException(
                     status_code=400,
                     detail=f"Payment not successful. Status: {transaction_data.get('status')}"
                 )
         else:
+            # Send failed email for generic failure
+            background_tasks.add_task(
+                email_service.send_payment_failed_email,
+                user.email,
+                user.name,
+                0.0, # Unknown amount if verification failed completely
+                "Flutterwave verification failed to confirm success"
+            )
             raise HTTPException(
                 status_code=400,
                 detail="Verification failed"
@@ -257,10 +294,10 @@ async def verify_bank_account(
 ):
     """Verify user's bank account with Flutterwave"""
     
-    # Extract user object from the dictionary
-    user_obj = current_user["user"]
-    user_email = current_user["email"]
-    user_id = user_obj.id
+    # Access current_user as an object (SQLAlchemy model)
+    user_obj = current_user
+    user_email = current_user.email
+    user_id = current_user.id
     
     print(f"=== BANK ACCOUNT VERIFICATION ===")
     print(f"Account Number: {account_data.account_number}")
@@ -389,6 +426,7 @@ async def verify_bank_account(
 @router.post("/flutterwave/callback")
 async def flutterwave_payout_callback(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
@@ -434,11 +472,11 @@ async def flutterwave_payout_callback(
             from db.pg_models import Payout, Commission
             
             if event_type == "transfer.completed" or transfer_status == "successful":
-                PayoutService.complete_flutterwave_payout(payout_id, "successful", db)
+                PayoutService.complete_flutterwave_payout(payout_id, background_tasks, "successful", db)
                 print(f"[Webhook] ✅ Payout {payout_id} marked as completed")
                 
             elif event_type == "transfer.failed" or transfer_status == "failed":
-                PayoutService.complete_flutterwave_payout(payout_id, "failed", db)
+                PayoutService.complete_flutterwave_payout(payout_id, background_tasks, "failed", db)
                 print(f"[Webhook] ❌ Payout {payout_id} marked as failed")
             else:
                 print(f"[Webhook] Unknown event/status: {event_type}/{transfer_status}")

@@ -3,7 +3,7 @@
 """
 API endpoints for commission and payout management
 """
-from fastapi import APIRouter, HTTPException, Depends, status, Request, Header
+from fastapi import APIRouter, HTTPException, Depends, status, Request, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -384,6 +384,7 @@ async def admin_approve_commission(
 @router.post("/admin/process-payout/{payout_id}")
 async def admin_process_payout(
     payout_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -428,7 +429,7 @@ async def admin_process_payout(
         
         # Process based on payment method
         if payout.payment_method == 'stripe':
-            result = PayoutService.process_stripe_payout(payout, db)
+            result = PayoutService.process_stripe_payout(payout, background_tasks, db)
         elif payout.payment_method == 'flutterwave':
             result = PayoutService.process_flutterwave_payout(payout, db)
         else:

@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, case
 from datetime import datetime
@@ -204,7 +204,7 @@ async def get_commissions(
         ).group_by(
             Commission.user_id, User.name, User.email
         ).order_by(
-            func.sum(Commission.amount).desc()
+            func.max(Commission.created_at).desc()
         ).limit(limit).offset(offset).all()
         
         # Get total unique users with commissions
@@ -272,6 +272,7 @@ async def get_commissions(
 async def approve_user_commissions(
     user_id: int,
     request: ApproveCommissionsRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -302,7 +303,7 @@ async def approve_user_commissions(
         total_pending = sum(Decimal(str(c.amount)) for c in pending_commissions)
 
         # Use requested amount or full pending amount
-        payout_amount = request.amount or total_pending
+        payout_amount = Decimal(str(request.amount)) if request.amount is not None else total_pending
 
         if payout_amount > total_pending:
             raise HTTPException(
@@ -352,7 +353,7 @@ async def approve_user_commissions(
         amount_to_allocate = payout_amount
         
         for comm in sorted(pending_commissions, key=lambda x: x.created_at):
-            if amount_to_allocate <= Decimal("0.00"):
+            if amount_to_allocate <= Decimal("0.0"):
                 break
                 
             comm_amount = Decimal(str(comm.amount))
@@ -435,7 +436,7 @@ async def approve_user_commissions(
         # Now process the payout with the provider
         try:
             if payment_method == 'stripe':
-                result = PayoutService.process_stripe_payout(payout, db)
+                result = PayoutService.process_stripe_payout(payout, background_tasks, db)
                 # Stripe is synchronous - on success, commissions are marked 'paid' inside the service
                 # Update: Explicitly mark commissions as paid because payout_service might only set payout status
                 for comm in selected_commissions:
@@ -533,14 +534,14 @@ async def get_user_commission_details(
                     "method": "stripe",
                     "label": "Stripe Connect",
                     "account_id": payout_account.stripe_account_id,
-                    "is_default": payout_account.default_payout_method == "stripe"
+                    "is_default": payout_account.payment_method == "stripe"
                 })
             if payout_account.bank_name and payout_account.account_number:
                 available_methods.append({
                     "method": "flutterwave",
                     "label": f"Flutterwave ({payout_account.bank_name})",
                     "account_last_4": payout_account.account_number[-4:] if payout_account.account_number else None,
-                    "is_default": payout_account.default_payout_method == "flutterwave"
+                    "is_default": payout_account.payment_method == "flutterwave"
                 })
         
         commissions = db.query(
@@ -666,6 +667,7 @@ async def get_all_payouts(
 @router.post("/payouts/retry/{payout_id}")
 async def retry_failed_payout(
     payout_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -691,7 +693,7 @@ async def retry_failed_payout(
         
         # Process again
         if payout.payment_method == 'stripe':
-            result = PayoutService.process_stripe_payout(payout, db)
+            result = PayoutService.process_stripe_payout(payout, background_tasks, db)
         elif payout.payment_method == 'flutterwave':
             result = PayoutService.process_flutterwave_payout(payout, db)
         else:
@@ -717,6 +719,7 @@ async def retry_failed_payout(
 @router.post("/payouts/simulate-complete/{payout_id}")
 async def simulate_payout_completion(
     payout_id: int,
+    background_tasks: BackgroundTasks,
     success: bool = True,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -744,20 +747,25 @@ async def simulate_payout_completion(
                 detail=f"Payout is already {payout.status}"
             )
         
-        # Simulate webhook completion
-        if success:
-            PayoutService.complete_flutterwave_payout(payout_id, "successful", db)
+        # Simulate webhook completion based on payment method
+        if payout.payment_method == 'stripe':
+            stripe_status = "paid" if success else "failed"
+            PayoutService.complete_stripe_payout(payout_id, background_tasks, stripe_status, db)
+            status_text = "completed" if success else "failed"
             return {
                 "status": "success",
-                "message": f"Simulated successful completion for payout {payout_id}",
-                "payout_status": "completed"
+                "message": f"Simulated {stripe_status} completion for Stripe payout {payout_id}",
+                "payout_status": status_text
             }
         else:
-            PayoutService.complete_flutterwave_payout(payout_id, "failed", db)
+            # Default to Flutterwave (current behavior)
+            fw_status = "successful" if success else "failed"
+            PayoutService.complete_flutterwave_payout(payout_id, background_tasks, fw_status, db)
+            status_text = "completed" if success else "failed"
             return {
                 "status": "success",
-                "message": f"Simulated failure for payout {payout_id}",
-                "payout_status": "failed"
+                "message": f"Simulated {fw_status} completion for payout {payout_id}",
+                "payout_status": status_text
             }
         
     except HTTPException:

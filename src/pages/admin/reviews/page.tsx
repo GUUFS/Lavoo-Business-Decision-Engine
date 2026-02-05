@@ -12,6 +12,7 @@ import {
 } from '../../../api/admin-reviews';
 import { instance } from '../../../lib/axios';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'react-toastify';
 
 const ConversationModal = ({ review, onClose }: {
   review: Review,
@@ -183,9 +184,24 @@ export default function AdminReviews() {
   const [selectedReview, setSelectedReview] = useState<Review | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const [viewMode, setViewMode] = useState<'list' | 'users'>('list');
+  const [viewMode, setViewMode] = useState<'list' | 'users' | 'displayed'>('list');
   const [users, setUsers] = useState<ReviewUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+
+  // Missing states for Displayed Reviews
+  const [displayedReviews, setDisplayedReviews] = useState<Review[]>([]);
+  const [loadingDisplayed, setLoadingDisplayed] = useState(false);
+  const [totalPagesState, setTotalPagesState] = useState(1);
+
+  // Missing confirmation modal states
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState({
+    title: '',
+    message: '',
+    type: 'success' as 'success' | 'danger',
+    onConfirm: () => { }
+  });
+
   const [historyModal, setHistoryModal] = useState<{ open: boolean, user: ReviewUser | null, reviews: Review[] }>({
     open: false, user: null, reviews: []
   });
@@ -203,7 +219,7 @@ export default function AdminReviews() {
   });
 
   const reviews = reviewsData?.reviews || [];
-  const totalPages = reviewsData?.pagination?.totalPages || 1;
+  const totalPages = viewMode === 'displayed' ? totalPagesState : (reviewsData?.pagination?.totalPages || 1);
 
   const updateStatusMutation = useUpdateReviewStatus();
 
@@ -244,16 +260,12 @@ export default function AdminReviews() {
   const fetchDisplayedReviews = async () => {
     setLoadingDisplayed(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/displayed?page=${currentPage}&limit=${itemsPerPage}`, {
-        headers: getAuthHeaders()
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setDisplayedReviews(data.reviews);
-        setTotalPagesState(data.totalPages);
-      }
+      const res = await instance.get(`/api/admin/reviews/displayed?page=${currentPage}&limit=${itemsPerPage}`);
+      setDisplayedReviews(res.data.reviews);
+      setTotalPagesState(res.data.totalPages);
     } catch (e) {
       console.error(e);
+      toast.error('Failed to fetch displayed reviews');
     } finally {
       setLoadingDisplayed(false);
     }
@@ -262,29 +274,22 @@ export default function AdminReviews() {
   // New function to add review to display
   const handleAddToDisplay = async (reviewId: number) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${reviewId}/display`, {
-        method: 'POST',
-        headers: getAuthHeaders()
-      });
-      if (res.ok) {
-
-
+      const res = await instance.post(`/api/admin/reviews/${reviewId}/display`);
+      if (res.status === 200 || res.status === 201) {
+        toast.success(res.data.message || 'Review added to display');
         // Only refresh if we are specifically viewing the displayed list
         if (viewMode === 'displayed') fetchDisplayedReviews();
       }
-    } catch (e) {
-      toast.error('Failed to add review to display');
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Failed to add review to display');
     }
   };
 
   // New function to remove review from display
   const handleRemoveFromDisplay = async (reviewId: number) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/reviews/${reviewId}/display`, {
-        method: 'DELETE',
-        headers: getAuthHeaders()
-      });
-      if (res.ok) {
+      const res = await instance.delete(`/api/admin/reviews/${reviewId}/display`);
+      if (res.status === 200) {
         toast.success('Review removed from homepage display!');
         // Refresh displayed reviews
         fetchDisplayedReviews();
@@ -385,7 +390,7 @@ export default function AdminReviews() {
             </div>
             {(viewMode === 'list' || viewMode === 'displayed') ? (
               <div className="space-y-4">
-                {loading ? <div className="text-center py-10 text-gray-500">Loading reviews...</div> :
+                {loading || loadingDisplayed ? <div className="text-center py-10 text-gray-500">Loading reviews...</div> :
                   (viewMode === 'list' ? filteredReviews : displayedReviews).length === 0 ? <div className="text-center py-10 text-gray-500">No reviews found.</div> :
                     (viewMode === 'list' ? filteredReviews : displayedReviews).map((review) => (
                       <div key={review.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 relative">
