@@ -68,7 +68,7 @@ export default function AlertsPage() {
                 title: alert.title,
                 category: alert.category || 'Marketing',
                 priority: alert.priority || 'Medium Priority',
-                date: alert.created_at ? new Date(alert.created_at).toISOString().split('T')[0] : '2024-01-10',
+                date: alert.date || (alert.created_at ? new Date(alert.created_at).toISOString().split('T')[0] : '2024-01-10'),
                 score: alert.score || 85,
                 why_act_now: alert.why_act_now || '',
                 what_changed: alert.what_changed || '',

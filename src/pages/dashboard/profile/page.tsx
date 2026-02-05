@@ -17,6 +17,8 @@ export default function ProfilePage() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    company_name: '',
+    industry: '',
     department: '',
     location: '',
     bio: ''
@@ -33,6 +35,8 @@ export default function ProfilePage() {
       setFormData({
         name: user.name || '',
         email: user.email || '',
+        company_name: user.company_name || '',
+        industry: user.industry || '',
         department: user.department || '',
         location: user.location || '',
         bio: user.bio || ''
@@ -146,6 +150,85 @@ export default function ProfilePage() {
                       : 'border-gray-100 bg-gray-50 text-gray-500'
                       }`}
                   />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">
+                    Company Name <span className="text-gray-400 font-normal lowercase">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="company_name"
+                    value={formData.company_name}
+                    onChange={handleInputChange}
+                    disabled={!isEditing}
+                    placeholder="Enter your company or business name"
+                    className={`w-full px-5 py-4 border-2 rounded-xl transition-all font-medium ${isEditing
+                      ? 'border-orange-500 focus:ring-4 focus:ring-orange-100 bg-white'
+                      : 'border-gray-100 bg-gray-50 text-gray-500'
+                      }`}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wider">
+                    Industry <span className="text-gray-400 font-normal lowercase">(optional)</span>
+                  </label>
+                  <select
+                    name="industry"
+                    value={formData.industry === "Others" || !["Technology & Software", "E-commerce & Retail", "Healthcare & Medical", "Finance & Banking", "Education & Training", "Marketing & Advertising", "Real Estate", "Manufacturing", "Consulting & Professional Services", "Food & Beverage", "Media & Entertainment", "Travel & Hospitality", "Construction & Engineering", "Agriculture", "Energy & Utilities", "Transportation & Logistics", "Nonprofit & NGO", "Government & Public Sector", "Legal Services"].includes(formData.industry) && formData.industry ? "Others" : formData.industry}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value !== "Others") {
+                        setFormData(prev => ({ ...prev, industry: value }));
+                      } else {
+                        setFormData(prev => ({ ...prev, industry: "Others" }));
+                      }
+                    }}
+                    disabled={!isEditing}
+                    className={`w-full px-5 py-4 border-2 rounded-xl transition-all font-medium ${isEditing
+                      ? 'border-orange-500 focus:ring-4 focus:ring-orange-100 bg-white'
+                      : 'border-gray-100 bg-gray-50 text-gray-500'
+                      }`}
+                  >
+                    <option value="">Select your industry</option>
+                    <option value="Technology & Software">Technology & Software</option>
+                    <option value="E-commerce & Retail">E-commerce & Retail</option>
+                    <option value="Healthcare & Medical">Healthcare & Medical</option>
+                    <option value="Finance & Banking">Finance & Banking</option>
+                    <option value="Education & Training">Education & Training</option>
+                    <option value="Marketing & Advertising">Marketing & Advertising</option>
+                    <option value="Real Estate">Real Estate</option>
+                    <option value="Manufacturing">Manufacturing</option>
+                    <option value="Consulting & Professional Services">Consulting & Professional Services</option>
+                    <option value="Food & Beverage">Food & Beverage</option>
+                    <option value="Media & Entertainment">Media & Entertainment</option>
+                    <option value="Travel & Hospitality">Travel & Hospitality</option>
+                    <option value="Construction & Engineering">Construction & Engineering</option>
+                    <option value="Agriculture">Agriculture</option>
+                    <option value="Energy & Utilities">Energy & Utilities</option>
+                    <option value="Transportation & Logistics">Transportation & Logistics</option>
+                    <option value="Nonprofit & NGO">Nonprofit & NGO</option>
+                    <option value="Government & Public Sector">Government & Public Sector</option>
+                    <option value="Legal Services">Legal Services</option>
+                    <option value="Others">Others</option>
+                  </select>
+                  
+                  {/* Custom Industry Input - shows when "Others" is selected */}
+                  {(formData.industry === "Others" || (!["Technology & Software", "E-commerce & Retail", "Healthcare & Medical", "Finance & Banking", "Education & Training", "Marketing & Advertising", "Real Estate", "Manufacturing", "Consulting & Professional Services", "Food & Beverage", "Media & Entertainment", "Travel & Hospitality", "Construction & Engineering", "Agriculture", "Energy & Utilities", "Transportation & Logistics", "Nonprofit & NGO", "Government & Public Sector", "Legal Services", ""].includes(formData.industry) && formData.industry)) && (
+                    <input
+                      type="text"
+                      name="industry"
+                      value={formData.industry === "Others" ? "" : formData.industry}
+                      onChange={handleInputChange}
+                      disabled={!isEditing}
+                      placeholder="Please specify your industry"
+                      className={`w-full px-5 py-4 border-2 rounded-xl transition-all font-medium mt-3 ${isEditing
+                        ? 'border-orange-500 focus:ring-4 focus:ring-orange-100 bg-white'
+                        : 'border-gray-100 bg-gray-50 text-gray-500'
+                        }`}
+                    />
+                  )}
                 </div>
 
                 <div className="md:col-span-2">
