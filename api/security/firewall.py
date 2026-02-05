@@ -106,6 +106,7 @@ class FirewallManager:
                     'path': path,
                     'method': method,
                     'body': body_content,
+                    'content_type': request.headers.get('content-type', ''),
                     'query_params': dict(request.query_params)
                 })
                 
@@ -195,7 +196,8 @@ class FirewallManager:
                 self._behavior_tracking[key] = {'count': 1, 'start': now}
             else:
                 data['count'] += 1
-                if data['count'] > 5: # Blocking threshold: >5 reqs/sec
+                if data['count'] > 25: # Blocking threshold: increased to >25 reqs/sec for SPA compatibility
+                    logger.warning(f"BEHAVIOR BLOCK: Request flood detected from IP {ip}. Path: {path}")
                     return {
                         'error': 'Access denied', 
                         'message': 'Suspicious behavior detected (Request Flood)'
@@ -271,8 +273,8 @@ class FirewallManager:
                 logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered by pattern '{pattern}' in User-Agent: '{context['user_agent']}'")
                 return True
                 
-            # Check Body (New)
-            if context.get('body'):
+            # Check Body (New) - Skip for multipart/form-data (avoids boundary false positives)
+            if context.get('body') and 'multipart/form-data' not in context.get('content_type', '').lower():
                 if regex.search(context['body']):
                     logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered by pattern '{pattern}' in body: '{context['body'][:100]}...'")
                     return True
@@ -331,8 +333,14 @@ class FirewallMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # 1. Skip firewall for specific paths (metrics, health, static, auth)
-        if request.url.path.startswith(("/health", "/docs", "/openapi.json", "/assets", "/api/me", "/users/me")):
+        # 1. Skip firewall for specific paths (metrics, health, static, auth, and critical commerce)
+        whitelist = (
+            "/health", "/docs", "/openapi.json", "/assets", 
+            "/api/me", "/users/me", "/user/me",
+            "/api/stripe", "/api/payments", "/api/commissions",
+            "/api/control", "/api/referrals", "/api/earnings"
+        )
+        if request.url.path.startswith(whitelist):
              return await call_next(request)
 
         # 2. Read and Buffer Body for Inspection
