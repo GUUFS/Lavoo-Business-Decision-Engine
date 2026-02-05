@@ -127,7 +127,7 @@ function Dashboard() {
 
                 {/* Dashboard Sections */}
                 <div className="space-y-6 md:space-y-8">
-                    {/* AI Analyst Section */}
+                    {/* Decision Engine Section */}
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow duration-200">
                         <div className="p-4 md:p-6 border-b border-gray-200">
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
@@ -135,7 +135,7 @@ function Dashboard() {
                                     <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                         <i className="ri-search-line text-purple-600"></i>
                                     </div>
-                                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">AI Analyst</h3>
+                                    <h3 className="text-xl md:text-2xl font-semibold text-gray-900">Decision Engine</h3>
                                 </div>
                                 <Button
                                     onClick={() => navigate('/dashboard/analyze')}
@@ -157,10 +157,10 @@ function Dashboard() {
                                                     Analysis Result
                                                 </span>
                                             </div>
-                                            <h4 className="font-medium text-gray-900 mb-2 truncate">
+                                            <h4 className="font-medium text-gray-900 mb-2 truncate text-base md:text-lg">
                                                 {analysis.business_goal}
                                             </h4>
-                                            <p className="text-sm text-gray-600 leading-relaxed line-clamp-2">
+                                            <p className="text-base text-gray-600 leading-relaxed line-clamp-2">
                                                 {analysis.primary_bottleneck?.title || "Analysis completed"}
                                             </p>
                                         </div>
@@ -187,7 +187,7 @@ function Dashboard() {
                                     <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                         <i className="ri-alert-line text-orange-600"></i>
                                     </div>
-                                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Opportunity Alerts</h3>
+                                    <h3 className="text-xl md:text-2xl font-semibold text-gray-900">Opportunity Alerts</h3>
                                 </div>
                                 <Button
                                     onClick={() => navigate('/dashboard/alerts')}
@@ -219,8 +219,8 @@ function Dashboard() {
                                                     <div className="text-xs text-gray-500">{alert.time_remaining}</div>
                                                 </div>
                                             </div>
-                                            <h4 className="font-medium text-gray-900 mb-2">{alert.title}</h4>
-                                            <p className="text-sm text-gray-600 leading-relaxed line-clamp-2">{alert.why_act_now}</p>
+                                            <h4 className="font-medium text-gray-900 mb-2 text-base md:text-lg">{alert.title}</h4>
+                                            <p className="text-base text-gray-600 leading-relaxed line-clamp-2">{alert.why_act_now}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -238,7 +238,7 @@ function Dashboard() {
                                     <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                         <i className="ri-money-dollar-circle-line text-green-600"></i>
                                     </div>
-                                    <h3 className="text-lg md:text-xl font-semibold text-gray-900">Earnings Overview</h3>
+                                    <h3 className="text-xl md:text-2xl font-semibold text-gray-900">Earnings Overview</h3>
                                 </div>
                                 <Button
                                     onClick={() => navigate('/dashboard/earnings')}
@@ -300,7 +300,7 @@ function Dashboard() {
                                         <div className="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                             <i className="ri-star-line text-yellow-600"></i>
                                         </div>
-                                        <h3 className="text-lg md:text-xl font-semibold text-gray-900">Recent Reviews</h3>
+                                        <h3 className="text-xl md:text-2xl font-semibold text-gray-900">Recent Reviews</h3>
                                     </div>
                                     <Button
                                         onClick={() => navigate('/dashboard/reviews')}

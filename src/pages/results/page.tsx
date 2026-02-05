@@ -389,7 +389,7 @@ export default function Results() {
           </div>
           <div className="relative z-10">
             <div className="bg-white/20 backdrop-blur-xl p-6 rounded-3xl border border-white/20 shadow-2xl">
-              <div className="text-[10px] font-medium uppercase tracking-widest text-orange-100 mb-2">AI Engine Confidence</div>
+              <div className="text-sm md:text-base font-bold uppercase tracking-widest text-orange-100 mb-2">AI Engine Confidence</div>
               <div className="text-5xl font-medium tracking-tighter">{aiConfidenceScore}%</div>
             </div>
           </div>
@@ -475,13 +475,13 @@ export default function Results() {
             </div>
 
             <div className="bg-white border border-gray-100 rounded-[2rem] shadow-xl p-10">
-              <div className="flex items-center text-red-600 font-bold uppercase tracking-[0.3em] text-[10px] mb-6">
-                <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center mr-4 shadow-sm border border-red-200/50">
-                  <i className="ri-prohibited-fill text-2xl text-red-600"></i>
+              <div className="flex items-center text-red-600 font-bold uppercase tracking-[0.3em] text-xl md:text-2xl mb-6">
+                <div className="w-14 h-14 bg-red-100 rounded-lg flex items-center justify-center mr-4 shadow-sm border border-red-200/50">
+                  <i className="ri-prohibited-fill text-3xl text-red-600"></i>
                 </div>
-                STOP
+                STOP!!!
               </div>
-              <p className="text-base text-gray-500 leading-relaxed font-medium">
+              <p className="text-lg md:text-xl text-gray-700 leading-relaxed font-semibold">
                 {whatToStop || "Stop wasting time on broad promotions that aren't translating into sales; they are not effective and won't change your revenue situation."}
               </p>
             </div>
@@ -495,8 +495,8 @@ export default function Results() {
               <h2 className="text-5xl font-bold text-gray-900 mb-4 uppercase tracking-tighter">Ranked Action Plan</h2>
               <p className="text-gray-500 font-medium text-lg">These actions are ordered by leverage. Do them in sequence.</p>
             </div>
-            <div className="flex items-center bg-white border border-gray-100 px-8 py-4 rounded-[1.5rem] text-[10px] font-medium text-gray-500 uppercase tracking-[0.3em] shadow-sm">
-              <i className="ri-list-check-2 mr-4 text-orange-500 text-lg"></i>
+            <div className="flex items-center bg-white border border-gray-100 px-8 py-4 rounded-[1.5rem] text-base md:text-lg font-bold text-gray-700 uppercase tracking-wide shadow-sm">
+              <i className="ri-list-check-2 mr-4 text-orange-500 text-2xl"></i>
               {actionPlans.length} Action Strategy
             </div>
           </div>
@@ -514,17 +514,17 @@ export default function Results() {
 
             <div className="lg:col-span-4 space-y-8">
               <div className="bg-white border border-gray-100 rounded-3xl p-10 shadow-xl">
-                <div className="text-[12px] font-bold text-gray-900 uppercase tracking-[0.2em] mb-6 flex items-center">
+                <div className="text-base md:text-lg font-bold text-gray-900 uppercase tracking-[0.2em] mb-6 flex items-center">
                   Note on exclusions:
                 </div>
-                <p className="text-sm text-gray-500 leading-relaxed italic font-medium">
+                <p className="text-base md:text-lg text-gray-600 leading-relaxed italic font-medium">
                   {exclusionsNote || "This plan specifically excludes traditional ad-spend strategies and complex technical builds that would exceed your current capacity."}
                 </p>
               </div>
 
               <div className="bg-white border border-gray-100 rounded-[2.5rem] p-10 shadow-xl relative overflow-hidden">
                 <div className="relative z-10">
-                  <div className="text-[12px] font-bold uppercase tracking-[0.3em] text-gray-900 mb-8 opacity-80">
+                  <div className="text-xl md:text-2xl font-extrabold uppercase tracking-tight text-gray-900 mb-8">
                     Execution Roadmap: {analysisData.estimated_days || 0}-Day Plan
                   </div>
 
@@ -539,7 +539,7 @@ export default function Results() {
                             {phase.tasks && phase.tasks.map((task, taskIndex) => (
                               <div key={taskIndex} className="flex items-start gap-4">
                                 <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-2 flex-shrink-0"></div>
-                                <div className="text-base font-medium text-gray-600 opacity-90">{task}</div>
+                                <div className="text-base md:text-lg font-medium text-gray-700">{task}</div>
                               </div>
                             ))}
                           </div>

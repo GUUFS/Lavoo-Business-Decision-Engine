@@ -18,6 +18,7 @@ const signupSchema = z
   .object({
     fullName: z.string().min(2, "Full name is required"),
     email: z.string().email("Invalid email address"),
+    industry: z.string().optional(),
     password: z.string().min(6, "Password must be at least 6 characters"),
     confirmPassword: z.string().min(6, "Please confirm your password"),
   })
@@ -33,6 +34,8 @@ export default function SignUp() {
   const { mutate, isPending } = useSignup();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [selectedIndustry, setSelectedIndustry] = useState("");
+  const [customIndustry, setCustomIndustry] = useState("");
 
   const [searchParams] = useSearchParams();
   const referralCode = searchParams.get("ref");
@@ -42,6 +45,7 @@ export default function SignUp() {
     handleSubmit,
     formState: { errors },
     reset,
+    setValue,
   } = useForm<SignupFormData>({
     resolver: zodResolver(signupSchema),
   });
@@ -52,6 +56,12 @@ export default function SignUp() {
     payload.append("password", data.password);
     payload.append("name", data.fullName);
     payload.append("confirm_password", data.confirmPassword);
+
+    // Use custom industry if "Others" was selected, otherwise use dropdown value
+    const finalIndustry = selectedIndustry === "Others" ? customIndustry : data.industry;
+    if (finalIndustry) {
+      payload.append("industry", finalIndustry);
+    }
 
     if (referralCode) {
       payload.append("referrer_code", referralCode);
@@ -66,6 +76,8 @@ export default function SignUp() {
       onSuccess: () => {
         toast.success("Account created successfully!");
         reset();
+        setSelectedIndustry("");
+        setCustomIndustry("");
         navigate("/login");
       },
       onError: (error) => {
@@ -112,6 +124,61 @@ export default function SignUp() {
                 />
                 {errors.email && (
                   <p className="text-red-500 text-sm mt-1">{errors.email.message}</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Industry <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
+                <select
+                  {...register("industry")}
+                  value={selectedIndustry}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSelectedIndustry(value);
+                    setValue("industry", value);
+                    if (value !== "Others") {
+                      setCustomIndustry("");
+                    }
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all"
+                >
+                  <option value="">Select your industry</option>
+                  <option value="Technology & Software">Technology & Software</option>
+                  <option value="E-commerce & Retail">E-commerce & Retail</option>
+                  <option value="Healthcare & Medical">Healthcare & Medical</option>
+                  <option value="Finance & Banking">Finance & Banking</option>
+                  <option value="Education & Training">Education & Training</option>
+                  <option value="Marketing & Advertising">Marketing & Advertising</option>
+                  <option value="Real Estate">Real Estate</option>
+                  <option value="Manufacturing">Manufacturing</option>
+                  <option value="Consulting & Professional Services">Consulting & Professional Services</option>
+                  <option value="Food & Beverage">Food & Beverage</option>
+                  <option value="Media & Entertainment">Media & Entertainment</option>
+                  <option value="Travel & Hospitality">Travel & Hospitality</option>
+                  <option value="Construction & Engineering">Construction & Engineering</option>
+                  <option value="Agriculture">Agriculture</option>
+                  <option value="Energy & Utilities">Energy & Utilities</option>
+                  <option value="Transportation & Logistics">Transportation & Logistics</option>
+                  <option value="Nonprofit & NGO">Nonprofit & NGO</option>
+                  <option value="Government & Public Sector">Government & Public Sector</option>
+                  <option value="Legal Services">Legal Services</option>
+                  <option value="Others">Others</option>
+                </select>
+                {errors.industry && (
+                  <p className="text-red-500 text-sm mt-1">{errors.industry.message}</p>
+                )}
+                
+                {/* Custom Industry Input - shows when "Others" is selected */}
+                {selectedIndustry === "Others" && (
+                  <input
+                    type="text"
+                    value={customIndustry}
+                    onChange={(e) => setCustomIndustry(e.target.value)}
+                    placeholder="Please specify your industry"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all mt-3"
+                  />
                 )}
               </div>
 
