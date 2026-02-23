@@ -182,6 +182,21 @@ def me(
     # Sync subscription status (non-blocking lazy load)
     sync_user_subscription(db, current_user)
 
+    # Auto-generate referral code if missing (Self-healing)
+    if not current_user.referral_code:
+        try:
+            # Simple referral code generation if not imported
+            import random
+            import string
+            chars = string.ascii_uppercase + string.digits
+            code = ''.join(random.choice(chars) for _ in range(8))
+            current_user.referral_code = code
+            db.commit()
+            logger.info(f"Auto-generated referral code {code} for user {current_user.id}")
+        except Exception as e:
+            logger.error(f"Failed to auto-generate referral code: {e}")
+            db.rollback()
+
     # Helper to get user role
     role = "user"
     if current_user.is_admin:
@@ -206,7 +221,15 @@ def me(
         "email_notifications": current_user.email_notifications,
         "created_at": current_user.created_at,
         "access_token": token or "",
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "is_beta_user": current_user.is_beta_user,
+        "subscription_expires_at": current_user.subscription_expires_at,
+        "stripe_customer_id": current_user.stripe_customer_id,
+        "stripe_payment_method_id": current_user.stripe_payment_method_id,
+        "card_last4": current_user.card_last4,
+        "card_brand": current_user.card_brand,
+        "card_exp_month": current_user.card_exp_month,
+        "card_exp_year": current_user.card_exp_year
     }
 
 
@@ -278,7 +301,15 @@ def update_profile(
         "email_notifications": user.email_notifications,
         "created_at": user.created_at,
         "access_token": "", # Frontend already has it, or we could pass update_data's if needed
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "is_beta_user": user.is_beta_user,
+        "subscription_expires_at": user.subscription_expires_at,
+        "stripe_customer_id": user.stripe_customer_id,
+        "stripe_payment_method_id": user.stripe_payment_method_id,
+        "card_last4": user.card_last4,
+        "card_brand": user.card_brand,
+        "card_exp_month": user.card_exp_month,
+        "card_exp_year": user.card_exp_year
     }
 
 
@@ -441,7 +472,7 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
     response.set_cookie(
         key="access_token",
         value=access_token,
-        httponly=True,
+        httponly=False,  # Allow frontend to read for API headers (e.g., Stripe History)
         secure=IS_PRODUCTION,  # True in production, False in development
         samesite="None" if IS_PRODUCTION else "lax",  # "None" for production (Stripe), "lax" for development
         max_age=60 * 60 * 24 * 7  # 7 days to match token expiration
@@ -465,7 +496,17 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
         "name": user.name,
         "email": user.email,
         "role": role,
-        "referral_code": user.referral_code
+        "referral_code": user.referral_code,
+        "subscription_status": user.subscription_status,
+        "subscription_plan": user.subscription_plan,
+        "is_beta_user": user.is_beta_user,
+        "subscription_expires_at": user.subscription_expires_at,
+        "stripe_customer_id": user.stripe_customer_id,
+        "stripe_payment_method_id": user.stripe_payment_method_id,
+        "card_last4": user.card_last4,
+        "card_brand": user.card_brand,
+        "card_exp_month": user.card_exp_month,
+        "card_exp_year": user.card_exp_year
     }
 
 

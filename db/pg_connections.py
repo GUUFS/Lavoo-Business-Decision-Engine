@@ -72,6 +72,13 @@ try:
 
 except Exception as e:
     print("❌ Failed to connect to PostgreSQL database!")
+    error_msg = str(e)
+    if "could not translate host name" in error_msg or "Temporary failure in name resolution" in error_msg:
+        print("\n⚠️  DIAGNOSIS: DNS RESOLUTION ERROR DETECTED")
+        print("This is likely a WSL2 networking issue. Try restarting WSL:")
+        print(" PowerShell (Admin): wsl --shutdown")
+        print(" Then restart your backend.")
+    
     print(f"Error: {e}")
     print(f"URL format: {DATABASE_URL.split('@')[0]}@***")
     sys.exit(1)

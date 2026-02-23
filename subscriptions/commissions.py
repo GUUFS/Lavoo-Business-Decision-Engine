@@ -17,7 +17,7 @@ from api.routes.login import get_current_user
 from subscriptions.commission_service import CommissionService
 from subscriptions.payout_service import PayoutService
 
-router = APIRouter(prefix="/api/commissions", tags=["commissions"])
+router = APIRouter(prefix="/commissions", tags=["commissions"])
 
 
 def extract_user_id(current_user):

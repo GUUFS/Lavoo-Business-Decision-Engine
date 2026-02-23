@@ -5,7 +5,7 @@ import AdminHeader from '../../../components/feature/AdminHeader';
 import { toast } from 'react-toastify';
 import { useAnalyses, type AnalysisStats, type AnalysisItem } from '../../../api/admin-analysis';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = '';
 
 const getAuthToken = (): string | null => {
   return localStorage.getItem('access_token') || localStorage.getItem('token') || localStorage.getItem('authToken');
@@ -527,8 +527,8 @@ export default function AdminAIAnalysis() {
                           key={page}
                           onClick={() => setCurrentPage(page)}
                           className={`px-3 py-1 rounded-lg text-sm font-medium whitespace-nowrap ${currentPage === page
-                              ? 'bg-red-600 text-white'
-                              : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                            ? 'bg-red-600 text-white'
+                            : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
                             }`}
                         >
                           {page}

@@ -13,7 +13,7 @@ from api.cache import get_cached, set_cached, delete_cached, CacheTTL
 from typing import Optional, List
 
 
-router = APIRouter(prefix="/api", tags=["insights"])
+router = APIRouter(tags=["insights"])
 
 # Get current user (simplified - implement your auth)
 @router.get("/users/person")

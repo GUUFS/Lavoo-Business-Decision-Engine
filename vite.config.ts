@@ -94,7 +94,7 @@ export default defineConfig({
         "frame-src 'self' https://js.stripe.com https://checkout.flutterwave.com https://*.f4b-flutterwave.com",
 
         // API connections - CRITICAL FIX: Use * wildcard for all paths
-        "connect-src 'self' http://localhost:8000 https://localhost:8000 http://127.0.0.1:8000 https://127.0.0.1:8000 ws://localhost:8000 wss://localhost:8000 ws://127.0.0.1:8000 wss://127.0.0.1:8000 http://localhost:8000/* https://localhost:8000/* https://api.stripe.com https://api.flutterwave.com https://*.flutterwave.com https://api.ravepay.co https://metrics.flutterwave.com https://*.sentry.io https://*.ingest.sentry.io",
+        "connect-src 'self' http://localhost:8000 https://localhost:8000 http://127.0.0.1:8000 https://127.0.0.1:8000 ws://localhost:8000 wss://localhost:8000 ws://127.0.0.1:8000 wss://127.0.0.1:8000 ws://localhost:3000 ws://127.0.0.1:3000 http://localhost:8000/* https://localhost:8000/* https://api.stripe.com https://api.flutterwave.com https://*.flutterwave.com https://api.ravepay.co https://metrics.flutterwave.com https://*.sentry.io https://*.ingest.sentry.io",
 
         // Styles - All CSS sources
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
@@ -111,7 +111,7 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         secure: false,
-        // Remove any fancy configure — this simple version works 100%
+        ws: true,
       }
     }
   }

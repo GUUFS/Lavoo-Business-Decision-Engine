@@ -66,7 +66,7 @@ export default function AdminSettings() {
   const [formData, setFormData] = useState<SystemSettings>(defaultSettings);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
   useEffect(() => {
     fetchSettings();

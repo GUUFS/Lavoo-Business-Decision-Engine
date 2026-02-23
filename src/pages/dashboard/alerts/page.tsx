@@ -60,7 +60,7 @@ export default function AlertsPage() {
     useEffect(() => {
         if (cachedAlertsData && !alertsLoading) {
             const alertsData = cachedAlertsData as any[];
-            const isProUser = user?.subscription_status === 'Active';
+            const isProUser = ['active', 'pro', 'premium'].includes(user?.subscription_status?.toLowerCase() || '');
 
             const mappedAlerts = alertsData.map(alert => ({
                 ...alert,
@@ -276,7 +276,7 @@ export default function AlertsPage() {
         setAlerts(sortedAlerts);
 
         // Update display alerts
-        const isProUser = user?.subscription_status === 'Active';
+        const isProUser = ['active', 'pro', 'premium'].includes(user?.subscription_status?.toLowerCase() || '');
         const startIndex = (currentPage - 1) * ALERTS_PER_PAGE;
         const endIndex = startIndex + ALERTS_PER_PAGE;
         const paginatedAlerts = isProUser ? sortedAlerts.slice(startIndex, endIndex) : sortedAlerts.slice(0, ALERTS_PER_PAGE);

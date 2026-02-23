@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 
 # import the function for rendering the HTML sites
 # import the function for rendering the static files
@@ -63,6 +63,14 @@ logger.info("✓ Using Neon PostgreSQL database")
 
 app = FastAPI(debug=True)
 print("APP TYPE:", type(app))
+
+# DEBUG: Global Request Logger to confirm traffic
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"INCOMING REQUEST: {request.method} {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"RESPONSE STATUS: {request.method} {request.url.path} -> {response.status_code}")
+    return response
 
 
 origins = [
@@ -240,6 +248,24 @@ async def startup_event():
                 except Exception as e:
                     logger.warning(f"Failed to add columns to system_settings: {e}")
 
+                # Create user_notifications table
+                try:
+                    db.execute(text("""
+                        CREATE TABLE IF NOT EXISTS user_notifications (
+                            id SERIAL PRIMARY KEY,
+                            user_id INTEGER NOT NULL REFERENCES users(id),
+                            type VARCHAR(50) NOT NULL,
+                            title VARCHAR(255) NOT NULL,
+                            message TEXT NOT NULL,
+                            link VARCHAR(255),
+                            is_read BOOLEAN DEFAULT FALSE,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread ON user_notifications(user_id, is_read);
+                    """))
+                except Exception as e:
+                    logger.warning(f"Failed to create user_notifications table: {e}")
+
             except Exception as e:
                 # If batch fails (e.g. SQLite doesn't support multiple ADD COLUMN), fall back to individual or log
                 logger.warning(f"Batch migration warning (will attempt individual if critical): {e}")
@@ -348,28 +374,30 @@ app.include_router(signup.router, prefix="/api")  # For React frontend that uses
 app.include_router(login.router, prefix="/api")  # For React frontend that uses /api/login
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
-app.include_router(business_analyzer.router)  # Business analysis
-app.include_router(user_stats.router)  # User statistics
-app.include_router(analyzer.router)
-app.include_router(admin.router)
-app.include_router(paypal.router)
-app.include_router(flutterwave.router)
-app.include_router(stripe.router)
-app.include_router(customer_service.router)
-app.include_router(reviews.router)
-app.include_router(alerts.router)  # Clinton's feature
-app.include_router(insights.router)  # Clinton's feature
-app.include_router(referrals.router)  # Clinton's feature
-app.include_router(earnings.router)
-app.include_router(commissions.router)
+app.include_router(business_analyzer.router)  # internally prefix /api/business
+app.include_router(user_stats.router)  # internally prefix /api/user
+app.include_router(analyzer.router, prefix="/api") # prefix /api to match frontend /api/analyzer
+app.include_router(admin.router, prefix="/api") # prefix /api to match frontend /api/admin
+app.include_router(paypal.router) # endpoints start with /api/paypal
+app.include_router(flutterwave.router) # internally prefix /api/payments
+app.include_router(stripe.router) # internally prefix /api/stripe
+app.include_router(customer_service.router, prefix="/api") # internally prefix /api/customer-service
+app.include_router(reviews.router, prefix="/api") # internal endpoints start with /api/reviews
+app.include_router(alerts.router, prefix="/api")
+app.include_router(insights.router, prefix="/api")  # internally prefix /api
+app.include_router(referrals.router, prefix="/api")
+app.include_router(earnings.router, prefix="/api")
+app.include_router(commissions.router, prefix="/api") # internally prefix /api/commissions
 app.include_router(revenue.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
-app.include_router(stripe_connect.router)
+app.include_router(stripe_connect.router, prefix="/api/stripe-connect")
 app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(email_service.router)
+from api.routes import notifications
+app.include_router(notifications.router, prefix="/api")
 
 # Include index.router LAST (catch-all for React app)
 app.include_router(index.router)

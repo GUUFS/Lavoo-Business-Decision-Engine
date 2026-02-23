@@ -40,6 +40,7 @@ class SettingsUpdate(BaseModel):
     
     # Billing
     monthly_price: Optional[float] = None
+    quarterly_price: Optional[float] = None
     yearly_price: Optional[float] = None
 
 @router.get("")

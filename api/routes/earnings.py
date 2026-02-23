@@ -10,56 +10,14 @@ from decimal import Decimal
 from db.pg_connections import get_db
 from db.pg_models import User, Referral, Subscriptions, Commission
 
-try:
-    from api.routes.login import SECRET_KEY, ALGORITHM
-except ImportError:
-    import os
-    import secrets
-    SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
-    ALGORITHM = "HS256"
+from api.routes.login import get_current_user
 
 router = APIRouter(prefix="", tags=["earnings"])
 
 COMMISSION_RATE = 0.5  # 50% commission on referral subscriptions
 
 
-def get_user_id_from_request(
-    authorization: Optional[str] = Header(None),
-    access_token_cookie: Optional[str] = Cookie(None, alias="access_token"),
-    db: Session = Depends(get_db)
-) -> int:
-    """Extract and validate user ID from request"""
-    token = None
-    
-    if authorization:
-        try:
-            parts = authorization.split()
-            if len(parts) != 2:
-                raise HTTPException(status_code=401, detail="Invalid authorization header format")
-            scheme, token = parts
-            if scheme.lower() != 'bearer':
-                raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-        except ValueError:
-            raise HTTPException(status_code=401, detail="Invalid authorization header")
-    elif access_token_cookie:
-        token = access_token_cookie
-    
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("id")
-        
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
-        
-        return user_id
-        
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+# Remove local get_user_id_from_request and risky SECRET_KEY fallback
 
 
 def get_month_ranges():
@@ -84,41 +42,34 @@ def get_month_ranges():
 
 @router.get("/user/me")
 async def get_current_user_data(
-    user_id: int = Depends(get_user_id_from_request),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get current user's data - OPTIMIZED"""
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+    # current_user is already the User object from DB
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "total_chops": current_user.total_chops or 0,
+        "referral_chops": current_user.referral_chops or 0,
+        "referral_count": current_user.referral_count or 0,
+        "referral_code": current_user.referral_code or "",
+        "subscription_status": current_user.subscription_status or "inactive",
+        "subscription_plan": current_user.subscription_plan or "free",
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None
+    }
         
-        return {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-            "total_chops": user.total_chops or 0,
-            "referral_chops": user.referral_chops or 0,
-            "referral_count": user.referral_count or 0,
-            "referral_code": user.referral_code or "",
-            "subscription_status": user.subscription_status or "inactive",
-            "subscription_plan": user.subscription_plan or "free",
-            "created_at": user.created_at.isoformat() if user.created_at else None
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[ERROR] Error in /user/me: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 
 @router.get("/earnings/summary")
 async def get_earnings_summary(
-    user_id: int = Depends(get_user_id_from_request),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get earnings summary - commission-based model"""
+    user_id = current_user.id
     try:
         print(f"[/earnings/summary] Starting for user {user_id}")
         date_ranges = get_month_ranges()
@@ -130,17 +81,20 @@ async def get_earnings_summary(
         # Count paid referrals (users who have an 'active' subscription status)
         paid_referrals = db.query(func.count(User.id)).filter(
             User.id.in_(db.query(referral_user_ids_subquery.c.referred_user_id)),
-            User.subscription_status == "active"
+            func.lower(User.subscription_status) == "active"
         ).scalar() or 0
         
         # Calculate commissions from the Commission table (more accurate)
         commission_stats = db.query(
             func.sum(case((Commission.status == 'paid', Commission.amount), else_=0)).label('paid_amount'),
-            func.sum(case((Commission.status.in_(['pending', 'processing']), Commission.amount), else_=0)).label('pending_amount'),
+            func.sum(case((Commission.status.in_(['pending', 'processing', 'approved']), Commission.amount), else_=0)).label('pending_amount'),
             func.count(case((Commission.status == 'paid', 1), else_=None)).label('paid_count')
         ).filter(Commission.user_id == user_id).first()
         
+        print(f"[DEBUG] Raw Commission Stats for User {user_id}: {commission_stats}")
+        
         paid_commissions = float(commission_stats.paid_amount or 0)
+
         pending_commissions = float(commission_stats.pending_amount or 0)
         total_commissions = paid_commissions + pending_commissions
         
@@ -177,7 +131,7 @@ async def get_earnings_summary(
         
         print(f"[/earnings/summary] Growth rate: {growth_rate}%")
         
-        return {
+        result_payload = {
             "totalCommissions": total_commissions,
             "paidCommissions": paid_commissions,
             "pendingCommissions": pending_commissions,
@@ -189,6 +143,8 @@ async def get_earnings_summary(
             "avgOrderValue": round(total_commissions / paid_referrals, 2) if paid_referrals > 0 else 0,
             "commissionRate": int(COMMISSION_RATE * 100)  # Return as percentage
         }
+        print(f"[/earnings/summary] RETURNING PAYLOAD: {result_payload}")
+        return result_payload
 
     except Exception as e:
         print(f"[ERROR] /earnings/summary: {str(e)}")
@@ -198,10 +154,11 @@ async def get_earnings_summary(
 
 @router.get("/api/referrals/stats")
 async def get_referral_stats(
-    user_id: int = Depends(get_user_id_from_request),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get referral statistics"""
+    user_id = current_user.id
     try:
         print(f"[/api/referrals/stats] Starting for user {user_id}")
         date_ranges = get_month_ranges()
@@ -249,11 +206,12 @@ async def get_referral_stats(
 
 @router.get("/earnings/monthly")
 async def get_monthly_performance(
-    user_id: int = Depends(get_user_id_from_request),
-    db: Session = Depends(get_db),
-    months: int = 6
+    months: int = 6,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get monthly performance with commission calculations"""
+    user_id = current_user.id
     try:
         print(f"[/earnings/monthly] Starting for user {user_id}")
         today = datetime.now()
@@ -360,10 +318,11 @@ async def get_monthly_performance(
 
 @router.get("/earnings/available-years")
 async def get_available_years(
-    user_id: int = Depends(get_user_id_from_request),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get list of years from 2025 onwards up to current year"""
+    user_id = current_user.id
     try:
         print(f"[/earnings/available-years] Starting for user {user_id}")
         
@@ -386,10 +345,11 @@ async def get_available_years(
 async def get_monthly_metrics_for_period(
     year: int,
     month: int,
-    user_id: int = Depends(get_user_id_from_request),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get metrics for a specific month and year"""
+    user_id = current_user.id
     try:
         print(f"[/earnings/monthly/{year}/{month}] Starting for user {user_id}")
         
@@ -411,7 +371,7 @@ async def get_monthly_metrics_for_period(
         
         print(f"[/earnings/monthly/{year}/{month}] Date range: {month_start} to {month_end}")
         
-        # Get referrals made in this month
+        # Total Referrals: Users who registered with this user's referral code in this month
         month_referrals = db.query(
             func.count(Referral.id).label('referral_count'),
             func.coalesce(func.sum(Referral.chops_awarded), 0).label('referral_chops')
@@ -424,34 +384,42 @@ async def get_monthly_metrics_for_period(
         referral_count = month_referrals.referral_count or 0
         referral_chops = int(month_referrals.referral_chops or 0)
         
-        print(f"[/earnings/monthly/{year}/{month}] Referrals: {referral_count}, Chops: {referral_chops}")
+        print(f"[/earnings/monthly/{year}/{month}] Referrals created in month: {referral_count}, Chops: {referral_chops}")
         
-        # Get all referred user IDs for this user (not just this month) - FIX: Use select() explicitly
-        referred_user_ids_subquery = db.query(Referral.referred_user_id).filter(
+        # Paid Referrals: ALL referred users whose CURRENT subscription_status is "active"
+        # (NOT limited to those referred in this specific month)
+        all_referred_user_ids = db.query(Referral.referred_user_id).filter(
             Referral.referrer_id == user_id
         ).subquery()
         
-        # Get subscription payments made by referred users in this month
+        # Count ALL referred users with active subscriptions
+        paid_referral_count = db.query(func.count(User.id)).filter(
+            User.id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
+            func.lower(User.subscription_status) == "active"
+        ).scalar() or 0
+        
+        print(f"[/earnings/monthly/{year}/{month}] Paid referrals (ALL active, not just from this month): {paid_referral_count}")
+        
+        # Calculate commission based on actual subscription payments made in this month
+        # by ANY referred users (not just those referred this month)
+        all_referred_user_ids = db.query(Referral.referred_user_id).filter(
+            Referral.referrer_id == user_id
+        ).subquery()
+        
+        # Use explicit select_from to avoid join ambiguity
         month_payments = db.query(
-            func.count(func.distinct(User.id)).label('paid_users'),
             func.coalesce(func.sum(Subscriptions.amount), 0).label('total_amount')
-        ).join(
-            Subscriptions, User.id == Subscriptions.user_id
-        ).filter(
-            User.id.in_(db.query(referred_user_ids_subquery.c.referred_user_id)),
-            User.subscription_status == "active",
+        ).select_from(Subscriptions).filter(
+            Subscriptions.user_id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
             Subscriptions.status == "successful",
             Subscriptions.created_at >= month_start,
             Subscriptions.created_at <= month_end
         ).first()
         
-        paid_referral_count = month_payments.paid_users or 0
         total_subscription_amount = float(month_payments.total_amount or 0)
-        
-        # Calculate commission for this month
         month_commission = round(total_subscription_amount * COMMISSION_RATE, 2)
         
-        print(f"[/earnings/monthly/{year}/{month}] Paid referrals: {paid_referral_count}, Commission: ${month_commission}")
+        print(f"[/earnings/monthly/{year}/{month}] Commission from payments in month: ${month_commission}")
         
         # Get month name
         month_name = month_start.strftime("%B")
@@ -468,6 +436,7 @@ async def get_monthly_metrics_for_period(
         }
         
         print(f"[/earnings/monthly/{year}/{month}] ✅ Complete")
+        print(f"[/earnings/monthly/{year}/{month}] RETURNING PAYLOAD: {result}")
         return result
         
     except HTTPException:

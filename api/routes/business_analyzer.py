@@ -88,8 +88,15 @@ class AnalysisResponse(BaseModel):
 def get_user_id(current_user) -> int:
     """Extract user ID from current_user (handles dict or object)."""
     if isinstance(current_user, dict):
-        user_obj = current_user.get("user")
-        return user_obj.id if user_obj else None
+        # Extract id robustly from diverse token payload formats
+        user_id = current_user.get("id") or current_user.get("user_id") or current_user.get("sub")
+        if not user_id and "user" in current_user:
+            user_data = current_user["user"]
+            if isinstance(user_data, dict):
+                return user_data.get("id") or user_data.get("user_id")
+            elif hasattr(user_data, 'id'):
+                return user_data.id
+        return user_id
     return current_user.id
 
 

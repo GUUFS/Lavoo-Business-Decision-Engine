@@ -10,7 +10,7 @@ interface PayPalCheckoutProps {
 declare global {
   interface Window {
     paypal?: {
-      Buttons: (options: any) => { 
+      Buttons: (options: any) => {
         render: (element: HTMLElement | null) => Promise<void>;
         close?: () => void;
       };
@@ -28,7 +28,7 @@ export default function PayPalCheckout({ amount, onSuccess, onError }: PayPalChe
   // Load PayPal SDK
   useEffect(() => {
     const clientId = import.meta.env.VITE_PAYPAL_CLIENT_ID;
-    
+
     if (!clientId) {
       setError("PayPal Client ID not configured");
       console.error("VITE_PAYPAL_CLIENT_ID is missing");
@@ -46,7 +46,7 @@ export default function PayPalCheckout({ amount, onSuccess, onError }: PayPalChe
     const script = document.createElement("script");
     script.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&currency=USD`;
     script.async = true;
-    
+
     script.onload = () => {
       console.log("✅ PayPal SDK loaded");
       setSdkReady(true);
@@ -90,7 +90,7 @@ export default function PayPalCheckout({ amount, onSuccess, onError }: PayPalChe
           createOrder: async () => {
             try {
               console.log("📝 Creating PayPal order...");
-              const res = await fetch("http://localhost:8000/api/paypal/create-order", {
+              const res = await fetch("/api/paypal/create-order", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ amount: amount.toFixed(2) }),
@@ -114,7 +114,7 @@ export default function PayPalCheckout({ amount, onSuccess, onError }: PayPalChe
           onApprove: async (data: { orderID: string }) => {
             try {
               console.log("💰 Capturing payment...");
-              const res = await fetch("http://localhost:8000/api/paypal/capture-order", {
+              const res = await fetch("/api/paypal/capture-order", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ order_id: data.orderID }),

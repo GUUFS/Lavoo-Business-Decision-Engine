@@ -60,7 +60,7 @@ export const useEarningsUser = () => {
   return useQuery({
     queryKey: ["earnings", "user"],
     queryFn: async (): Promise<UserData> => {
-      const response = await api.get("/user/me");
+      const response = await api.get("/api/user/me");
       return response.data;
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
@@ -96,7 +96,7 @@ export const useEarningsSummary = () => {
   return useQuery({
     queryKey: ["earnings", "summary"],
     queryFn: async (): Promise<EarningsSummary> => {
-      const response = await api.get("/earnings/summary");
+      const response = await api.get("/api/earnings/summary");
       return response.data;
     },
     staleTime: 3 * 60 * 1000, // 3 minutes
@@ -114,7 +114,7 @@ export const useAvailableYears = () => {
   return useQuery({
     queryKey: ["earnings", "years"],
     queryFn: async (): Promise<number[]> => {
-      const response = await api.get("/earnings/available-years");
+      const response = await api.get("/api/earnings/available-years");
       return response.data.years || [];
     },
     staleTime: 10 * 60 * 1000, // 10 minutes
@@ -132,7 +132,7 @@ export const useMonthlyPerformance = (year: number, month: number) => {
   return useQuery({
     queryKey: ["earnings", "monthly", year, month],
     queryFn: async (): Promise<MonthlyMetrics> => {
-      const response = await api.get(`/earnings/monthly/${year}/${month}`);
+      const response = await api.get(`/api/earnings/monthly/${year}/${month}`);
       return response.data;
     },
     enabled: !!year && !!month,

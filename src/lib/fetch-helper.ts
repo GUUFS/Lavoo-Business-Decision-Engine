@@ -1,7 +1,7 @@
 // src/utils/fetchHelper.ts
 import Cookies from "js-cookie";
 
-const BASE_URL = "http://localhost:8000"; // ✅ your FastAPI backend URL
+const BASE_URL = ""; // ✅ Relative path for proxy
 
 export async function fetchHelper<T>(
   endpoint: string,

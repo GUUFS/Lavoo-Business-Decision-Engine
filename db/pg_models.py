@@ -64,6 +64,19 @@ class User(Base):
     two_factor_enabled = Column(Boolean, default=False)
     email_notifications = Column(Boolean, default=True)
 
+    # Beta and Stripe Columns
+    is_beta_user = Column(Boolean, default=False)
+    beta_joined_at = Column(DateTime(timezone=True), nullable=True)
+    grace_period_ends_at = Column(DateTime(timezone=True), nullable=True)
+    stripe_customer_id = Column(String(255), nullable=True)
+    stripe_payment_method_id = Column(String(255), nullable=True)
+    card_last4 = Column(String(4), nullable=True)
+    card_brand = Column(String(50), nullable=True)
+    card_exp_month = Column(Integer, nullable=True)
+    card_exp_year = Column(Integer, nullable=True)
+    card_saved_at = Column(DateTime(timezone=True), nullable=True)
+    subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     subscriptions = relationship("Subscriptions", back_populates="user")
     tickets = relationship("Ticket", back_populates="user")
@@ -76,6 +89,7 @@ class User(Base):
     commissions_earned = relationship("Commission", foreign_keys="Commission.user_id", back_populates="user")
     payouts = relationship("Payout", back_populates="user")
     payout_account = relationship("PayoutAccount", back_populates="user", uselist=False)
+
 
 class AITool(Base):
     """
@@ -176,6 +190,10 @@ class ShowUser(BaseModel):
     password: str
 
 
+class SaveCardRequest(BaseModel):
+    payment_method_id: str
+
+
 class UserResponse(BaseModel):
     """Pydantic model for user response"""
 
@@ -193,6 +211,16 @@ class UserResponse(BaseModel):
     referral_chops: int
     referral_count: int
     referral_code: Optional[str] = None
+    # Add new fields
+    is_beta_user: Optional[bool] = False
+    subscription_plan: Optional[str] = None
+    subscription_expires_at: Optional[datetime] = None
+    stripe_customer_id: Optional[str] = None
+    stripe_payment_method_id: Optional[str] = None
+    card_last4: Optional[str] = None
+    card_brand: Optional[str] = None
+    card_exp_month: Optional[int] = None
+    card_exp_year: Optional[int] = None
 
 
 class AIToolBase(BaseModel):
@@ -302,6 +330,15 @@ class AuthResponse(BaseModel):
     two_factor_enabled: bool | None = None
     email_notifications: bool | None = None
     created_at: datetime | None = None
+    # Add new fields
+    is_beta_user: bool | None = False
+    subscription_expires_at: datetime | None = None
+    stripe_customer_id: str | None = None
+    stripe_payment_method_id: str | None = None
+    card_last4: str | None = None
+    card_brand: str | None = None
+    card_exp_month: int | None = None
+    card_exp_year: int | None = None
 
 
 # Paypal payment gateway
@@ -338,11 +375,57 @@ class Subscriptions(Base):
     user = relationship("User", back_populates="subscriptions")
     commission = relationship("Commission", back_populates="subscription", uselist=False)
 
+class NotificationType(enum.Enum):
+    PAYMENT_SUCCESS = "payment_success"
+    PAYMENT_FAILED = "payment_failed"
+    COMMISSION_EARNED = "commission_earned"
+    REFERRAL_REGISTERED = "referral_registered"
+    PAYOUT_COMPLETED = "payout_completed"
+    SYSTEM_ALERT = "system_alert"
+
+class UserNotification(Base):
+    """
+    Stores individual notifications for users (payments, commissions, etc.)
+    """
+    __tablename__ = "user_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    type = Column(String(50), nullable=False) # Maps to NotificationType
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    link = Column(String(255), nullable=True) # Optional link to relevant page
+    is_read = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", backref="notifications")
+
+
+class NotificationHistory(Base):
+    """
+    Tracks when specific notifications were sent to avoid spam/repetition.
+    """
+    __tablename__ = "notification_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    notification_type = Column(String(50), nullable=False)
+    sent_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_notification_history_user_type_sent', 'user_id', 'notification_type', 'sent_at'),
+    )
+
 
 class CreateSubscriptionRequest(BaseModel):
     payment_method_id: str
     plan_type: str  # 'monthly' or 'yearly'
     billing_details: Optional[Dict] = None
+
+
+class ConfirmSubscriptionRequest(BaseModel):
+    subscription_id: str
+    payment_intent_id: str
 
 
 class UpdatePaymentMethodRequest(BaseModel):
@@ -1331,6 +1414,7 @@ class SystemSettings(Base):
 
     # Billing
     monthly_price = Column(Float, default=29.99)
+    quarterly_price = Column(Float, default=79.99)
     yearly_price = Column(Float, default=299.99)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

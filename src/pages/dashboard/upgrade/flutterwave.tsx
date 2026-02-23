@@ -58,7 +58,7 @@ export default function FlutterwaveCheckout({
       console.log('Verifying payment with transaction ID:', transactionId);
       console.log('User email being sent for verification:', email);
 
-      const response = await fetch('http://localhost:8000/api/payments/flutterwave/verify', {
+      const response = await fetch('/api/payments/flutterwave/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -176,8 +176,8 @@ export default function FlutterwaveCheckout({
         onClick={handlePayment}
         disabled={isLoading}
         className={`w-full py-3 px-6 ${isLoading
-            ? 'bg-gray-400 cursor-not-allowed'
-            : 'bg-orange-500 hover:bg-orange-600'
+          ? 'bg-gray-400 cursor-not-allowed'
+          : 'bg-orange-500 hover:bg-orange-600'
           } text-white font-semibold rounded-lg transition-colors duration-200 flex items-center justify-center`}
       >
         {isLoading ? (

@@ -8,7 +8,7 @@ from db.pg_connections import get_db
 from db.pg_models import User, Referral, ReferralResponse, ReferralStats
 from api.routes.login import get_current_user
 
-router = APIRouter(prefix="/api", tags=["referrals"])
+router = APIRouter(tags=["referrals"])
 
 
 def extract_user_id(current_user):

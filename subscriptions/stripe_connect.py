@@ -96,7 +96,7 @@ async def create_stripe_connect_account(
                 business_type="individual",
                 metadata={
                     "user_id": str(user_id),
-                    "platform": "AI_Strategy_Pro"
+                    "platform": "Lavoo Business Decision Engine"
                 }
             )
             stripe_account_id = account.id

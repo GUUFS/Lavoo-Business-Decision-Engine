@@ -14,6 +14,16 @@ export interface User {
   department?: string;
   location?: string;
   bio?: string;
+  is_beta_user?: boolean;
+  beta_joined_at?: string;
+  grace_period_ends_at?: string;
+  stripe_customer_id?: string;
+  stripe_payment_method_id?: string;
+  card_last4?: string;
+  card_brand?: string;
+  card_exp_month?: number;
+  card_exp_year?: number;
+  card_saved_at?: string;
 }
 
 export const useCurrentUser = () => {
@@ -24,7 +34,7 @@ export const useCurrentUser = () => {
       if (!token) return null;
 
       try {
-        const res = await axios.get("http://localhost:8000/api/me", {
+        const res = await axios.get("/api/me", {
           withCredentials: true,
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
@@ -33,12 +43,12 @@ export const useCurrentUser = () => {
         if (err.response?.status === 401) {
           try {
             await axios.post(
-              "http://localhost:8000/api/refresh",
+              "/api/refresh",
               {},
               { withCredentials: true }
             );
 
-            const retryRes = await axios.get("http://localhost:8000/api/me", {
+            const retryRes = await axios.get("/api/me", {
               withCredentials: true,
               headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
@@ -56,7 +66,7 @@ export const useCurrentUser = () => {
 
 export const updateProfile = async (data: any) => {
   const token = localStorage.getItem("access_token");
-  const res = await axios.patch("http://localhost:8000/me", data, {
+  const res = await axios.patch("/api/me", data, {
     withCredentials: true,
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
@@ -85,7 +95,7 @@ export const useUserChops = () => {
       if (!token) throw new Error("No auth token");
 
       try {
-        const res = await axios.get("http://localhost:8000/users/me", {
+        const res = await axios.get("/api/users/me", {
           withCredentials: true,
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
@@ -104,12 +114,12 @@ export const useUserChops = () => {
         if (err.response?.status === 401) {
           try {
             await axios.post(
-              "http://localhost:8000/api/refresh",
+              "/api/refresh",
               {},
               { withCredentials: true }
             );
 
-            const retryRes = await axios.get("http://localhost:8000/users/me", {
+            const retryRes = await axios.get("/api/users/me", {
               withCredentials: true,
               headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
@@ -178,4 +188,20 @@ export const updateChopsAfterAction = async (queryClient: any) => {
   const channel = new BroadcastChannel('chops-updates');
   channel.postMessage({ type: 'chops-updated' });
   channel.close();
+};
+export const useBetaStatus = () => {
+  return useQuery({
+    queryKey: ["betaStatus"],
+    queryFn: async () => {
+      const token = localStorage.getItem("auth_token") || localStorage.getItem("access_token");
+      if (!token) return null;
+
+      const res = await axios.get("/api/stripe/beta/status", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      return res.data;
+    },
+    enabled: !!localStorage.getItem("auth_token") || !!localStorage.getItem("access_token"),
+    staleTime: 60 * 1000,
+  });
 };

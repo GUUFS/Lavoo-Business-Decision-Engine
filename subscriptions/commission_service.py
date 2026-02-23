@@ -3,7 +3,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime, timedelta
-from db.pg_models import Commission, Referral, CommissionSummary, User
+from db.pg_models import Commission, Referral, CommissionSummary, User, NotificationType
+from api.services.notification_service import NotificationService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,16 @@ class CommissionService:
             
             logger.info(
                 f"✅ Commission created: ${commission_amount} for user {referral.referrer_id}"
+            )
+            
+            # Notify referrer about commission
+            NotificationService.create_notification(
+                db=db,
+                user_id=referral.referrer_id,
+                type=NotificationType.COMMISSION_EARNED.value,
+                title="Commission Earned!",
+                message=f"You've earned ${commission_amount} commission from a referral's subscription.",
+                link="/dashboard/earnings"
             )
             
             return commission

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DashboardSidebar from '../../../components/feature/DashboardSidebar';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = '';
 const REVIEWS_PER_PAGE = 3;
 
 const getAuthToken = () => {
@@ -12,7 +12,7 @@ const getAuthToken = () => {
 
 const getAuthHeaders = () => {
   const token = getAuthToken();
-  return { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' };
+  return { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token} ` : '' };
 };
 
 const testAPIConnection = async () => {
@@ -22,7 +22,7 @@ const testAPIConnection = async () => {
       console.error('❌ No authentication token found. Please log in.');
       return false;
     }
-    const response = await fetch('http://localhost:8000/health', { headers: { 'Authorization': `Bearer ${token}` } });
+    const response = await fetch(`${API_BASE_URL}/health`, { headers: { 'Authorization': `Bearer ${token}` } });
     if (response.ok) {
       console.log('✅ API connection successful');
       return true;

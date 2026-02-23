@@ -15,8 +15,9 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from db.pg_models import (
     User, Commission, Payout, PayoutAccount, 
-    CommissionSummary
+    CommissionSummary, NotificationType
 )
+from api.services.notification_service import NotificationService
 from fastapi import BackgroundTasks
 from emailing import email_service
 

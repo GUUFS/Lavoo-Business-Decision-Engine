@@ -61,6 +61,38 @@ function Dashboard() {
                             <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mb-2">
                                 Welcome to Lavoo
                             </h1>
+                            {currentUser?.is_beta_user && (
+                                <div className={`mb-4 p-4 rounded-xl border ${!currentUser.stripe_payment_method_id
+                                    ? 'bg-orange-50 border-orange-200 text-orange-800'
+                                    : 'bg-green-50 border-green-200 text-green-800'
+                                    }`}>
+                                    <div className="flex items-start space-x-3">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${!currentUser.stripe_payment_method_id ? 'bg-orange-100' : 'bg-green-100'
+                                            }`}>
+                                            <i className={!currentUser.stripe_payment_method_id ? "ri-gift-line text-orange-600" : "ri-checkbox-circle-line text-green-600"}></i>
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold">
+                                                {!currentUser.stripe_payment_method_id ? "🎁 Legacy User Bonus" : "✅ Launch Ready"}
+                                            </h3>
+                                            <p className="text-sm">
+                                                {!currentUser.stripe_payment_method_id
+                                                    ? "Secure your access to Lavoo. Checkout today!"
+                                                    : "You're all set! Your access is secured."}
+                                            </p>
+                                            {!currentUser.stripe_payment_method_id && (
+                                                <Button
+                                                    onClick={() => navigate('/dashboard/upgrade')}
+                                                    size="sm"
+                                                    className="mt-3 bg-orange-600 hover:bg-orange-700 text-white border-none"
+                                                >
+                                                    Checkout
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                             <p className="text-gray-600 text-sm md:text-base">
                                 Get a complete overview of your business performance and access all tools from here.
                             </p>
@@ -75,7 +107,7 @@ function Dashboard() {
                         <div className="flex items-center justify-between mb-2">
                             <div>
                                 <p className="text-sm text-gray-600 mb-1">Total Analyses</p>
-                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_insights || 0}</p>
+                                <p className="text-xl md:text-2xl font-bold text-gray-900">{stats?.total_analyses || 0}</p>
                             </div>
                             <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-blue-50 flex items-center justify-center">
                                 <i className="ri-line-chart-line text-blue-600"></i>

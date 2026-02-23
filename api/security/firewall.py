@@ -338,7 +338,8 @@ class FirewallMiddleware(BaseHTTPMiddleware):
             "/health", "/docs", "/openapi.json", "/assets", 
             "/api/me", "/users/me", "/user/me",
             "/api/stripe", "/api/payments", "/api/commissions",
-            "/api/control", "/api/referrals", "/api/earnings"
+            "/api/control", "/api/referrals", "/api/earnings",
+            "/api/customer-service/ws"  # Allow WebSockets
         )
         if request.url.path.startswith(whitelist):
              return await call_next(request)

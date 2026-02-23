@@ -210,7 +210,7 @@ export default function Results() {
 
         if (!token) return;
 
-        const response = await fetch('http://localhost:8000/user/me', {
+        const response = await fetch('/api/user/me', {
           headers: {
             'Authorization': `Bearer ${token}`,
           },
@@ -256,7 +256,7 @@ export default function Results() {
             .find((row) => row.startsWith('access_token='))
             ?.split('=')[1] || localStorage.getItem('access_token') || localStorage.getItem('token');
 
-          fetch('http://localhost:8000/api/emails/report-download', {
+          fetch('/api/emails/report-download', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

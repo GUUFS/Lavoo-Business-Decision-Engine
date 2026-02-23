@@ -47,7 +47,7 @@ export default function AdminSidebar({
         const headers = { 'Authorization': `Bearer ${token} ` };
 
         // Poll Reports (Tickets)
-        const reportsRes = await fetch('http://localhost:8000/api/customer-service/admin/unread-count', { headers });
+        const reportsRes = await fetch('/api/customer-service/admin/unread-count', { headers });
         if (reportsRes.ok) {
           const data = await reportsRes.json();
           setReportsUnreadCount(data.count);

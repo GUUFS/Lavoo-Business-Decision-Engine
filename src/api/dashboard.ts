@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "";
 
 // --- INTERFACES ---
 export interface Alert {
@@ -39,6 +39,7 @@ export interface DashboardStats {
   active_alerts: number;
   new_alerts_today: number;
   total_insights: number;
+  total_analyses?: number; // Optional for backward compatibility but populated by API
   new_insights_today: number;
   average_rating: number;
   rating_change: number;
@@ -77,7 +78,7 @@ export const useDashboardStats = (userId: number | null) => {
       if (!userId) throw new Error("User ID required");
 
       // Fetch user data for chops
-      const userResponse = await fetch(`${API_BASE_URL}/users/me`, {
+      const userResponse = await fetch(`${API_BASE_URL}/api/user/me`, {
         headers: getAuthHeaders(),
         credentials: "include",
       });
@@ -87,6 +88,7 @@ export const useDashboardStats = (userId: number | null) => {
       }
 
       const userData = await userResponse.json();
+      console.log("[DEBUG] Dashboard /users/me response:", userData);
 
       // Fetch alerts count
       const alertsResponse = await fetch(`${API_BASE_URL}/api/alerts`, {
@@ -103,6 +105,7 @@ export const useDashboardStats = (userId: number | null) => {
       // Fetch insights/analyses stats
       const statsResponse = await fetch(`${API_BASE_URL}/api/user/stats`, {
         headers: getAuthHeaders(),
+        credentials: "include",
       });
 
       let totalAnalyses = 0;
@@ -110,13 +113,17 @@ export const useDashboardStats = (userId: number | null) => {
       let statsData: any = {};
       if (statsResponse.ok) {
         statsData = await statsResponse.json();
+        console.log("[DEBUG] Dashboard /api/user/stats response:", statsData);
         totalAnalyses = statsData.total_analyses || 0;
         avgConfidence = statsData.avg_confidence || 0;
+      } else {
+        console.error("[DEBUG] /api/user/stats failed with status:", statsResponse.status);
       }
 
       // Fetch reviews for average rating
       const reviewsResponse = await fetch(`${API_BASE_URL}/api/reviews`, {
         headers: getAuthHeaders(),
+        credentials: "include",
       });
 
       let avgRating = 0;
@@ -129,22 +136,37 @@ export const useDashboardStats = (userId: number | null) => {
         }
       }
 
-      return {
+      const finalStats = {
         total_revenue: 0,
         active_alerts: activeAlerts,
         new_alerts_today: 0,
-        total_insights: totalAnalyses, // This will be displayed as "Total Analyses"
+        total_insights: totalAnalyses, // Legacy support
+        total_analyses: totalAnalyses, // Correct property name matching backend
         new_insights_today: 0,
         average_rating: avgRating,
         rating_change: 0,
-        total_chops: userData.total_chops || userData.chops || 0,
+        total_chops: userData?.total_chops || userData?.chops || 0,
         unattended_alerts: activeAlerts,
-        total_referrals: userData.referral_count || 0,
-        referrals_this_month: userData.referrals_this_month || 0,
-        referral_chops: userData.referral_chops || 0,
-        total_commissions: statsData.total_commissions || 0,
-        paid_commissions: statsData.paid_commissions || 0,
+
+        // Critical Fix: Explicitly check for referral_count
+        total_referrals: statsData?.total_referrals || 0,
+        referrals_this_month: statsData?.referrals_this_month || 0,
+        referral_chops: userData?.referral_chops || 0,
+
+        // Ensure commissions are numbers
+        total_commissions: Number(statsData?.total_commissions || 0),
+        paid_commissions: Number(statsData?.paid_commissions || 0),
       };
+
+      console.log("[DEBUG] Dashboard Final Stats:", {
+        userId: userData?.id,
+        userReferralCount: userData?.referral_count,
+        totalCommissions: statsData?.total_commissions,
+        FINAL_referrals: finalStats.total_referrals,
+        FINAL_commissions: finalStats.total_commissions
+      });
+
+      return finalStats;
     },
     enabled: !!userId,
     staleTime: 5 * 60 * 1000, // 5 minutes - prevents reloads when switching tabs

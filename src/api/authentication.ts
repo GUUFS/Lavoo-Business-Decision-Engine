@@ -20,7 +20,7 @@ interface LoginData {
 export const useAdmin = () => {
   return useMutation<AuthResponse, Error, LoginData>({
     mutationFn: async (data) => {
-      const response = await fetch("http://localhost:8000/login", {
+      const response = await fetch("/api/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -56,7 +56,7 @@ export const useAdmin = () => {
 export const useLogin = () => {
   return useMutation<AuthResponse, Error, LoginData>({
     mutationFn: async (data) => {
-      const response = await fetch("http://localhost:8000/login", {
+      const response = await fetch("/api/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

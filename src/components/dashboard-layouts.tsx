@@ -3,24 +3,24 @@ import { Outlet } from "react-router-dom";
 import DashboardSidebar from "./feature/DashboardSidebar";
 import AdminSidebar from "./feature/AdminSidebar";
 import Header from "./feature/Header";
+import BetaStatusBanner from "./feature/BetaStatusBanner";
 
 // Admin dashboard layout
 export function AdminLayout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);  
+  const [isCollapsed, setIsCollapsed] = useState(false);
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-      <AdminSidebar 
+      <AdminSidebar
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
         isCollapsed={isCollapsed}
         setIsCollapsed={setIsCollapsed}
       />
       {/* Main content area - dynamically adjust margin based on sidebar state */}
-      <div className={`flex-1 overflow-y-auto transition-all duration-300 ${
-        isCollapsed ? 'md:ml-16' : 'md:ml-64'
-      } ml-0`}>
+      <div className={`flex-1 overflow-y-auto transition-all duration-300 ${isCollapsed ? 'md:ml-16' : 'md:ml-64'
+        } ml-0`}>
         <Header onMobileMenuClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
         <Outlet />
       </div>
@@ -36,7 +36,7 @@ export default function DashboardLayout() {
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-      <DashboardSidebar 
+      <DashboardSidebar
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
         isCollapsed={isCollapsed}
@@ -44,9 +44,8 @@ export default function DashboardLayout() {
       />
 
       {/* Main content area - dynamically adjust margin based on sidebar state */}
-      <div className={`flex-1 overflow-y-auto transition-all duration-300 ${
-        isCollapsed ? 'md:ml-16' : 'md:ml-64'
-      } ml-0`}>
+      <div className={`flex-1 overflow-y-auto transition-all duration-300 ${isCollapsed ? 'md:ml-16' : 'md:ml-64'
+        } ml-0`}>
         <Header onMobileMenuClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
         <Outlet />
       </div>

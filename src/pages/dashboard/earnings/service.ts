@@ -3,11 +3,12 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: '',
   timeout: 0, // NO TIMEOUT - requests will wait indefinitely
   headers: {
     'Content-Type': 'application/json'
-  }
+  },
+  withCredentials: true // Critical for cookie-based auth
 });
 
 // Or if you want a very long timeout instead of none:
@@ -16,14 +17,14 @@ const api = axios.create({
 // Add request interceptor to include auth token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token') || 
-                  localStorage.getItem('token') || 
-                  localStorage.getItem('authToken');
-    
+    const token = localStorage.getItem('access_token') ||
+      localStorage.getItem('token') ||
+      localStorage.getItem('authToken');
+
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    
+
     return config;
   },
   (error) => {
@@ -37,10 +38,10 @@ export default api;
 // In your service.ts file, update the earningsAPI object:
 
 export const earningsAPI = {
-  getCurrentUser: () => api.get('/user/me'),
+  getCurrentUser: () => api.get('/api/user/me'), // Fixed path to verified endpoint
   getReferralStats: () => api.get('/api/referrals/stats'),
-  getEarningsSummary: () => api.get('/earnings/summary'),
-  getMonthlyPerformance: (year: number, month: number) => 
-    api.get(`/earnings/monthly/${year}/${month}`),
-  getAvailableYears: () => api.get('/earnings/available-years')
+  getEarningsSummary: () => api.get('/api/earnings/summary'), // Corrected prefix
+  getMonthlyPerformance: (year: number, month: number) =>
+    api.get(`/api/earnings/monthly/${year}/${month}`), // Corrected prefix
+  getAvailableYears: () => api.get('/api/earnings/available-years') // Fixed path
 };

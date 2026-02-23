@@ -28,7 +28,7 @@ router = APIRouter(tags=["reviews"])
 # Public Endpoint for Homepage
 # --------------------------
 
-@router.get("/api/reviews/displayed")
+@router.get("/reviews/displayed")
 async def get_displayed_reviews(db: Session = Depends(get_db)):
     """
     Public endpoint: Get reviews selected by admin for homepage display.
@@ -156,7 +156,7 @@ async def root():
     }
 
 
-@router.post("/api/reviews")
+@router.post("/reviews")
 async def create_review(
     review: dict,
     current_user: User = Depends(get_current_user),
@@ -188,7 +188,7 @@ async def create_review(
         raise HTTPException(status_code=500, detail=f"Error creating review: {str(e)}")
 
 
-@router.get("/api/reviews")
+@router.get("/reviews")
 async def get_reviews(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -223,7 +223,7 @@ async def get_reviews(
         raise HTTPException(status_code=500, detail=f"Error fetching reviews: {str(e)}")
 
 
-@router.get("/api/reviews/conversations")
+@router.get("/reviews/conversations")
 async def get_reviews_with_conversations(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -260,7 +260,7 @@ async def get_reviews_with_conversations(
         raise HTTPException(status_code=500, detail=f"Error fetching conversations: {str(e)}")
 
 
-@router.get("/api/reviews/unread-count")
+@router.get("/reviews/unread-count")
 async def get_unread_count(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

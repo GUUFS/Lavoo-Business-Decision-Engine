@@ -2,6 +2,22 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import Cookies from "js-cookie";
 import { useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
+
+const timeAgo = (date: Date) => {
+  const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+  let interval = seconds / 31536000;
+  if (interval > 1) return Math.floor(interval) + " years ago";
+  interval = seconds / 2592000;
+  if (interval > 1) return Math.floor(interval) + " months ago";
+  interval = seconds / 86400;
+  if (interval > 1) return Math.floor(interval) + " days ago";
+  interval = seconds / 3600;
+  if (interval > 1) return Math.floor(interval) + " hours ago";
+  interval = seconds / 60;
+  if (interval > 1) return Math.floor(interval) + " mins ago";
+  return Math.floor(seconds) + " secs ago";
+};
 
 import Button from "../base/Button";
 import { useCurrentUser } from "../../api/user";
@@ -12,10 +28,13 @@ interface HeaderProps {
 
 interface Notification {
   id: string;
+  source: "system" | "alert";
+  type: string;
   title: string;
   message: string;
-  time: string;
+  created_at: string;
   read: boolean;
+  link?: string;
 }
 
 export default function Header({ onMobileMenuClick }: HeaderProps) {
@@ -24,29 +43,7 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
   const [, setIsMobileMenuOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: "1",
-      title: "Welcome to Lavoo",
-      message: "Get started by watching our demo video.",
-      time: "2 mins ago",
-      read: false,
-    },
-    {
-      id: "2",
-      title: "Analysis Complete",
-      message: "Your latest business analysis is ready to view.",
-      time: "1 hour ago",
-      read: false,
-    },
-    {
-      id: "3",
-      title: "New Feature",
-      message: "Try our new comprehensive market scanner.",
-      time: "1 day ago",
-      read: false,
-    }
-  ]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const queryClient = useQueryClient();
   const notificationRef = useRef<HTMLDivElement>(null);
@@ -95,15 +92,132 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
     setIsMobileMenuOpen(false);
   };
 
-  const handleNotificationClick = () => {
-    if (!isNotificationsOpen) {
-      // When opening, mark all as read logic is usually done here or just purely visual "disappear count"
-      // User rq: "When the user clicks on the notification icon and views the notifications, then the count disappears."
-      // So we will mark them as read in the state.
-      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  const handleNotificationClick = async () => {
+    // Open/close immediately for better UX
+    const willOpen = !isNotificationsOpen;
+    setIsNotificationsOpen(willOpen);
+
+    if (willOpen) {
+      // Mark all as read on backend in background
+      try {
+        const token = Cookies.get("access_token") || localStorage.getItem("auth_token") || localStorage.getItem("user_token") || localStorage.getItem("access_token");
+        await axios.post("/api/notifications/read-all", {}, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        // Update local state
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      } catch (err) {
+        console.error("Failed to mark all as read:", err);
+      }
     }
-    setIsNotificationsOpen(!isNotificationsOpen);
   };
+
+  // Fetch initial notifications
+  const fetchNotifications = async () => {
+    if (!isLoggedIn) return;
+    try {
+      const token = Cookies.get("access_token") || localStorage.getItem("auth_token") || localStorage.getItem("user_token") || localStorage.getItem("access_token");
+      const res = await axios.get("/api/notifications", {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
+      setNotifications(res.data.notifications || []);
+    } catch (err) {
+      console.error("Failed to fetch notifications:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      fetchNotifications();
+    }
+  }, [isLoggedIn]);
+
+  // WebSocket for real-time notifications
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    const token = Cookies.get("access_token") || localStorage.getItem("auth_token") || localStorage.getItem("user_token") || localStorage.getItem("access_token");
+    if (!token) {
+      console.warn("No auth token available for WebSocket connection");
+      return;
+    }
+
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/customer-service/ws/notifications?token=${token}`;
+
+    console.log("Attempting to connect to notifications WS...");
+
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let isIntentionallyClosed = false;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log("✓ Notifications WS connected");
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === "new_notification") {
+              const newNotif = data.payload;
+              setNotifications((prev) => [
+                {
+                  id: `notif_${newNotif.id}`,
+                  source: "system",
+                  type: newNotif.type,
+                  title: newNotif.title,
+                  message: newNotif.message,
+                  created_at: newNotif.created_at,
+                  read: newNotif.is_read,
+                  link: newNotif.link
+                },
+                ...prev
+              ]);
+            } else if (data.type === "alert_notification") {
+              fetchNotifications();
+            }
+          } catch (err) {
+            console.error("WS message parse error:", err);
+          }
+        };
+
+        ws.onerror = (err) => {
+          console.error("WS Error occurred:", err);
+        };
+
+        ws.onclose = (event) => {
+          console.log(`WS Connection closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+
+          // Only attempt reconnect if not intentionally closed and logged in
+          if (!isIntentionallyClosed && isLoggedIn) {
+            console.log("Attempting to reconnect in 5 seconds...");
+            reconnectTimeout = setTimeout(() => {
+              connect();
+            }, 5000);
+          }
+        };
+      } catch (error) {
+        console.error("Failed to create WebSocket connection:", error);
+      }
+    };
+
+    // Initial connection
+    connect();
+
+    return () => {
+      isIntentionallyClosed = true;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
+    };
+  }, [isLoggedIn]);
 
   // Close notifications when clicking outside
   useEffect(() => {
@@ -120,9 +234,31 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
 
 
   if (!isAdmin)
-
     return (
       <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        {/* Beta Status Notification Bar */}
+        {user?.is_beta_user && user?.subscription_status !== 'active' && (
+          <div className={`py-2 px-4 text-center text-sm font-medium transition-colors ${!user.stripe_payment_method_id ? 'bg-orange-600 text-white' : 'bg-green-600 text-white'
+            }`}>
+            <div className="max-w-7xl mx-auto flex items-center justify-center space-x-2">
+              {!user.stripe_payment_method_id ? (
+                <>
+                  <span>🎁 Save your card now to secure your access after the beta period!</span>
+                  <button
+                    onClick={() => navigate('/dashboard/upgrade')}
+                    className="ml-2 px-3 py-1 bg-white text-orange-600 rounded-lg text-xs hover:bg-orange-50 transition-colors"
+                  >
+                    Save Card
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span>Congratulations on becoming part of the Lavoo community</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className={`flex justify-between items-center h-16 sm:h-20 ${isDashboard ? "!justify-end w-full" : ""}`}>
             {/* Logo */}
@@ -184,7 +320,7 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
 
                     {/* Notification Popover */}
                     {isNotificationsOpen && (
-                      <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-200 origin-top-right">
+                      <div className="absolute left-1/2 -translate-x-1/2 md:right-0 md:left-auto md:translate-x-0 mt-2 w-80 bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-200 origin-top">
                         <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                           <h3 className="font-semibold text-gray-900">Notifications</h3>
                           {/* <span className="text-xs text-gray-500">Mark all as read</span> */}
@@ -197,17 +333,23 @@ export default function Header({ onMobileMenuClick }: HeaderProps) {
                           ) : (
                             <div className="divide-y divide-gray-100">
                               {notifications.map((notification) => (
-                                <div key={notification.id} className={`px-4 py-3 hover:bg-gray-50 transition-colors ${!notification.read ? 'bg-orange-50/30' : ''}`}>
+                                <div
+                                  key={notification.id}
+                                  className={`px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors ${!notification.read ? 'bg-orange-50/30' : ''}`}
+                                  onClick={() => notification.link && navigate(notification.link)}
+                                >
                                   <div className="flex items-start">
                                     <div className="flex-shrink-0 mt-1">
-                                      <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-orange-600">
-                                        <i className="ri-information-line text-sm"></i>
+                                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${notification.source === 'alert' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'}`}>
+                                        <i className={notification.source === 'alert' ? "ri-alert-line text-sm" : "ri-information-line text-sm"}></i>
                                       </div>
                                     </div>
                                     <div className="ml-3 w-0 flex-1">
                                       <p className="text-sm font-medium text-gray-900">{notification.title}</p>
-                                      <p className="mt-1 text-sm text-gray-500">{notification.message}</p>
-                                      <p className="mt-1 text-xs text-gray-400">{notification.time}</p>
+                                      <p className="mt-1 text-sm text-gray-500 line-clamp-2">{notification.message}</p>
+                                      <p className="mt-1 text-xs text-gray-400">
+                                        {timeAgo(new Date(notification.created_at))}
+                                      </p>
                                     </div>
                                     {!notification.read && (
                                       <div className="flex-shrink-0 ml-2">

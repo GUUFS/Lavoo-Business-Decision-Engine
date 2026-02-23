@@ -118,7 +118,7 @@ export default function DashboardSidebar({ isMobileMenuOpen = false,
           headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const response = await fetch('http://localhost:8000/api/customer-service/tickets/unread-count', {
+        const response = await fetch('/api/customer-service/tickets/unread-count', {
           credentials: 'include',
           headers: headers
         });
@@ -134,52 +134,81 @@ export default function DashboardSidebar({ isMobileMenuOpen = false,
 
     pollUnread();
 
-    // 2. WebSocket Connection
+    // 2. WebSocket Connection with improved error handling
     let ws: WebSocket | null = null;
-    try {
-      // Determine WS URL (assuming localhost for now or infer from window.location)
-      const wsUrl = "ws://localhost:8000/api/customer-service/ws/notifications";
-      ws = new WebSocket(wsUrl);
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let isIntentionallyClosed = false;
 
-      ws.onopen = () => {
-        console.log("Connected to Notifications WS");
-      };
+    const connect = () => {
+      try {
+        const token = document.cookie
+          .split('; ')
+          .find((row) => row.startsWith('access_token='))
+          ?.split('=')[1] || localStorage.getItem('access_token') || localStorage.getItem('auth_token');
 
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'new_reply') {
-            // QUIET MODE: If user is actively viewing the conversation, don't ping them
-            // We check the URL pathname
-            const currentPath = window.location.pathname;
-            // Expected format: /dashboard/customer-service/conversation/{id}
-            if (currentPath.includes(`/conversation/${data.payload?.ticket_id}`)) {
-              // User IS viewing this ticket. Do nothing?
-              // Ideally update the UI but that's handled by the page's own polling/socket
-              return;
-            }
-
-            // Refresh count immediately
-            pollUnread();
-          }
-        } catch (e) {
-          console.error("WS parse error", e);
+        if (!token) {
+          console.warn("No auth token available for Sidebar WebSocket connection");
+          return;
         }
-      };
 
-      ws.onclose = () => {
-        console.log("Notifications WS disconnected");
-      };
-    } catch (e) {
-      console.error("WS Connection error", e);
-    }
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/api/customer-service/ws/notifications?token=${token}`;
+
+        console.log("Attempting to connect to Sidebar Notifications WS...");
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log("✓ Sidebar Notifications WS connected");
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'new_reply') {
+              const currentPath = window.location.pathname;
+              if (currentPath.includes(`/conversation/${data.payload?.ticket_id}`)) {
+                return;
+              }
+              pollUnread();
+            }
+          } catch (e) {
+            console.error("Sidebar WS parse error:", e);
+          }
+        };
+
+        ws.onerror = (err) => {
+          console.error("Sidebar WS Error occurred:", err);
+        };
+
+        ws.onclose = (event) => {
+          console.log(`Sidebar Notifications WS closed. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+
+          // Only attempt reconnect if not intentionally closed
+          if (!isIntentionallyClosed) {
+            console.log("Attempting to reconnect Sidebar WS in 5 seconds...");
+            reconnectTimeout = setTimeout(() => {
+              connect();
+            }, 5000);
+          }
+        };
+      } catch (e) {
+        console.error("Sidebar WS Connection error:", e);
+      }
+    };
+
+    // Initial connection
+    connect();
 
     // Still keep polling as backup (every 60s)
     const interval = setInterval(pollUnread, 60000);
 
     return () => {
+      isIntentionallyClosed = true;
       clearInterval(interval);
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
         ws.close();
       }
     };

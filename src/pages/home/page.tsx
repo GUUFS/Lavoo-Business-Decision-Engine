@@ -6,7 +6,7 @@ import Button from '../../components/base/Button';
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 // Interface for review data
 interface Review {
@@ -321,7 +321,7 @@ export default function Home() {
 
       {/* Chopsticks Section */}
       {/* <section id="blog" className="py-12 sm:py-16 md:py-20 bg-gradient-to-br from-orange-50 to-white"> */}
-        {/* <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-10 sm:mb-12 md:mb-16">
             <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-black mb-3 sm:mb-4 px-2">
               Chopsticks

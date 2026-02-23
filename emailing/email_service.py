@@ -141,6 +141,59 @@ class BrevoEmailService:
         
         return self._send_transactional_email(user_email, name, subject, html_content, text_content)
     
+    def send_beta_card_saved_email(self, user_email: str, name: str, card_last4: str,
+                                 card_brand: str, grace_days: int):
+        """Send email confirmation after card is saved during beta/grace period"""
+        subject = "Card Secured - Your Lavoo Access is Ready!"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{ 
+                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); 
+                    color: white; padding: 30px; text-align: center; 
+                    border-radius: 10px 10px 0 0; 
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .card-box {{ 
+                    background: white; border-left: 4px solid #f97316; 
+                    padding: 20px; margin: 20px 0; 
+                }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">💳 Card Secured!</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>Great news! Your payment method has been successfully secured for your Lavoo account.</p>
+                    <div class="card-box">
+                        <p><strong>Payment Method:</strong> {card_brand.capitalize()} ending in {card_last4}</p>
+                        <p><strong>Status:</strong> All set for launch</p>
+                    </div>
+                    <p>You now have uninterrupted access to all of Lavoo's premium features. No charges will be made until after the {grace_days}-day grace period following our official launch.</p>
+                    <p>Thank you for being part of our beta community!</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        text_content = f"Card Secured!\n\nHi {name},\n\nYour {card_brand} ending in {card_last4} is now saved. You'll have uninterrupted access after launch."
+        
+        return self._send_transactional_email(user_email, name, subject, html_content, text_content)
+
     def send_payout_email(self, user_email: str, name: str, amount: float,
                          commission_from: str, transaction_id: str):
         """Send payout notification email"""
@@ -481,6 +534,13 @@ class ReportDownloadRequest(BaseModel):
     analysis_type: str
     download_url: str
 
+class BetaCardSavedRequest(BaseModel):
+    user_email: EmailStr
+    user_name: str
+    card_last4: str
+    card_brand: str
+    grace_days: int
+
 class WaitlistRequest(BaseModel):
     email: EmailStr
     name: str
@@ -555,6 +615,21 @@ async def send_report_download(request: ReportDownloadRequest, background_tasks:
             request.download_url
         )
         return {"message": "Report email queued", "status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/beta-card-saved")
+async def send_beta_card_saved(request: BetaCardSavedRequest, background_tasks: BackgroundTasks):
+    try:
+        background_tasks.add_task(
+            email_service.send_beta_card_saved_email,
+            request.user_email,
+            request.user_name,
+            request.card_last4,
+            request.card_brand,
+            request.grace_days
+        )
+        return {"message": "Beta card saved email queued", "status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -23,6 +23,8 @@ from db.pg_models import User, Referral
 # import the email function
 from fastapi import BackgroundTasks
 from emailing.email_service import email_service
+from api.services.notification_service import NotificationService
+from db.pg_models import NotificationType
 
 import random, string
 
@@ -112,6 +114,9 @@ def signup(
         referrer_code=referrer.referral_code if referrer else None,
     )
 
+    from subscriptions.beta_service import BetaService
+    BetaService.initialize_grace_period(new_user, db)
+
     db.add(new_user)
     db.flush()
 
@@ -128,6 +133,16 @@ def signup(
             created_at=datetime.utcnow()
         )
         db.add(referral)
+        
+        # Notify referrer
+        NotificationService.create_notification(
+            db=db,
+            user_id=referrer.id,
+            type=NotificationType.REFERRAL_REGISTERED.value,
+            title="New Referral!",
+            message=f"{new_user.name} has registered using your link.",
+            link="/dashboard/referrals"
+        )
 
     try:
         db.commit()

@@ -47,19 +47,31 @@ class StripeService:
     @staticmethod
     def verify_payment(payment_intent_id: str) -> Dict[str, Any]:
         """
-        Verify a payment intent status
+        Verify a payment intent or setup intent status
         """
         try:
-            intent = stripe.PaymentIntent.retrieve(payment_intent_id)
-            
-            return {
-                "status": intent.status,
-                "amount": intent.amount / 100,  # Convert back to dollars
-                "currency": intent.currency,
-                "payment_method": intent.payment_method,
-                "customer_email": intent.receipt_email,
-                "metadata": intent.metadata
-            }
+            if payment_intent_id.startswith("seti_"):
+                # Handle SetupIntent
+                intent = stripe.SetupIntent.retrieve(payment_intent_id)
+                return {
+                    "status": intent.status,
+                    "amount": 0,  # Setup intents don't have amounts
+                    "currency": "USD",
+                    "payment_method": intent.payment_method,
+                    "customer_email": None,
+                    "metadata": intent.metadata
+                }
+            else:
+                # Handle PaymentIntent
+                intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                return {
+                    "status": intent.status,
+                    "amount": intent.amount / 100,  # Convert back to dollars
+                    "currency": intent.currency,
+                    "payment_method": intent.payment_method,
+                    "customer_email": intent.receipt_email,
+                    "metadata": intent.metadata
+                }
         except stripe.error.StripeError as e:
             raise Exception(f"Stripe verification error: {str(e)}")
     
@@ -180,7 +192,7 @@ class StripeService:
             }
             
         except stripe.error.StripeError as e:
-            raise Exception(f"Payment method attachment error: {str(e)}")
+            raise e
     
     @staticmethod
     def create_subscription_with_saved_card(
@@ -191,36 +203,109 @@ class StripeService:
     ) -> Dict[str, Any]:
         """
         Create subscription with saved payment method
-        This is used for the new checkout flow with card storage
+        FIXED: Handles missing current_period_end for incomplete subscriptions
         """
         try:
-            # Create subscription
+            print(f"🔵 Creating subscription for customer {customer_id} with price {price_id}")
+            
+            # Create subscription - DO NOT expand invoice (causes API version issues)
             subscription = stripe.Subscription.create(
                 customer=customer_id,
                 items=[{"price": price_id}],
                 default_payment_method=payment_method_id,
                 payment_behavior="default_incomplete",
                 payment_settings={
-                    "save_default_payment_method": "on_subscription"
+                    "save_default_payment_method": "on_subscription",
+                    "payment_method_types": ["card"]
                 },
-                expand=["latest_invoice.payment_intent"],
                 metadata=metadata or {}
             )
             
-            # Get payment intent for potential 3D Secure
-            latest_invoice = subscription.latest_invoice
-            payment_intent = latest_invoice.payment_intent if latest_invoice else None
+            print(f"✅ Subscription created: {subscription.id}, status: {subscription.status}")
+            
+            # Extract client_secret for 3D Secure
+            client_secret = None
+            payment_intent_id = None
+            
+            # For incomplete subscriptions, get the latest invoice and payment intent
+            if subscription.status in ["incomplete", "past_due"]:
+                latest_invoice_id = subscription.latest_invoice
+                
+                if latest_invoice_id:
+                    print(f"🔄 Retrieving invoice {latest_invoice_id} for payment intent...")
+                    try:
+                        # Retrieve invoice WITHOUT expansion to avoid API version issues
+                        invoice = stripe.Invoice.retrieve(latest_invoice_id)
+                        
+                        # Get payment intent ID from invoice
+                        # Note: New API uses 'payment_intent' as an ID string, not an object
+                        pi_id = getattr(invoice, 'payment_intent', None)
+                        
+                        if pi_id:
+                            if isinstance(pi_id, str):
+                                payment_intent_id = pi_id
+                            else:
+                                payment_intent_id = pi_id.id
+                            
+                            # Retrieve the full payment intent
+                            print(f"💳 Retrieving PaymentIntent {payment_intent_id}...")
+                            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                            client_secret = payment_intent.client_secret
+                            print(f"✅ Got client_secret from PaymentIntent")
+                            
+                    except Exception as e:
+                        print(f"⚠️ Invoice retrieval method 1 failed: {str(e)}")
+                
+                # Fallback: Search recent payment intents
+                if not client_secret:
+                    print(f"🔍 Searching payment intents for customer {customer_id}...")
+                    try:
+                        recent_intents = stripe.PaymentIntent.list(
+                            customer=customer_id,
+                            limit=5
+                        )
+                        
+                        for intent in recent_intents.data:
+                            if intent.status in ["requires_action", "requires_payment_method", "requires_confirmation"]:
+                                payment_intent_id = intent.id
+                                client_secret = intent.client_secret
+                                print(f"✅ Found matching payment intent: {payment_intent_id}")
+                                break
+                    except Exception as e:
+                        print(f"⚠️ Failed to search payment intents: {str(e)}")
+                
+                # If still no client_secret, this is an error
+                if not client_secret:
+                    print(f"❌ ERROR: Subscription requires action but no client_secret found")
+                    return {
+                        "subscription_id": subscription.id,
+                        "status": "requires_action",
+                        "client_secret": None,
+                        "current_period_end": None,
+                        "payment_intent_id": None,
+                        "error": "Unable to retrieve payment authentication details. Please try again."
+                    }
+            
+            # Get current_period_end safely (might not exist for incomplete subscriptions)
+            current_period_end = getattr(subscription, 'current_period_end', None)
             
             return {
                 "subscription_id": subscription.id,
                 "status": subscription.status,
-                "client_secret": payment_intent.client_secret if payment_intent else None,
-                "current_period_end": subscription.current_period_end,
-                "payment_intent_id": payment_intent.id if payment_intent else None
+                "client_secret": client_secret,
+                "current_period_end": current_period_end,
+                "payment_intent_id": payment_intent_id
             }
             
+        except stripe.error.CardError as e:
+            print(f"❌ Card error: {str(e)}")
+            raise e
+        except stripe.error.InvalidRequestError as e:
+            print(f"❌ Invalid request: {str(e)}")
+            raise e
         except stripe.error.StripeError as e:
-            raise Exception(f"Subscription creation error: {str(e)}")
+            print(f"❌ Stripe error: {str(e)}")
+            raise e
     
     @staticmethod
     def retrieve_subscription(subscription_id: str) -> Dict[str, Any]:
@@ -233,18 +318,18 @@ class StripeService:
             return {
                 "id": subscription.id,
                 "status": subscription.status,
-                "current_period_start": subscription.current_period_start,
-                "current_period_end": subscription.current_period_end,
+                "current_period_start": getattr(subscription, 'current_period_start', None),
+                "current_period_end": getattr(subscription, 'current_period_end', None),
                 "cancel_at_period_end": subscription.cancel_at_period_end,
                 "canceled_at": subscription.canceled_at,
                 "items": [{
                     "price_id": item.price.id,
                     "interval": item.price.recurring.interval if item.price.recurring else None
-                } for item in subscription.items.data]
+                } for item in subscription["items"].data]
             }
             
         except stripe.error.StripeError as e:
-            raise Exception(f"Subscription retrieval error: {str(e)}")
+            raise e
     
     @staticmethod
     def cancel_subscription(subscription_id: str, at_period_end: bool = True) -> Dict[str, Any]:
@@ -268,7 +353,7 @@ class StripeService:
             }
             
         except stripe.error.StripeError as e:
-            raise Exception(f"Subscription cancellation error: {str(e)}")
+            raise e
     
     @staticmethod
     def update_subscription_price(
@@ -294,11 +379,11 @@ class StripeService:
             return {
                 "id": subscription.id,
                 "status": subscription.status,
-                "current_period_end": subscription.current_period_end
+                "current_period_end": getattr(subscription, 'current_period_end', None)
             }
             
         except stripe.error.StripeError as e:
-            raise Exception(f"Subscription update error: {str(e)}")
+            raise e
     
     @staticmethod
     def get_customer_payment_methods(customer_id: str) -> list:
@@ -320,7 +405,7 @@ class StripeService:
             } for pm in payment_methods.data]
             
         except stripe.error.StripeError as e:
-            raise Exception(f"Payment methods retrieval error: {str(e)}")
+            raise e
     
     @staticmethod
     def create_setup_intent(customer_id: str) -> Dict[str, Any]:
@@ -340,3 +425,17 @@ class StripeService:
             
         except stripe.error.StripeError as e:
             raise Exception(f"Setup intent creation error: {str(e)}")
+
+    @staticmethod
+    def detach_payment_method(payment_method_id: str) -> Dict[str, Any]:
+        """
+        Detach a payment method from a customer
+        """
+        try:
+            payment_method = stripe.PaymentMethod.detach(payment_method_id)
+            return {
+                "status": "success",
+                "payment_method_id": payment_method.id
+            }
+        except stripe.error.StripeError as e:
+            raise Exception(f"Payment method detachment error: {str(e)}")

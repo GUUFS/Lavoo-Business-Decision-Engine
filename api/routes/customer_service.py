@@ -13,7 +13,7 @@ from api.routes.login import get_current_user
 from typing import Optional
 import json
 
-router = APIRouter(prefix="/api/customer-service", tags=["customer-service"])
+router = APIRouter(prefix="/customer-service", tags=["customer-service"])
 
 class NotificationManager:
     def __init__(self):
@@ -73,40 +73,67 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @router.websocket("/ws/notifications")
-async def notification_endpoint(websocket: WebSocket, session: Session = Depends(get_db)):
-    # Authenticate via Cookie
+async def notification_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time notifications.
+    Uses a local session context for auth to avoid holding DB connections open.
+    """
+    # ALWAYS accept first to avoid "closed before established" errors
+    await websocket.accept()
+    
+    # Authenticate via Cookie or Query Param
     token = websocket.cookies.get("access_token")
     if not token:
-        # Try query param?
         token = websocket.query_params.get("token")
     
     if not token:
+        print("WS Auth Fail: No token provided")
         await websocket.close(code=1008)
         return
+
+    # Handle 'Bearer ' prefix just in case
+    if token.startswith("Bearer "):
+        token = token.replace("Bearer ", "")
+
+    from db.pg_connections import SessionLocal
 
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
         if not email:
+            print("WS Auth Fail: No sub in payload")
             await websocket.close(code=1008)
             return
         
-        user = session.query(User).filter(User.email == email).first()
-        if not user:
-            await websocket.close(code=1008)
-            return
+        # Use a short-lived session for authentication
+        with SessionLocal() as session:
+            user = session.query(User).filter(User.email == email).first()
+            if not user:
+                print(f"WS Auth Fail: User {email} not found")
+                await websocket.close(code=1008)
+                return
+            user_id = user.id
 
-        user_id = user.id
-        await notification_manager.connect(user_id, websocket)
+        # Now connect to manager (note: managerial handshake already accepted)
+        # We need a tailored way to add to active_connections since we already accepted
+        if user_id not in notification_manager.active_connections:
+            notification_manager.active_connections[user_id] = []
+        notification_manager.active_connections[user_id].append(websocket)
+        
+        print(f"✓ Notifications WS established for user {user_id}")
         try:
             while True:
-                await websocket.receive_text() # Keep connection open, ignore incoming
+                # Receive messages but ignore them (keeps connection alive)
+                await websocket.receive_text()
         except WebSocketDisconnect:
             notification_manager.disconnect(user_id, websocket)
 
     except Exception as e:
         print(f"WebSocket auth error: {e}")
-        await websocket.close(code=1008)
+        try:
+            await websocket.close(code=1008)
+        except:
+            pass
 
 def extract_user_id(current_user):
     """Helper function to extract user_id from current_user"""

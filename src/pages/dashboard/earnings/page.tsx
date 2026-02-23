@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { toast } from 'react-toastify';
 import { calculateUserLevel } from './levelcalculator';
 import type { UserLevelInfo } from './levelcalculator';
 import ReferralLinkModal from './referralLink';
@@ -21,6 +22,13 @@ export default function EarningsPage() {
   const { data: earningsData, isLoading: isLoadingEarnings } = useEarningsSummary();
   const { data: availableYears = [], isLoading: isLoadingYears } = useAvailableYears();
   const { data: specificMonthData, isLoading: isLoadingMonth } = useMonthlyPerformance(selectedYear, selectedMonth);
+
+  // DEBUG: Console logging for visibility
+  useEffect(() => {
+    if (earningsData) console.log("💰 [EarningsPage] Earnings Data:", earningsData);
+    if (referralData) console.log("👥 [EarningsPage] Referral Data:", referralData);
+    if (userError) console.error("❌ [EarningsPage] User Error:", userError);
+  }, [earningsData, referralData, userError]);
 
   // Calculate user level from chops (memoized)
   const userLevelInfo: UserLevelInfo | null = useMemo(() => {
@@ -55,8 +63,52 @@ export default function EarningsPage() {
     { value: 12, label: 'December' },
   ];
 
+  const [isCopyHovered, setIsCopyHovered] = useState(false);
+
   const handleShareReferralLink = () => {
     setShowReferralModal(true);
+  };
+
+  const shareToSocialMedia = async (platform: string) => {
+    const shareUrl = `${window.location.origin}/signup?ref=${userData?.referral_code}`;
+    const text = `Join me on Lavoo - The Business Decision Engine! Get AI-powered insights for your business.`;
+
+    let socialUrl = '';
+
+    switch (platform) {
+      case 'twitter':
+        socialUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`;
+        break;
+      case 'facebook':
+        socialUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
+        break;
+      case 'linkedin':
+        socialUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`;
+        break;
+      case 'whatsapp':
+        socialUrl = `https://wa.me/?text=${encodeURIComponent(text + ' ' + shareUrl)}`;
+        break;
+    }
+
+    if (socialUrl) {
+      window.open(socialUrl, '_blank');
+    }
+
+    setShowReferralModal(false);
+  };
+
+  const copyReferralLink = async () => {
+    const shareUrl = `${window.location.origin}/signup?ref=${userData?.referral_code}`;
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success("Referral link copied to clipboard!");
+    } catch (error) {
+      console.error('Error copying link:', error);
+      toast.error("Failed to copy link");
+    }
+
+    setShowReferralModal(false);
   };
 
   if (loading) {
@@ -101,7 +153,7 @@ export default function EarningsPage() {
   const totalCommissions = safeNumber(earningsData?.totalCommissions);
   const totalPaidReferrals = safeNumber(earningsData?.totalPaidReferrals);
   const referralChops = safeNumber(earningsData?.referralChops);
-  const commissionRate = safeNumber(earningsData?.commissionRate);
+  const commissionRate = earningsData?.commissionRate ?? 50; // Default to 50% if not provided
 
   const totalReferrals = safeNumber(referralData?.total_referrals);
   const totalChopsEarned = safeNumber(referralData?.total_chops_earned);
@@ -395,11 +447,18 @@ export default function EarningsPage() {
 
                 <div className="pt-4 border-t border-gray-200">
                   <button
-                    onClick={handleShareReferralLink}
-                    disabled={!referralLink}
-                    className="w-full bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors font-medium text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    onClick={() => {
+                      if (!userData?.referral_code) {
+                        toast.error("Referral code not available. Please contact support.");
+                        return;
+                      }
+                      handleShareReferralLink();
+                    }}
+                    disabled={isLoadingUser}
+                    className="w-full bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors font-medium text-sm disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    Share Referral Link
+                    <i className="ri-share-line"></i>
+                    {isLoadingUser ? "Loading..." : "Share"}
                   </button>
                 </div>
               </div>
@@ -425,12 +484,174 @@ export default function EarningsPage() {
         </div>
       </div>
 
-      {/* Referral Link Modal */}
+      {/* Share Modal */}
       {showReferralModal && referralLink && (
-        <ReferralLinkModal
-          referralLink={referralLink}
-          onClose={() => setShowReferralModal(false)}
-        />
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999
+        }} onClick={() => setShowReferralModal(false)}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '16px',
+            padding: '24px',
+            maxWidth: '430px',
+            width: '90%',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)'
+          }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '24px', textAlign: 'center', color: '#111827' }}>
+              Share Referral Link
+            </h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '20px' }}>
+              <button onClick={() => shareToSocialMedia('twitter')}
+                style={{
+                  padding: '14px 16px',
+                  backgroundColor: '#1DA1F2',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '12px',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px',
+                  transition: 'opacity 0.2s'
+                }}>
+                <i className="ri-twitter-fill" style={{ fontSize: '18px' }}></i>
+                Twitter
+              </button>
+
+              <button onClick={() => shareToSocialMedia('facebook')}
+                style={{
+                  padding: '14px 16px',
+                  backgroundColor: '#4267B2',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '12px',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px',
+                  transition: 'opacity 0.2s'
+                }}>
+                <i className="ri-facebook-fill" style={{ fontSize: '18px' }}></i>
+                Facebook
+              </button>
+
+              <button onClick={() => shareToSocialMedia('linkedin')}
+                style={{
+                  padding: '14px 16px',
+                  backgroundColor: '#0077B5',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '12px',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px',
+                  transition: 'opacity 0.2s'
+                }}>
+                <i className="ri-linkedin-fill" style={{ fontSize: '18px' }}></i>
+                LinkedIn
+              </button>
+
+              <button onClick={() => shareToSocialMedia('whatsapp')}
+                style={{
+                  padding: '14px 16px',
+                  backgroundColor: '#25D366',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '12px',
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px',
+                  transition: 'opacity 0.2s'
+                }}>
+                <i className="ri-whatsapp-fill" style={{ fontSize: '18px' }}></i>
+                WhatsApp
+              </button>
+            </div>
+
+            <button
+              onClick={copyReferralLink}
+              onMouseEnter={() => setIsCopyHovered(true)}
+              onMouseLeave={() => setIsCopyHovered(false)}
+              style={{
+                width: '100%',
+                padding: '14px 16px',
+                backgroundColor: '#f3f4f6',
+                color: '#374151',
+                border: 'none',
+                borderRadius: '12px',
+                fontSize: '15px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '4px',
+                marginBottom: '16px',
+                transition: 'background-color 0.2s',
+                position: 'relative'
+              }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <i className="ri-file-copy-line" style={{ fontSize: '18px' }}></i>
+                Copy Link
+              </div>
+              {isCopyHovered && (
+                <div style={{
+                  fontSize: '11px',
+                  color: '#6b7280',
+                  fontWeight: 'normal',
+                  wordBreak: 'break-all',
+                  marginTop: '4px',
+                  padding: '0 8px',
+                  textAlign: 'center'
+                }}>
+                  {referralLink}
+                </div>
+              )}
+            </button>
+
+            <button
+              onClick={() => setShowReferralModal(false)}
+              style={{
+                width: '100%',
+                padding: '12px',
+                backgroundColor: 'transparent',
+                color: '#6b7280',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}>
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

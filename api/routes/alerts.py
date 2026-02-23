@@ -27,7 +27,7 @@ def get_current_user_route(current_user=Depends(get_current_user), db: Session =
     # Sync subscription status (non-blocking, called lazily on dashboard load)
     sync_user_subscription(user, db)
 
-    return {
+    result = {
         "id": user.id,
         "email": user.email,
         "subscription_status": user.subscription_status,
@@ -39,6 +39,10 @@ def get_current_user_route(current_user=Depends(get_current_user), db: Session =
         "referral_chops": user.referral_chops,
         "referral_count": user.referral_count
     }
+    
+    print(f"[DEBUG] /users/me for user_id={user.id}: referral_count={result['referral_count']}, total_chops={result['total_chops']}")
+    
+    return result
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)
@@ -50,7 +54,7 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
     return user
 
 
-@router.get("/api/users/email/{email}", response_model=UserResponse)
+@router.get("/users/email/{email}", response_model=UserResponse)
 def get_user_by_email(email: str, db: Session = Depends(get_db)):
     """Get user details by email"""
     user = db.query(User).filter(User.email == email).first()
@@ -59,7 +63,7 @@ def get_user_by_email(email: str, db: Session = Depends(get_db)):
     return user
 
 
-@router.get("/api/users/{user_id}/chops", response_model=ChopsBreakdown)
+@router.get("/users/{user_id}/chops", response_model=ChopsBreakdown)
 def get_user_chops(user_id: int, db: Session = Depends(get_db)):
     """Get detailed chops breakdown for a user"""
     user = db.query(User).filter(User.id == user_id).first()
@@ -77,7 +81,7 @@ def get_user_chops(user_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/api/alerts", response_model=AlertResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/alerts", response_model=AlertResponse, status_code=status.HTTP_201_CREATED)
 def create_alert(alert: AlertCreate, db: Session = Depends(get_db)):
     """Create a new alert"""
     db_alert = Alert(**alert.dict())
@@ -87,7 +91,7 @@ def create_alert(alert: AlertCreate, db: Session = Depends(get_db)):
     return db_alert
 
 
-@router.get("/api/alerts", response_model=List[AlertResponse])
+@router.get("/alerts", response_model=List[AlertResponse])
 async def get_alerts(
     user_id: Optional[int] = None,
     category: Optional[str] = None,
@@ -176,7 +180,7 @@ async def get_alerts(
     return result
 
 
-@router.get("/api/alerts/{alert_id}", response_model=AlertResponse)
+@router.get("/alerts/{alert_id}", response_model=AlertResponse)
 def get_alert(alert_id: int, user_id: Optional[int] = None, db: Session = Depends(get_db)):
     """Get a specific alert"""
     alert = db.query(Alert).filter(Alert.id == alert_id).first()

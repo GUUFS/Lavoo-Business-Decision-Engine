@@ -3,7 +3,7 @@ import AdminSidebar from '../../../components/feature/AdminSidebar';
 import AdminHeader from '../../../components/feature/AdminHeader';
 import { getAuthHeaders } from '../../../utils/auth';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = '';
 
 type StatusType =
   | 'completed'
