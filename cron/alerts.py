@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv(".env.local")
 load_dotenv(".env.production")
 
-from ai.content_generator import run_content_generation
+from decision_engine.content_generator import run_content_generation
 from config.logging import setup_logging
 import logging
 

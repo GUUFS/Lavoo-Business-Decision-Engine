@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime, timedelta
-from db.pg_models import Commission, Referral, CommissionSummary, User, NotificationType
+from database.pg_models import Commission, Referral, CommissionSummary, User, NotificationType
 from api.services.notification_service import NotificationService
 import logging
 

@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
-from db.pg_models import UserNotification, NotificationType
-from api.routes.customer_service import notification_manager
+from database.pg_models import UserNotification, NotificationType
+from api.routes.support.customer_service import notification_manager
 import json
 import logging
 

@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 load_dotenv(".env.local")
 load_dotenv(".env.production")
 
-from db.pg_connections import SessionLocal
-from db.pg_models import Insight, Alert, UserInsight, UserAlert
+from database.pg_connections import SessionLocal
+from database.pg_models import Insight, Alert, UserInsight, UserAlert
 from config.logging import setup_logging
 import logging
 

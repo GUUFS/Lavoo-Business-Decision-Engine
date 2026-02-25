@@ -10,10 +10,10 @@ from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 
-from db.pg_connections import get_db
-from db.pg_models import (User, Commission, Payout, PayoutAccount, CommissionResponse, PayoutAccountCreate, PayoutResponse, 
+from database.pg_connections import get_db
+from database.pg_models import (User, Commission, Payout, PayoutAccount, CommissionResponse, PayoutAccountCreate, PayoutResponse, 
                     PayoutRequest)   
-from api.routes.login import get_current_user
+from api.routes.auth.login import get_current_user
 from subscriptions.commission_service import CommissionService
 from subscriptions.payout_service import PayoutService
 

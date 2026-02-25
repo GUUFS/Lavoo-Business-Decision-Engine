@@ -6,9 +6,9 @@ Run daily via cron: 0 9 * * * (9 AM every day)
 
 from datetime import datetime
 from sqlalchemy.orm import Session
-from db.pg_connections import get_db
-from db.pg_models import User
-from db.pg_models import User
+from database.pg_connections import get_db
+from database.pg_models import User
+from database.pg_models import User
 from subscriptions.beta_service import BetaService
 from subscriptions.notification_service import NotificationService
 

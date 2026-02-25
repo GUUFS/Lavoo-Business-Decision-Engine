@@ -10,9 +10,9 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 # import the database
-from db.pg_connections import get_db
-from db.pg_models import User, Subscriptions
-from api.routes.login import get_current_user
+from database.pg_connections import get_db
+from database.pg_models import User, Subscriptions
+from api.routes.auth.login import get_current_user
 
 #import the email system
 from fastapi import BackgroundTasks
@@ -469,7 +469,7 @@ async def flutterwave_payout_callback(
             
             # Import and use PayoutService
             from subscriptions.payout_service import PayoutService
-            from db.pg_models import Payout, Commission
+            from database.pg_models import Payout, Commission
             
             if event_type == "transfer.completed" or transfer_status == "successful":
                 PayoutService.complete_flutterwave_payout(payout_id, background_tasks, "successful", db)

@@ -325,7 +325,7 @@ class FirewallManager:
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from db.pg_connections import SessionLocal
+from database.pg_connections import SessionLocal
 
 class FirewallMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

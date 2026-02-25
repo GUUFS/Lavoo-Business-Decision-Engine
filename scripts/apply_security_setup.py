@@ -4,7 +4,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db.pg_connections import SessionLocal
+from database.pg_connections import SessionLocal
 from sqlalchemy import text
 
 def apply_sql():

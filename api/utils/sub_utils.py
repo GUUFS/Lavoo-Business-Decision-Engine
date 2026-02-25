@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import logging
 from sqlalchemy.orm import Session
-from db.pg_models import User, Subscriptions
+from database.pg_models import User, Subscriptions
 
 logger = logging.getLogger(__name__)
 

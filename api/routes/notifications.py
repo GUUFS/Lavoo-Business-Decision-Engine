@@ -4,9 +4,9 @@ from sqlalchemy import or_
 from typing import List, Dict
 from datetime import datetime
 
-from db.pg_connections import get_db
-from db.pg_models import User, UserNotification, UserAlert, Alert
-from api.routes.login import get_current_user
+from database.pg_connections import get_db
+from database.pg_models import User, UserNotification, UserAlert, Alert
+from api.routes.auth.login import get_current_user
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict
 import os
 from sqlalchemy.orm import Session
-from db.pg_models import User
+from database.pg_models import User
 
 class BetaService:
     
@@ -221,7 +221,7 @@ class BetaService:
         - No notification of this type sent in last 24 hours
         - User hasn't completed the action
         """
-        from db.pg_models import NotificationHistory
+        from database.pg_models import NotificationHistory
         
         # Check if notification was sent recently
         cutoff = datetime.utcnow() - timedelta(hours=24)

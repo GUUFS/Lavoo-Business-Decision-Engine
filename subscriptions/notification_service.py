@@ -1,7 +1,7 @@
 
 from datetime import datetime
 from sqlalchemy.orm import Session
-from db.pg_models import User, UserNotification, NotificationHistory
+from database.pg_models import User, UserNotification, NotificationHistory
 
 class NotificationService:
     

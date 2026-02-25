@@ -4,35 +4,36 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install Node.js 20.x
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
+    postgresql-client \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files
-COPY package*.json ./
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
 COPY requirements.txt ./
 
-# Install Node dependencies
-RUN npm install
+# Install UV package manager
+RUN pip install --no-cache-dir uv
 
-# Copy all project files
+# Install Python dependencies using uv
+RUN uv pip install --system -r requirements.txt
+
+# Copy application code
 COPY . .
 
-# Build frontend
-RUN npm run build
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy start script
-COPY start.py /app/start.py
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
 
 # Expose port
 EXPOSE 8000
 
-# Start the application
-CMD ["python", "start.py"]
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Start the application with uvicorn
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

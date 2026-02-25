@@ -3,8 +3,8 @@ Sync referral_count for all users from actual Referral table records.
 This ensures user.referral_count matches the actual count in the referrals table.
 """
 
-from db.pg_connections import get_db
-from db.pg_models import User, Referral
+from database.pg_connections import get_db
+from database.pg_models import User, Referral
 from sqlalchemy import func
 
 def sync_all_referral_counts():

@@ -7,7 +7,7 @@ This module now delegates to api.utils.sub_utils to ensure consistent logic acro
 """
 
 from sqlalchemy.orm import Session
-from db.pg_models import User
+from database.pg_models import User
 import logging
 from api.utils.sub_utils import sync_user_subscription as core_sync
 

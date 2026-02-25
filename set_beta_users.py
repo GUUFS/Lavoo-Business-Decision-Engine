@@ -1,6 +1,6 @@
 
-from db.pg_connections import get_db
-from db.pg_models import User
+from database.pg_connections import get_db
+from database.pg_models import User
 import sys
 
 def set_beta_users():

@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 load_dotenv('.env.local')
 
 from sqlalchemy.orm import Session
-from db.pg_connections import get_db
-from db.pg_models import User, Subscriptions
+from database.pg_connections import get_db
+from database.pg_models import User, Subscriptions
 from api.utils.subscription_sync import sync_user_subscription
 import logging
 

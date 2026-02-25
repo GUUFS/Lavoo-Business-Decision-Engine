@@ -6,7 +6,7 @@ from sqlalchemy import text
 # Add parent directory to path to import db
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db.pg_connections import SessionLocal
+from database.pg_connections import SessionLocal
 from api.security.firewall import initialize_default_firewall_rules, firewall_manager
 
 def sync():

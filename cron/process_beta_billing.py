@@ -9,8 +9,8 @@ from datetime import datetime
 from decimal import Decimal
 import stripe
 from sqlalchemy.orm import Session
-from db.pg_connections import get_db
-from db.pg_models import User, Subscriptions
+from database.pg_connections import get_db
+from database.pg_models import User, Subscriptions
 from subscriptions.beta_service import BetaService
 from subscriptions.stripe_service import StripeService
 

@@ -1,6 +1,9 @@
+"""
+MailerLite Email Service
+Transactional email service using MailerLite API
+"""
 
-import sib_api_v3_sdk
-from sib_api_v3_sdk.rest import ApiException
+import requests
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict
@@ -11,82 +14,80 @@ import logging
 
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class BrevoEmailService:
+class MailerLiteEmailService:
     def __init__(self):
-        # Configure Brevo API
-        configuration = sib_api_v3_sdk.Configuration()
-        configuration.api_key['api-key'] = os.getenv("BREVO_API_KEY")
-        
-        # Initialize API instances
-        self.transactional_api = sib_api_v3_sdk.TransactionalEmailsApi(
-            sib_api_v3_sdk.ApiClient(configuration)
-        )
-        self.contacts_api = sib_api_v3_sdk.ContactsApi(
-            sib_api_v3_sdk.ApiClient(configuration)
-        )
-        
-        self.from_email = os.getenv("BREVO_FROM_EMAIL")
-        self.from_name = os.getenv("BREVO_FROM_NAME")
+        self.api_key = os.getenv("MAILERLITE_API_KEY")
+        self.from_email = os.getenv("FROM_EMAIL", "clintonemeka05@gmail.com")
+        self.from_name = os.getenv("FROM_NAME", "Lavoo Business Intelligence Engine")
         self.frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        self.support_email = os.getenv("SUPPORT_EMAIL", "support@yourapp.com")
-    
-    def _send_transactional_email(self, to_email: str, to_name: str, subject: str, 
-                                  html_content: str, text_content: Optional[str] = None):
-        """Internal method to send transactional email with retry logic"""
-        import time
-        max_retries = 3
-        retry_delay = 1 # second
-        
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                print(f"INFO - Attempt {attempt+1}/{max_retries}: Sending email to {to_email} with subject: '{subject}'")
-                send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-                    to=[{"email": to_email, "name": to_name}],
-                    sender={"email": self.from_email, "name": self.from_name},
-                    subject=subject,
-                    html_content=html_content,
-                    text_content=text_content
-                )
-                
-                api_response = self.transactional_api.send_transac_email(send_smtp_email)
-                print(f"INFO - Email sent successfully to {to_email}. Message ID: {api_response.message_id}")
-                logger.info(f"Email sent successfully. Message ID: {api_response.message_id}")
-                
+        self.support_email = os.getenv("SUPPORT_EMAIL", "support@lavoo.ai")
+        self.base_url = "https://connect.mailerlite.com/api"
+
+        if not self.api_key:
+            logger.warning("⚠️  MAILERLITE_API_KEY not set - emails will be logged only")
+
+    def _send_email(self, to_email: str, to_name: str, subject: str, html_content: str, text_content: Optional[str] = None):
+        """Send email via MailerLite API"""
+        if not self.api_key:
+            logger.info(f"📧 [LOGGED] TO: {to_email} | SUBJECT: {subject}")
+            return {
+                "success": True,
+                "message_id": f"logged_{datetime.utcnow().timestamp()}",
+                "status": "logged"
+            }
+
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+
+            payload = {
+                "from": {
+                    "email": self.from_email,
+                    "name": self.from_name
+                },
+                "to": [
+                    {
+                        "email": to_email,
+                        "name": to_name
+                    }
+                ],
+                "subject": subject,
+                "html": html_content,
+                "text": text_content or subject
+            }
+
+            response = requests.post(
+                f"{self.base_url}/email",
+                headers=headers,
+                json=payload,
+                timeout=10
+            )
+
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Email sent to {to_email}: {subject}")
                 return {
                     "success": True,
-                    "message_id": api_response.message_id,
+                    "message_id": response.json().get("data", {}).get("id", ""),
                     "status": "sent"
                 }
-                
-            except (ApiException, Exception) as e:
-                last_error = e
-                error_msg = f"Attempt {attempt+1} failed: {str(e)}"
-                print(f"WARNING - {error_msg}")
-                logger.warning(error_msg)
-                
-                # Check for specific network errors that deserve a retry
-                error_str = str(e).lower()
-                if "connection aborted" in error_str or "remotedisconnected" in error_str or "timeout" in error_str:
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay * (attempt + 1))
-                        continue
-                
-                # If not a retryable error or last attempt
-                if isinstance(e, ApiException):
-                    raise Exception(f"Brevo API Error: {str(e)}")
-                raise e
-                
-        raise Exception(f"Failed to send email after {max_retries} attempts: {str(last_error)}")
-    
+            else:
+                logger.error(f"❌ MailerLite error: {response.status_code} - {response.text}")
+                raise Exception(f"MailerLite API error: {response.status_code}")
+
+        except Exception as e:
+            logger.error(f"❌ Email send failed: {str(e)}")
+            raise e
+
     def send_welcome_email(self, user_email: str, name: str):
         """Send welcome email on signup"""
         subject = "Welcome to Lavoo Business Intelligence Engine!"
-        
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -95,15 +96,15 @@ class BrevoEmailService:
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ 
-                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); 
-                    color: white; padding: 30px; text-align: center; 
-                    border-radius: 10px 10px 0 0; 
+                .header {{
+                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .button {{ 
-                    display: inline-block; padding: 12px 30px; background: #f97316; 
-                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; 
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #f97316;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
                 ul {{ padding-left: 20px; }}
@@ -112,22 +113,22 @@ class BrevoEmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1 style="margin: 0;">Welcome to AI Analyst Engine!</h1>
+                    <h1 style="margin: 0;">Welcome to Lavoo!</h1>
                 </div>
                 <div class="content">
                     <h2>Hi {name},</h2>
                     <p>We're thrilled to have you on board! Your account has been successfully created.</p>
-                    <p><strong>With AI Analyst Engine, you can:</strong></p>
+                    <p><strong>With Lavoo Business Intelligence Engine, you can:</strong></p>
                     <ul>
-                        <li>Run powerful AI-driven analyses</li>
-                        <li>Generate comprehensive reports</li>
+                        <li>Run powerful AI-driven business analyses</li>
+                        <li>Detect bottlenecks and get actionable solutions</li>
+                        <li>Generate comprehensive ROI projections</li>
                         <li>Earn commissions through referrals</li>
-                        <li>Access premium features</li>
                     </ul>
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}" class="button">Get Started</a>
+                        <a href="{self.frontend_url}/dashboard" class="button">Get Started</a>
                     </p>
-                    <p>If you have any questions, feel free to reach out to our support team.</p>
+                    <p>If you have any questions, feel free to reach out to our support team at {self.support_email}.</p>
                 </div>
                 <div class="footer">
                     <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
@@ -136,16 +137,16 @@ class BrevoEmailService:
         </body>
         </html>
         """
-        
+
         text_content = f"Welcome to Lavoo Business Intelligence Engine!\n\nHi {name},\n\nWe're thrilled to have you on board!"
-        
-        return self._send_transactional_email(user_email, name, subject, html_content, text_content)
-    
-    def send_beta_card_saved_email(self, user_email: str, name: str, card_last4: str,
-                                 card_brand: str, grace_days: int):
-        """Send email confirmation after card is saved during beta/grace period"""
-        subject = "Card Secured - Your Lavoo Access is Ready!"
-        
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_subscription_confirmation(self, user_email: str, name: str, plan_type: str,
+                                      amount: float, currency: str, next_billing_date: str):
+        """Send subscription confirmation"""
+        subject = f"Subscription Confirmed - {plan_type.title()} Plan"
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -154,15 +155,16 @@ class BrevoEmailService:
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ 
-                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); 
-                    color: white; padding: 30px; text-align: center; 
-                    border-radius: 10px 10px 0 0; 
+                .header {{
+                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .card-box {{ 
-                    background: white; border-left: 4px solid #f97316; 
-                    padding: 20px; margin: 20px 0; 
+                .info-box {{ background: white; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #10b981;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
@@ -170,17 +172,24 @@ class BrevoEmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1 style="margin: 0;">💳 Card Secured!</h1>
+                    <h1 style="margin: 0;">✓ Subscription Confirmed!</h1>
                 </div>
                 <div class="content">
                     <h2>Hi {name},</h2>
-                    <p>Great news! Your payment method has been successfully secured for your Lavoo account.</p>
-                    <div class="card-box">
-                        <p><strong>Payment Method:</strong> {card_brand.capitalize()} ending in {card_last4}</p>
-                        <p><strong>Status:</strong> All set for launch</p>
+                    <p>Your subscription has been successfully activated!</p>
+
+                    <div class="info-box">
+                        <h3 style="margin-top: 0;">Subscription Details</h3>
+                        <p><strong>Plan:</strong> {plan_type.title()}</p>
+                        <p><strong>Amount:</strong> {currency}{amount:.2f}</p>
+                        <p><strong>Next Billing Date:</strong> {next_billing_date}</p>
                     </div>
-                    <p>You now have uninterrupted access to all of Lavoo's premium features. No charges will be made until after the {grace_days}-day grace period following our official launch.</p>
-                    <p>Thank you for being part of our beta community!</p>
+
+                    <p>You now have full access to all premium features!</p>
+
+                    <p style="text-align: center;">
+                        <a href="{self.frontend_url}/dashboard" class="button">Go to Dashboard</a>
+                    </p>
                 </div>
                 <div class="footer">
                     <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
@@ -189,16 +198,17 @@ class BrevoEmailService:
         </body>
         </html>
         """
-        
-        text_content = f"Card Secured!\n\nHi {name},\n\nYour {card_brand} ending in {card_last4} is now saved. You'll have uninterrupted access after launch."
-        
-        return self._send_transactional_email(user_email, name, subject, html_content, text_content)
 
-    def send_payout_email(self, user_email: str, name: str, amount: float,
-                         commission_from: str, transaction_id: str):
-        """Send payout notification email"""
-        subject = "Commission Payout Received!"
-        
+        text_content = f"Subscription Confirmed!\n\nPlan: {plan_type.title()}\nAmount: {currency}{amount:.2f}\nNext Billing: {next_billing_date}"
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_payment_receipt(self, user_email: str, name: str, amount: float,
+                            currency: str, payment_date: str, transaction_id: str,
+                            plan_type: str):
+        """Send payment receipt"""
+        subject = "Payment Receipt - Lavoo Subscription"
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -207,179 +217,67 @@ class BrevoEmailService:
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ 
-                    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); 
-                    color: white; padding: 30px; text-align: center; 
-                    border-radius: 10px 10px 0 0; 
+                .header {{
+                    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
                 }}
-                .content {{ background: #f9f9f9; padding: 30px; }}
-                .payout-box {{ 
-                    background: white; border-left: 4px solid #11998e; 
-                    padding: 20px; margin: 20px 0; 
-                }}
-                .amount {{ font-size: 32px; font-weight: bold; color: #11998e; }}
-                .button {{ 
-                    display: inline-block; padding: 12px 30px; background: #11998e; 
-                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; 
-                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .receipt-box {{ background: white; border: 1px solid #e5e7eb; padding: 20px; margin: 20px 0; }}
+                .receipt-row {{ display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }}
+                .total {{ font-size: 18px; font-weight: bold; color: #3b82f6; }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <h1 style="margin: 0;">💰 Commission Payout Received!</h1>
+                    <h1 style="margin: 0;">Payment Receipt</h1>
                 </div>
                 <div class="content">
-                    <h2>Great news, {name}!</h2>
-                    <p>You've received a commission payout.</p>
-                    <div class="payout-box">
-                        <p><strong>Amount:</strong> <span class="amount">${amount:.2f}</span></p>
-                        <p><strong>From:</strong> {commission_from}</p>
-                        <p><strong>Transaction ID:</strong> {transaction_id}</p>
-                        <p><strong>Date:</strong> {datetime.now().strftime("%B %d, %Y")}</p>
-                    </div>
-                    <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/earnings" class="button">View Commission Details</a>
-                    </p>
-                    <p>Keep up the great work!</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        text_content = f"Commission Payout Received!\n\nAmount: ${amount:.2f}\nFrom: {commission_from}\nTransaction ID: {transaction_id}"
-        
-        return self._send_transactional_email(user_email, name, subject, html_content, text_content)
-    
-    def send_payment_success_email(self, user_email: str, name: str, amount: float,
-                                   plan_name: str, next_billing_date: str):
-        """Send payment success email"""
-        subject = "Payment Successful - Subscription Active"
-        
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ 
-                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); 
-                    color: white; padding: 30px; text-align: center; 
-                    border-radius: 10px 10px 0 0; 
-                }}
-                .content {{ background: #f9f9f9; padding: 30px; }}
-                .payment-box {{ 
-                    background: white; border-left: 4px solid #f97316; 
-                    padding: 20px; margin: 20px 0; 
-                }}
-                .button {{ 
-                    display: inline-block; padding: 12px 30px; background: #f97316; 
-                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; 
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1 style="margin: 0;">✓ Payment Successful</h1>
-                </div>
-                <div class="content">
-                    <h2>Thank you, {name}!</h2>
-                    <p>Your subscription payment has been processed successfully.</p>
-                    <div class="payment-box">
-                        <p><strong>Amount Paid:</strong> ${amount:.2f}</p>
-                        <p><strong>Plan:</strong> {plan_name}</p>
-                        <p><strong>Payment Date:</strong> {datetime.now().strftime("%B %d, %Y")}</p>
-                        <p><strong>Next Billing Date:</strong> {next_billing_date}</p>
-                    </div>
-                    <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/billing" class="button">View Invoice</a>
-                    </p>
-                    <p>Your subscription is now active!</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        text_content = f"Payment Successful!\n\nAmount: ${amount:.2f}\nPlan: {plan_name}\nNext Billing: {next_billing_date}"
-        
-        return self._send_transactional_email(user_email, name, subject, html_content, text_content)
-    
-    def send_payout_success_email(self, user_id: int, amount: float,
-                                 currency: str, payout_id: int, processed_at: datetime):
-        """Send payout success email"""
-        from db.pg_connections import SessionLocal
-        from db.pg_models import User
-        
-        db = SessionLocal()
-        try:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
-                print(f"ERROR - User {user_id} not found for payout success email")
-                return
-            
-            user_email = user.email
-            name = user.name
-            subject = "Payout Successful - Funds Dispatched"
-            
-            processed_date = processed_at.strftime("%B %d, %Y") if processed_at else datetime.now().strftime("%B %d, %Y")
-            
-            html_content = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
-                    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                    .header {{ 
-                        background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); 
-                        color: white; padding: 30px; text-align: center; 
-                        border-radius: 10px 10px 0 0; 
-                    }}
-                    .content {{ background: #f9f9f9; padding: 30px; }}
-                    .payout-box {{ 
-                        background: white; border-left: 4px solid #f97316; 
-                        padding: 20px; margin: 20px 0; 
-                    }}
-                    .amount {{ font-size: 32px; font-weight: bold; color: #f97316; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1 style="margin: 0;">💰 Payout Successful!</h1>
-                    </div>
-                    <div class="content">
-                        <h2>Hi {name},</h2>
-                        <p>Good news! Your payout has been successfully processed and dispatched.</p>
-                        <div class="payout-box">
-                            <p><strong>Amount:</strong> <span class="amount">{currency} {amount:.2f}</span></p>
-                            <p><strong>Payout ID:</strong> #{payout_id}</p>
-                            <p><strong>Processed Date:</strong> {processed_date}</p>
+                    <h2>Hi {name},</h2>
+                    <p>Thank you for your payment!</p>
+
+                    <div class="receipt-box">
+                        <h3 style="margin-top: 0;">Receipt Details</h3>
+                        <div class="receipt-row">
+                            <span>Plan</span>
+                            <span>{plan_type.title()}</span>
                         </div>
-                        <p>The funds should reflect in your account shortly, depending on your bank's processing time.</p>
-                        <p>Thank you for being a part of our platform!</p>
+                        <div class="receipt-row">
+                            <span>Date</span>
+                            <span>{payment_date}</span>
+                        </div>
+                        <div class="receipt-row">
+                            <span>Transaction ID</span>
+                            <span>{transaction_id}</span>
+                        </div>
+                        <div class="receipt-row total">
+                            <span>Total Paid</span>
+                            <span>{currency}{amount:.2f}</span>
+                        </div>
                     </div>
+
+                    <p>This payment will appear on your statement as "Lavoo Business Intelligence".</p>
+                    <p>If you have any questions, contact us at {self.support_email}.</p>
                 </div>
-            </body>
-            </html>
-            """
-            
-            text_content = f"Payout Successful!\n\nHi {name},\nYour payout of {currency} {amount:.2f} has been processed.\nPayout ID: #{payout_id}"
-            
-            return self._send_transactional_email(user_email, name, subject, html_content, text_content)
-        finally:
-            db.close()
-    
-    def send_payment_failed_email(self, user_email: str, name: str, amount: float, reason: str):
-        """Send payment failed email"""
-        subject = "Payment Failed - Action Required"
-        
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"Payment Receipt\n\nAmount: {currency}{amount:.2f}\nDate: {payment_date}\nTransaction ID: {transaction_id}"
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_subscription_renewal(self, user_email: str, name: str, plan_type: str,
+                                 amount: float, currency: str, renewal_date: str):
+        """Send subscription renewal notice"""
+        subject = "Your Subscription Has Been Renewed"
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -388,20 +286,71 @@ class BrevoEmailService:
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ 
-                    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); 
-                    color: white; padding: 30px; text-align: center; 
-                    border-radius: 10px 10px 0 0; 
+                .header {{
+                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
                 }}
-                .content {{ background: #f9f9f9; padding: 30px; }}
-                .alert-box {{ 
-                    background: #fff3cd; border-left: 4px solid #f5576c; 
-                    padding: 20px; margin: 20px 0; 
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .info-box {{ background: white; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">Subscription Renewed</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>Your subscription has been successfully renewed!</p>
+
+                    <div class="info-box">
+                        <p><strong>Plan:</strong> {plan_type.title()}</p>
+                        <p><strong>Amount Charged:</strong> {currency}{amount:.2f}</p>
+                        <p><strong>Next Renewal:</strong> {renewal_date}</p>
+                    </div>
+
+                    <p>You continue to have full access to all premium features.</p>
+                    <p>Thank you for being a valued member!</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"Subscription Renewed\n\nPlan: {plan_type.title()}\nAmount: {currency}{amount:.2f}\nNext Renewal: {renewal_date}"
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_payment_failed(self, user_email: str, name: str, plan_type: str,
+                           amount: float, currency: str, retry_date: str, reason: str):
+        """Send payment failure notification"""
+        subject = "Payment Failed - Action Required"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
                 }}
-                .button {{ 
-                    display: inline-block; padding: 12px 30px; background: #f5576c; 
-                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; 
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .warning-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #ef4444;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
         <body>
@@ -411,31 +360,39 @@ class BrevoEmailService:
                 </div>
                 <div class="content">
                     <h2>Hi {name},</h2>
-                    <p>We were unable to process your subscription payment.</p>
-                    <div class="alert-box">
-                        <p><strong>Amount:</strong> ${amount:.2f}</p>
+                    <p>We were unable to process your payment for your {plan_type.title()} subscription.</p>
+
+                    <div class="warning-box">
+                        <p><strong>Amount:</strong> {currency}{amount:.2f}</p>
                         <p><strong>Reason:</strong> {reason}</p>
+                        <p><strong>Retry Date:</strong> {retry_date}</p>
                     </div>
-                    <p>Please update your payment method to continue.</p>
+
+                    <p>Please update your payment method to continue your subscription.</p>
+
                     <p style="text-align: center;">
                         <a href="{self.frontend_url}/dashboard/upgrade" class="button">Update Payment Method</a>
                     </p>
-                    <p>Need help? Contact us at {self.support_email}</p>
+
+                    <p>If you need help, contact us at {self.support_email}.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
                 </div>
             </div>
         </body>
         </html>
         """
-        
-        text_content = f"Payment Failed\n\nAmount: ${amount:.2f}\nReason: {reason}\n\nPlease update your payment method."
-        
-        return self._send_transactional_email(user_email, name, subject, html_content, text_content)
-    
-    def send_report_download_email(self, user_email: str, name: str, 
-                                   report_name: str, analysis_type: str, download_url: str):
-        """Send report download email"""
-        subject = "Your Analysis Report is Ready"
-        
+
+        text_content = f"Payment Failed\n\nAmount: {currency}{amount:.2f}\nReason: {reason}\nPlease update your payment method."
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_subscription_cancelled(self, user_email: str, name: str, plan_type: str,
+                                   end_date: str, cancellation_reason: Optional[str] = None):
+        """Send subscription cancellation confirmation"""
+        subject = "Subscription Cancelled"
+
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -444,192 +401,416 @@ class BrevoEmailService:
             <style>
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ 
-                    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); 
-                    color: white; padding: 30px; text-align: center; 
-                    border-radius: 10px 10px 0 0; 
+                .header {{
+                    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
                 }}
-                .content {{ background: #f9f9f9; padding: 30px; }}
-                .report-box {{ 
-                    background: white; border-left: 4px solid #4facfe; 
-                    padding: 20px; margin: 20px 0; 
-                }}
-                .button {{ 
-                    display: inline-block; padding: 12px 30px; background: #4facfe; 
-                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; 
-                }}
-                .note {{ background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .info-box {{ background: white; border-left: 4px solid #6366f1; padding: 20px; margin: 20px 0; }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <h1 style="margin: 0;">📊 Your Report is Ready!</h1>
+                    <h1 style="margin: 0;">Subscription Cancelled</h1>
                 </div>
                 <div class="content">
                     <h2>Hi {name},</h2>
-                    <p>Your analysis report has been generated.</p>
-                    <div class="report-box">
-                        <p><strong>Report Name:</strong> {report_name}</p>
-                        <p><strong>Analysis Type:</strong> {analysis_type}</p>
-                        <p><strong>Generated:</strong> {datetime.now().strftime("%B %d, %Y at %I:%M %p")}</p>
+                    <p>Your {plan_type.title()} subscription has been cancelled.</p>
+
+                    <div class="info-box">
+                        <p><strong>Access Until:</strong> {end_date}</p>
+                        {f'<p><strong>Reason:</strong> {cancellation_reason}</p>' if cancellation_reason else ''}
                     </div>
-                    <p style="text-align: center;">
-                        <a href="{download_url}" class="button">Download Report</a>
-                    </p>
-                    <div class="note">
-                        <p><strong>Note:</strong> This download link will expire in 7 days.</p>
-                    </div>
+
+                    <p>You'll continue to have access to premium features until {end_date}.</p>
+                    <p>We're sorry to see you go! If you change your mind, you can reactivate anytime.</p>
+                    <p>Contact us at {self.support_email} if you have questions.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
                 </div>
             </div>
         </body>
         </html>
         """
-        
-        text_content = f"Your Report is Ready!\n\nReport: {report_name}\nType: {analysis_type}\n\nDownload: {download_url}"
-        
-        return self._send_transactional_email(user_email, name, subject, html_content, text_content)
-    
 
-# Initialize service
-email_service = BrevoEmailService()
+        text_content = f"Subscription Cancelled\n\nYour subscription has been cancelled. Access until: {end_date}"
 
-# Module-level functions for direct access
-def send_payout_success_email(user_id: int, amount: float,
-                             currency: str, payout_id: int, processed_at: datetime):
-    return email_service.send_payout_success_email(user_id, amount, currency, payout_id, processed_at)
+        return self._send_email(user_email, name, subject, html_content, text_content)
 
-# FastAPI Routes
-router = APIRouter(prefix="/api/emails", tags=["emails"])
+    def send_commission_notification(self, user_email: str, name: str,
+                                    amount: float, currency: str, referred_user_name: str,
+                                    commission_date: str):
+        """Send commission earned notification"""
+        subject = f"You've Earned {currency}{amount:.2f} Commission!"
 
-# Request models
-class WelcomeEmailRequest(BaseModel):
-    user_email: EmailStr
-    user_name: str
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .commission-box {{
+                    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+                    border-left: 4px solid #f59e0b;
+                    padding: 20px;
+                    margin: 20px 0;
+                    text-align: center;
+                }}
+                .amount {{ font-size: 32px; font-weight: bold; color: #d97706; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #f59e0b;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
+                }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">🎉 Commission Earned!</h1>
+                </div>
+                <div class="content">
+                    <h2>Congratulations {name}!</h2>
+                    <p>You've earned a commission from your referral!</p>
 
-class PayoutEmailRequest(BaseModel):
-    user_email: EmailStr
-    user_name: str
-    amount: float
-    commission_from: str
-    transaction_id: str
+                    <div class="commission-box">
+                        <div class="amount">{currency}{amount:.2f}</div>
+                        <p>Earned from {referred_user_name}'s subscription</p>
+                        <p><small>Date: {commission_date}</small></p>
+                    </div>
 
-class PaymentSuccessRequest(BaseModel):
-    user_email: EmailStr
-    user_name: str
-    amount: float
-    plan_name: str
-    next_billing_date: str
+                    <p>Keep referring more users to earn even more!</p>
 
-class PaymentFailedRequest(BaseModel):
-    user_email: EmailStr
-    user_name: str
-    amount: float
-    reason: str
+                    <p style="text-align: center;">
+                        <a href="{self.frontend_url}/dashboard/earnings" class="button">View Earnings</a>
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
 
-class ReportDownloadRequest(BaseModel):
-    user_email: EmailStr
-    user_name: str
-    report_name: str
-    analysis_type: str
-    download_url: str
+        text_content = f"Commission Earned!\n\nAmount: {currency}{amount:.2f}\nFrom: {referred_user_name}\nDate: {commission_date}"
 
-class BetaCardSavedRequest(BaseModel):
-    user_email: EmailStr
-    user_name: str
-    card_last4: str
-    card_brand: str
-    grace_days: int
+        return self._send_email(user_email, name, subject, html_content, text_content)
 
-class WaitlistRequest(BaseModel):
-    email: EmailStr
-    name: str
-    source: Optional[str] = "website"
+    def send_payout_processed(self, user_email: str, name: str, amount: float,
+                             currency: str, payment_method: str, transaction_id: str,
+                             processing_date: str):
+        """Send payout processed notification"""
+        subject = "Payout Processed Successfully"
 
-# Transactional email endpoints
-@router.post("/welcome")
-async def send_welcome(request: WelcomeEmailRequest, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(
-            email_service.send_welcome_email,
-            request.user_email,
-            request.user_name
-        )
-        return {"message": "Welcome email queued", "status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .payout-box {{ background: white; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; }}
+                .amount {{ font-size: 24px; font-weight: bold; color: #10b981; }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">✓ Payout Processed</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>Your payout has been processed successfully!</p>
 
-@router.post("/payout")
-async def send_payout(request: PayoutEmailRequest, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(
-            email_service.send_payout_email,
-            request.user_email,
-            request.user_name,
-            request.amount,
-            request.commission_from,
-            request.transaction_id
-        )
-        return {"message": "Payout email queued", "status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+                    <div class="payout-box">
+                        <div class="amount">{currency}{amount:.2f}</div>
+                        <p><strong>Payment Method:</strong> {payment_method}</p>
+                        <p><strong>Transaction ID:</strong> {transaction_id}</p>
+                        <p><strong>Date:</strong> {processing_date}</p>
+                    </div>
 
-@router.post("/payment-success")
-async def send_payment_success(request: PaymentSuccessRequest, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(
-            email_service.send_payment_success_email,
-            request.user_email,
-            request.user_name,
-            request.amount,
-            request.plan_name,
-            request.next_billing_date
-        )
-        return {"message": "Payment success email queued", "status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+                    <p>The funds should arrive in your account within 2-5 business days.</p>
+                    <p>Thank you for being part of Lavoo!</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
 
-@router.post("/payment-failed")
-async def send_payment_failed(request: PaymentFailedRequest, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(
-            email_service.send_payment_failed_email,
-            request.user_email,
-            request.user_name,
-            request.amount,
-            request.reason
-        )
-        return {"message": "Payment failed email queued", "status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        text_content = f"Payout Processed\n\nAmount: {currency}{amount:.2f}\nMethod: {payment_method}\nTransaction ID: {transaction_id}"
 
-@router.post("/report-download")
-async def send_report_download(request: ReportDownloadRequest, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(
-            email_service.send_report_download_email,
-            request.user_email,
-            request.user_name,
-            request.report_name,
-            request.analysis_type,
-            request.download_url
-        )
-        return {"message": "Report email queued", "status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return self._send_email(user_email, name, subject, html_content, text_content)
 
-@router.post("/beta-card-saved")
-async def send_beta_card_saved(request: BetaCardSavedRequest, background_tasks: BackgroundTasks):
-    try:
-        background_tasks.add_task(
-            email_service.send_beta_card_saved_email,
-            request.user_email,
-            request.user_name,
-            request.card_last4,
-            request.card_brand,
-            request.grace_days
-        )
-        return {"message": "Beta card saved email queued", "status": "success"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    def send_payout_failed(self, user_email: str, name: str, amount: float,
+                          currency: str, failure_reason: str):
+        """Send payout failure notification"""
+        subject = "Payout Failed - Action Required"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .warning-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #ef4444;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
+                }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">⚠️ Payout Failed</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>We encountered an issue processing your payout.</p>
+
+                    <div class="warning-box">
+                        <p><strong>Amount:</strong> {currency}{amount:.2f}</p>
+                        <p><strong>Reason:</strong> {failure_reason}</p>
+                    </div>
+
+                    <p>Please verify your payout account details and try again.</p>
+
+                    <p style="text-align: center;">
+                        <a href="{self.frontend_url}/dashboard/earnings" class="button">Update Payout Details</a>
+                    </p>
+
+                    <p>Contact us at {self.support_email} if you need assistance.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"Payout Failed\n\nAmount: {currency}{amount:.2f}\nReason: {failure_reason}"
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_beta_reminder(self, user_email: str, name: str, days_until_billing: int):
+        """Send beta user reminder to save payment method"""
+        subject = f"Save Your Payment Method - {days_until_billing} Days Remaining"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .reminder-box {{ background: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #f59e0b;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
+                }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">⏰ Reminder: Save Your Card</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>Your beta access has been amazing! To ensure uninterrupted service, please save your payment method.</p>
+
+                    <div class="reminder-box">
+                        <p><strong>Time Remaining:</strong> {days_until_billing} days</p>
+                        <p>Save your card now to avoid service interruption.</p>
+                    </div>
+
+                    <p>Billing will begin automatically once saved.</p>
+
+                    <p style="text-align: center;">
+                        <a href="{self.frontend_url}/dashboard/upgrade" class="button">Save Payment Method</a>
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"Reminder: Save your payment method. Time remaining: {days_until_billing} days."
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_grace_period_warning(self, user_email: str, name: str, days_remaining: int):
+        """Send grace period warning"""
+        subject = f"Urgent: Save Your Payment Method - {days_remaining} Days Left"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .urgent-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #ef4444;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
+                }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">⚠️ Urgent: Action Required</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>Your grace period is ending soon!</p>
+
+                    <div class="urgent-box">
+                        <p><strong>Days Remaining:</strong> {days_remaining}</p>
+                        <p>Save your payment method NOW to avoid losing access.</p>
+                    </div>
+
+                    <p>Without a payment method on file, your account will be suspended in {days_remaining} days.</p>
+
+                    <p style="text-align: center;">
+                        <a href="{self.frontend_url}/dashboard/upgrade" class="button">Save Payment Method Now</a>
+                    </p>
+
+                    <p>Questions? Contact {self.support_email}</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"Urgent: Save your payment method. Only {days_remaining} days left before account suspension."
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_referral_notification(self, user_email: str, name: str, referred_user_name: str):
+        """Send referral notification"""
+        subject = f"{referred_user_name} Joined Using Your Referral!"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .success-box {{ background: #f5f3ff; border-left: 4px solid #8b5cf6; padding: 20px; margin: 20px 0; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #8b5cf6;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
+                }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">🎉 New Referral!</h1>
+                </div>
+                <div class="content">
+                    <h2>Great news {name}!</h2>
+                    <p>{referred_user_name} just signed up using your referral link!</p>
+
+                    <div class="success-box">
+                        <p>You'll earn 50% commission when they subscribe.</p>
+                        <p>Keep sharing your link to earn more!</p>
+                    </div>
+
+                    <p style="text-align: center;">
+                        <a href="{self.frontend_url}/dashboard/referrals" class="button">View Referrals</a>
+                    </p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"New Referral!\n\n{referred_user_name} signed up using your referral link!"
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+
+email_service = MailerLiteEmailService()
+
+router = APIRouter(prefix="/api/email", tags=["email"])
+
+
+@router.post("/test")
+async def test_email(background_tasks: BackgroundTasks):
+    """Test email endpoint"""
+    return {
+        "success": True,
+        "message": "MailerLite email service is active" if email_service.api_key else "MailerLite API key not configured - emails will be logged only"
+    }
 

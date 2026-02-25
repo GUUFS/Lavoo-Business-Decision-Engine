@@ -9,9 +9,9 @@ import stripe
 import os
 from datetime import datetime
 
-from db.pg_connections import get_db
-from db.pg_models import User, PayoutAccount
-from api.routes.login import get_current_user
+from database.pg_connections import get_db
+from database.pg_models import User, PayoutAccount
+from api.routes.auth.login import get_current_user
 
 from dotenv import load_dotenv
 import json

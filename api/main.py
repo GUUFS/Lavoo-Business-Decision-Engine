@@ -35,9 +35,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Set up centralized logging (handles both local and cloud environments)
 from config.logging import get_logger, setup_logging
-from db.pg_connections import get_db_info, init_db, get_db
-from db.pg_models import User, CreateOrderRequest, CaptureRequest
-from db.pg_connections import SessionLocal
+from database.pg_connections import get_db_info, init_db, get_db
+from database.pg_models import User, CreateOrderRequest, CaptureRequest
+from database.pg_connections import SessionLocal
 from api.cache import init_cache, close_cache
 
 # Initialize logging system
@@ -46,10 +46,12 @@ logger = get_logger(__name__)
 
 # import the router page
 # from api.routes import ai_db as ai  # PostgreSQL-based AI routes - DEPRECATED (uses deleted analyst_db)
-from api.routes import analyzer, index, login, signup, admin, dependencies, earnings
-from api.routes import business_analyzer  # Business analysis routes
-from api.routes import customer_service, reviews, alerts, insights, referrals, security, firewall_scanner, user_stats
-from api.routes.control import revenue, users, dashboard, settings
+from api.routes import dependencies
+from api.routes.auth import login, signup
+from api.routes.decision_engine import analyzer as business_analyzer
+from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings
+from api.routes.support import customer_service, reviews
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings
 
 # Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
@@ -360,14 +362,6 @@ async def shutdown_event():
     """Cleanup on application shutdown"""
     await close_cache()
 
-# Path to the React build
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-out_dir = os.path.join(BASE_DIR, "web")
-
-# Serve static assets FIRST (must be before routers to avoid catch-all interception)
-if os.path.exists(os.path.join(out_dir, "assets")):
-    app.mount("/assets", StaticFiles(directory=os.path.join(out_dir, "assets")), name="assets")
-
 # Include API routers (specific routes)
 # app.include_router(ai.router, prefix="/api")  # DEPRECATED: ai_db uses deleted analyst_db module
 app.include_router(signup.router, prefix="/api")  # For React frontend that uses /api/signup
@@ -376,13 +370,12 @@ app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
 app.include_router(business_analyzer.router)  # internally prefix /api/business
 app.include_router(user_stats.router)  # internally prefix /api/user
-app.include_router(analyzer.router, prefix="/api") # prefix /api to match frontend /api/analyzer
 app.include_router(admin.router, prefix="/api") # prefix /api to match frontend /api/admin
 app.include_router(paypal.router) # endpoints start with /api/paypal
 app.include_router(flutterwave.router) # internally prefix /api/payments
 app.include_router(stripe.router) # internally prefix /api/stripe
 app.include_router(customer_service.router, prefix="/api") # internally prefix /api/customer-service
-app.include_router(reviews.router, prefix="/api") # internal endpoints start with /api/reviews
+app.include_router(reviews.router) # internal endpoints start with /api/reviews
 app.include_router(alerts.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")  # internally prefix /api
 app.include_router(referrals.router, prefix="/api")
@@ -399,5 +392,4 @@ app.include_router(email_service.router)
 from api.routes import notifications
 app.include_router(notifications.router, prefix="/api")
 
-# Include index.router LAST (catch-all for React app)
-app.include_router(index.router)
+# Note: Index/catch-all router removed as we're using Next.js frontend

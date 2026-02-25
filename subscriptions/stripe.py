@@ -7,19 +7,19 @@ import os
 import secrets
 import stripe
 
-from db.pg_connections import get_db
-from db.pg_models import PaymentIntentCreate, PaymentIntentResponse, PaymentVerify, SubscriptionResponse, CreateSubscriptionRequest, UpdatePaymentMethodRequest, ConfirmSubscriptionRequest, SaveCardRequest
+from database.pg_connections import get_db
+from database.pg_models import PaymentIntentCreate, PaymentIntentResponse, PaymentVerify, SubscriptionResponse, CreateSubscriptionRequest, UpdatePaymentMethodRequest, ConfirmSubscriptionRequest, SaveCardRequest
 
 from .stripe_service import StripeService
-from db.pg_models import User, Subscriptions
-from api.routes.login import get_current_user
+from database.pg_models import User, Subscriptions
+from api.routes.auth.login import get_current_user
 import json
 import traceback
 
 from fastapi import BackgroundTasks
 from emailing.email_service import email_service
 from api.services.notification_service import NotificationService
-from db.pg_models import NotificationType
+from database.pg_models import NotificationType
 from .beta_service import BetaService
 
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
@@ -727,7 +727,7 @@ def handle_payout_paid(event: dict, db: Session):
     if not internal_payout_id:
         return
 
-    from db.pg_models import Payout
+    from database.pg_models import Payout
     from subscriptions.payout_service import PayoutService 
 
     payout = db.query(Payout).get(internal_payout_id)
