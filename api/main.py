@@ -47,7 +47,7 @@ logger = get_logger(__name__)
 # import the router page
 # from api.routes import ai_db as ai  # PostgreSQL-based AI routes - DEPRECATED (uses deleted analyst_db)
 from api.routes import dependencies
-from api.routes.auth import login, signup
+from api.routes.auth import login, signup, forgot_password
 from api.routes.decision_engine import analyzer as business_analyzer
 from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings
 from api.routes.support import customer_service, reviews
@@ -366,8 +366,10 @@ async def shutdown_event():
 # app.include_router(ai.router, prefix="/api")  # DEPRECATED: ai_db uses deleted analyst_db module
 app.include_router(signup.router, prefix="/api")  # For React frontend that uses /api/signup
 app.include_router(login.router, prefix="/api")  # For React frontend that uses /api/login
+app.include_router(forgot_password.router, prefix="/api")  # Password reset endpoints
 app.include_router(signup.router)  # Also register without prefix for /signup
 app.include_router(login.router)  # Also register without prefix for /login
+app.include_router(forgot_password.router)  # Also register without prefix for /auth/forgot-password
 app.include_router(business_analyzer.router)  # internally prefix /api/business
 app.include_router(user_stats.router)  # internally prefix /api/user
 app.include_router(admin.router, prefix="/api") # prefix /api to match frontend /api/admin

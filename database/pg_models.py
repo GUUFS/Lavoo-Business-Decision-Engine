@@ -36,6 +36,11 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # Password reset fields
+    password_reset_token = Column(String(255), nullable=True, unique=True)
+    password_reset_expires = Column(DateTime(timezone=True), nullable=True)
+    password_reset_used_at = Column(DateTime(timezone=True), nullable=True)
+
     # Chops system (Clinton's feature)
     total_chops = Column(Integer, default=0)
     alert_reading_chops = Column(Integer, default=0)
