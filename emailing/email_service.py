@@ -142,6 +142,68 @@ class MailerLiteEmailService:
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
+    def send_password_reset_email(self, user_email: str, name: str, reset_token: str):
+        """Send password reset email with token link"""
+        subject = "Reset Your Lavoo Password"
+        reset_link = f"{self.frontend_url}/reset-password/{reset_token}"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .button {{
+                    display: inline-block; padding: 12px 30px; background: #f97316;
+                    color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
+                }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+                .warning {{ background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">Password Reset Request</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>We received a request to reset your Lavoo account password.</p>
+                    <p>Click the button below to create a new password:</p>
+                    <p style="text-align: center;">
+                        <a href="{reset_link}" class="button">Reset Password</a>
+                    </p>
+                    <div class="warning">
+                        <strong>⚠️ Security Notice:</strong><br>
+                        • This link expires in 30 minutes<br>
+                        • If you didn't request this reset, please ignore this email<br>
+                        • Your password won't change until you create a new one
+                    </div>
+                    <p>If the button doesn't work, copy and paste this link into your browser:</p>
+                    <p style="word-break: break-all; color: #666; font-size: 12px;">{reset_link}</p>
+                    <p>If you need assistance, contact us at {self.support_email}.</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"Password Reset Request\n\nHi {name},\n\nClick this link to reset your password:\n{reset_link}\n\nThis link expires in 30 minutes."
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+
     def send_subscription_confirmation(self, user_email: str, name: str, plan_type: str,
                                       amount: float, currency: str, next_billing_date: str):
         """Send subscription confirmation"""
