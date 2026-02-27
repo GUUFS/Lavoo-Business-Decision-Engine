@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.add_column('users', sa.Column('password_reset_token', sa.String(255), nullable=True, unique=True))
     op.add_column('users', sa.Column('password_reset_expires', sa.DateTime(timezone=True), nullable=True))
     op.add_column('users', sa.Column('password_reset_used_at', sa.DateTime(timezone=True), nullable=True))
-    
+
     # Create unique constraint on password_reset_token
     op.create_index('idx_users_password_reset_token', 'users', ['password_reset_token'], unique=True)
 
