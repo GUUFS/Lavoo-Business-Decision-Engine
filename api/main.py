@@ -49,7 +49,7 @@ logger = get_logger(__name__)
 from api.routes import dependencies
 from api.routes.auth import login, signup, forgot_password
 from api.routes.decision_engine import analyzer as business_analyzer
-from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings
+from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions
 from api.routes.support import customer_service, reviews
 from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings
 
@@ -385,6 +385,8 @@ app.include_router(earnings.router, prefix="/api")
 app.include_router(commissions.router, prefix="/api") # internally prefix /api/commissions
 app.include_router(revenue.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(user_settings.router, prefix="/api")  # User settings
+app.include_router(user_missions.router, prefix="/api")  # Missions system
 app.include_router(stripe_connect.router, prefix="/api/stripe-connect")
 app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
