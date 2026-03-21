@@ -197,6 +197,7 @@ class ShowUser(BaseModel):
 
 class SaveCardRequest(BaseModel):
     payment_method_id: str
+    currency: Optional[str] = "USD"
 
 
 class UserResponse(BaseModel):
@@ -425,6 +426,7 @@ class NotificationHistory(Base):
 class CreateSubscriptionRequest(BaseModel):
     payment_method_id: str
     plan_type: str  # 'monthly' or 'yearly'
+    currency: Optional[str] = "USD"
     billing_details: Optional[Dict] = None
 
 

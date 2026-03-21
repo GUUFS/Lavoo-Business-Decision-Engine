@@ -208,6 +208,7 @@ async def create_ticket(
         print(f"Error creating ticket: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.get("/tickets")
 @router.get("/tickets/my-tickets")
 async def get_my_tickets(
     current_user: User = Depends(get_current_user),

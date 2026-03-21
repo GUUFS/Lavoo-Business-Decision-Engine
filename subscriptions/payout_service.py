@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 # Configure Stripe
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
-# Flutterwave config (using VITE_ prefix to match .env)
-FLUTTERWAVE_SECRET_KEY = os.getenv("VITE_FLUTTERWAVE_SECRET_KEY")
+# Flutterwave config (using NEXT_PUBLIC_ prefix to match .env)
+FLUTTERWAVE_SECRET_KEY = os.getenv("NEXT_PUBLIC_FLUTTERWAVE_SECRET_KEY")
 FLUTTERWAVE_BASE_URL = "https://api.flutterwave.com/v3"
 
 

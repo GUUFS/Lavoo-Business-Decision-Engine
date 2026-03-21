@@ -1,24 +1,38 @@
-# import the fastAPI library into
+# Standard library imports
+import asyncio
 import logging
-
-# Load environment variables from .env file (must be done early)
 import os
 from datetime import datetime
 
-from fastapi import FastAPI, Depends, Request
-
-# import the function for rendering the HTML sites
-# import the function for rendering the static files
+# Third-party imports
+from dotenv import load_dotenv
+from fastapi import FastAPI, Depends, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect
-
+from passlib.context import CryptContext
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
-from passlib.context import CryptContext
+# Local application imports
+from api.cache import init_cache, close_cache
+from api.routes import dependencies, notifications
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings
+from api.routes.auth import login, signup, forgot_password
+from api.routes.auth.login import get_current_user
+from api.routes.decision_engine import analyzer as business_analyzer
+from api.routes.support import customer_service, reviews
+from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings
+from api.security.firewall import FirewallMiddleware, initialize_default_firewall_rules, firewall_manager
+from api.security.vulnerability_scanner import vulnerability_scanner
+from config.logging import get_logger, setup_logging
+from database.pg_connections import get_db_info, init_db, get_db, SessionLocal
+from database.pg_models import User, CreateOrderRequest, CaptureRequest
+from emailing import email_service
+from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
+from subscriptions.beta_service import BetaService
 
+# Load environment variables from .env file (must be done early)
 try:
-    from dotenv import load_dotenv
-    import asyncio
     # Try .env.local first (local development), fallback to .env
     if os.path.exists('.env.local'):
         load_dotenv('.env.local')
@@ -29,42 +43,18 @@ try:
 except ImportError:
     print("⚠️  python-dotenv not installed, using system environment")
 
-# import the database connection file and models from the containing folder
-# Using PostgreSQL (Neon) exclusively
-from fastapi.middleware.cors import CORSMiddleware
-
-# Set up centralized logging (handles both local and cloud environments)
-from config.logging import get_logger, setup_logging
-from database.pg_connections import get_db_info, init_db, get_db
-from database.pg_models import User, CreateOrderRequest, CaptureRequest
-from database.pg_connections import SessionLocal
-from api.cache import init_cache, close_cache
-
 # Initialize logging system
 setup_logging(level=logging.INFO if os.getenv("DEBUG") != "true" else logging.DEBUG)
 logger = get_logger(__name__)
 
-# import the router page
-# from api.routes import ai_db as ai  # PostgreSQL-based AI routes - DEPRECATED (uses deleted analyst_db)
-from api.routes import dependencies
-from api.routes.auth import login, signup, forgot_password
-from api.routes.decision_engine import analyzer as business_analyzer
-from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings
-from api.routes.support import customer_service, reviews
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings
-
-# Payment routes
-from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
-
-# Email service
-from emailing import email_service
-
-
 logger.info("✓ Using Neon PostgreSQL database")
-
 
 app = FastAPI(debug=True)
 print("APP TYPE:", type(app))
+
+# Password context for admin creation
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
 
 # DEBUG: Global Request Logger to confirm traffic
 @app.middleware("http")
@@ -84,7 +74,6 @@ origins = [
 
 
 # Initialize and Register Firewall Middleware
-from api.security.firewall import FirewallMiddleware
 app.add_middleware(FirewallMiddleware)
 
 # Enable CORS for (React form requests)
@@ -119,11 +108,36 @@ async def health_check():
         return {"status": "unhealthy", "timestamp": datetime.now().isoformat(), "error": str(e)}
 
 
+@app.get("/api/beta-status")
+async def get_beta_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Beta status endpoint for the frontend.
+    Directly exposed at /api/beta-status as expected by the React-based components.
+    """
+    try:
+        status = BetaService.get_user_status(current_user)
+
+        if status.get("show_card_info") and current_user.card_last4:
+            status["card_info"] = {
+                "last4": current_user.card_last4, "brand": current_user.card_brand,
+                "exp_month": current_user.card_exp_month, "exp_year": current_user.card_exp_year
+            }
+
+        status["is_beta_mode"] = BetaService.is_beta_mode()
+        status["is_in_grace_period"] = BetaService.is_in_grace_period(current_user)
+        return status
+    except Exception as e:
+        logger.error(f"Error in /api/beta-status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 async def run_scheduled_scans():
     """Background task to run vulnerability scans every 15 minutes"""
-    from api.security.vulnerability_scanner import vulnerability_scanner
     while True:
         try:
             # Wait 15 minutes between scans
@@ -178,7 +192,6 @@ async def startup_event():
         logger.info(f"✓ Database initialized: {db_info['type']} at {db_info['host']}")
 
         # Auto-migration for is_active column
-        from sqlalchemy import text
         db = SessionLocal()
         try:
             # Check if column exists (PostgreSQL specific, but 'ADD COLUMN IF NOT EXISTS' handles it in modern PG)
@@ -305,14 +318,13 @@ async def startup_event():
         try:
             # BASE_DIR is defined below, but we can use it here if we define it earlier
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            sql_file = os.path.join(project_root, "db", "security_setup.sql")
+            sql_file = os.path.join(project_root, "database", "security_setup.sql")
             if os.path.exists(sql_file):
                 with open(sql_file, "r") as f:
                     sql_content = f.read()
 
                 db = SessionLocal()
                 try:
-                    from sqlalchemy import text
 
                     # First, drop security_metrics_summary if it exists as a table (not a view)
                     # This allows us to recreate it as a view
@@ -332,7 +344,6 @@ async def startup_event():
 
                     # Initialize firewall rules
                     try:
-                        from api.security.firewall import initialize_default_firewall_rules, firewall_manager
                         initialize_default_firewall_rules(db)
                         firewall_manager.load_rules(db)
                         logger.info("✓ Firewall rules initialized")
@@ -377,7 +388,7 @@ app.include_router(paypal.router) # endpoints start with /api/paypal
 app.include_router(flutterwave.router) # internally prefix /api/payments
 app.include_router(stripe.router) # internally prefix /api/stripe
 app.include_router(customer_service.router, prefix="/api") # internally prefix /api/customer-service
-app.include_router(reviews.router) # internal endpoints start with /api/reviews
+app.include_router(reviews.router, prefix="/api") # internal endpoints start with /api/reviews
 app.include_router(alerts.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")  # internally prefix /api
 app.include_router(referrals.router, prefix="/api")
@@ -391,7 +402,6 @@ app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(email_service.router)
-from api.routes import notifications
 app.include_router(notifications.router, prefix="/api")
 
 # Note: Index/catch-all router removed as we're using Next.js frontend

@@ -70,6 +70,27 @@ try:
     with engine.connect() as conn:
         print("✓ Successfully connected to PostgreSQL!")
 
+    # Attach an event listener to silence harmless "SSL connection has been closed unexpectedly" errors
+    # during connection pool check-ins.
+    from sqlalchemy import event
+    import psycopg2
+
+    # Provide a resilient callback for connection resets
+    @event.listens_for(engine, "reset")
+    def _gracefully_handle_reset(dbapi_connection, connection_record, reset_state=None): # reset_state is for SQLAlchemy 2.0+
+        try:
+            dbapi_connection.rollback()
+        except psycopg2.OperationalError as e:
+            # If the server closed the connection or dropped due to network issues,
+            # invalidate the record quietly instead of bubbling up a traceback to the QueuePool logger.
+            if "closed unexpectedly" in str(e) or "terminating connection" in str(e) or "already closed" in str(e):
+                connection_record.invalidate()
+            else:
+                raise
+        except Exception as e:
+            # Re-raise any other unexpected exceptions
+            raise
+
 except Exception as e:
     print("❌ Failed to connect to PostgreSQL database!")
     error_msg = str(e)

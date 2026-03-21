@@ -309,7 +309,7 @@ async def get_unread_count(
         raise HTTPException(status_code=500, detail=f"Error fetching unread count: {str(e)}")
 
 
-@router.get("/api/reviews/{review_id}")
+@router.get("/reviews/{review_id}")
 async def get_review(
     review_id: int,
     current_user: User = Depends(get_current_user),
@@ -337,7 +337,7 @@ async def get_review(
         raise HTTPException(status_code=500, detail=f"Error fetching review: {str(e)}")
 
 
-@router.get("/api/reviews/{review_id}/conversations")
+@router.get("/reviews/{review_id}/conversations")
 async def get_conversations(
     review_id: int,
     current_user: User = Depends(get_current_user),
@@ -383,7 +383,7 @@ async def get_conversations(
         raise HTTPException(status_code=500, detail=f"Error fetching conversations: {str(e)}")
 
 
-@router.post("/api/conversations")
+@router.post("/conversations")
 async def create_conversation(
     conversation: dict,
     current_user: User = Depends(get_current_user),
@@ -433,7 +433,7 @@ async def create_conversation(
         raise HTTPException(status_code=500, detail=f"Error creating conversation: {str(e)}")
 
 
-@router.put("/api/conversations/{review_id}/mark-read")
+@router.put("/conversations/{review_id}/mark-read")
 async def mark_conversations_read(
     review_id: int,
     current_user: User = Depends(get_current_user),
@@ -503,7 +503,7 @@ def format_admin_review_response(review: Review, db: Session) -> dict:
     })
     return base_response
 
-@router.get("/api/admin/reviews")
+@router.get("/admin/reviews")
 async def admin_get_all_reviews(
     status: Optional[str] = None,
     page: int = 1,
@@ -534,7 +534,7 @@ async def admin_get_all_reviews(
         "totalPages": (total + limit - 1) // limit
     }
 
-@router.get("/api/admin/reviews/{review_id}/conversations")
+@router.get("/admin/reviews/{review_id}/conversations")
 async def admin_get_conversations(
     review_id: int,
     current_user: User = Depends(get_current_user),
@@ -560,7 +560,7 @@ async def admin_get_conversations(
             for conv in conversations
         ]
 
-@router.post("/api/admin/reviews/{review_id}/reply")
+@router.post("/admin/reviews/{review_id}/reply")
 async def admin_reply_review(
     review_id: int,
     message_data: dict,
@@ -596,7 +596,7 @@ async def admin_reply_review(
     db.refresh(conv)
     return {"status": "success", "conversation_id": conv.id}
 
-@router.patch("/api/admin/reviews/{review_id}/status")
+@router.patch("/admin/reviews/{review_id}/status")
 async def admin_update_review_status(
     review_id: int,
     status_data: dict,
@@ -623,7 +623,7 @@ async def admin_update_review_status(
     db.commit()
     return {"status": "success", "new_status": review.status}
 
-@router.get("/api/admin/reviews/users")
+@router.get("/admin/reviews/users")
 async def admin_get_reviews_by_user(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -673,7 +673,7 @@ async def admin_get_reviews_by_user(
     
     return results
 
-@router.post("/api/admin/reviews/{review_id}/attended")
+@router.post("/admin/reviews/{review_id}/attended")
 async def admin_toggle_review_attended(
     review_id: int,
     current_user: User = Depends(get_current_user),
@@ -700,7 +700,7 @@ async def admin_toggle_review_attended(
     }
 
 
-@router.get("/api/admin/reviews/user/{target_user_id}")
+@router.get("/admin/reviews/user/{target_user_id}")
 async def admin_get_user_reviews(
     target_user_id: int,
     page: int = 1,
@@ -741,7 +741,7 @@ async def admin_get_user_reviews(
 # Displayed Reviews Endpoints (Homepage Management)
 # --------------------------
 
-@router.post("/api/admin/reviews/{review_id}/display")
+@router.post("/admin/reviews/{review_id}/display")
 async def admin_add_review_to_display(
     review_id: int,
     current_user: User = Depends(get_current_user),
@@ -786,7 +786,7 @@ async def admin_add_review_to_display(
     }
 
 
-@router.delete("/api/admin/reviews/{review_id}/display")
+@router.delete("/admin/reviews/{review_id}/display")
 async def admin_remove_review_from_display(
     review_id: int,
     current_user: User = Depends(get_current_user),

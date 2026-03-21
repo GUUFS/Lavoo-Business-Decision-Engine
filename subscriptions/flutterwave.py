@@ -28,8 +28,8 @@ print('Flutterwave environment variables loaded.')
 router = APIRouter(prefix="/api/payments", tags=["payments"])
 
 # Flutterwave configuration
-FLUTTERWAVE_SECRET_KEY = os.getenv("VITE_FLUTTERWAVE_SECRET_KEY")
-FLUTTERWAVE_PUBLIC_KEY = os.getenv("VITE_FLUTTERWAVE_PUBLIC_KEY")
+FLUTTERWAVE_SECRET_KEY = os.getenv("NEXT_PUBLIC_FLUTTERWAVE_SECRET_KEY")
+FLUTTERWAVE_PUBLIC_KEY = os.getenv("NEXT_PUBLIC_FLUTTERWAVE_PUBLIC_KEY")
 FLUTTERWAVE_ENCRYPTION_KEY = os.getenv("FLUTTERWAVE_ENCRYPTION_KEY")
 FLUTTERWAVE_BASE_URL = "https://api.flutterwave.com/v3"
 
