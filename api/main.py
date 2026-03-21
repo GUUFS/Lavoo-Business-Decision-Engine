@@ -51,6 +51,11 @@ logger = get_logger(__name__)
 logger.info("✓ Using Neon PostgreSQL database")
 
 app = FastAPI(debug=True)
+
+# Root health check endpoint for Railway healthchecks
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "lavoo-api"}
 print("APP TYPE:", type(app))
 
 # Password context for admin creation
