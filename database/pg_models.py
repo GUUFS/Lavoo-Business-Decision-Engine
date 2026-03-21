@@ -82,6 +82,9 @@ class User(Base):
     card_saved_at = Column(DateTime(timezone=True), nullable=True)
     subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
 
+    # User Settings and Metadata
+    user_metadata = Column(JSON, nullable=True)  # Stores user settings, preferences, and other metadata
+
     # Relationships
     subscriptions = relationship("Subscriptions", back_populates="user")
     tickets = relationship("Ticket", back_populates="user")
@@ -94,6 +97,9 @@ class User(Base):
     commissions_earned = relationship("Commission", foreign_keys="Commission.user_id", back_populates="user")
     payouts = relationship("Payout", back_populates="user")
     payout_account = relationship("PayoutAccount", back_populates="user", uselist=False)
+    user_missions = relationship("UserMission", cascade="all, delete-orphan")
+    settings = relationship("UserSettings", uselist=False, cascade="all, delete-orphan")
+
 
 
 class AITool(Base):
@@ -174,6 +180,9 @@ class BusinessAnalysis(Base):
     analysis_type = Column(String(100), nullable=True)  # agentic
     insights_count = Column(Integer, default=0)  # Number of insights generated
     recommendations_count = Column(Integer, default=0)  # Number of recommendations
+
+    # User Progress Tracking (for missions system)
+    user_progress = Column(JSON, nullable=True)  # {completed_actions: [], reflections: {}, resolved_constraints: [], completion_dates: {}}
 
     # Metadata
     status = Column(String(50), default="completed")  # pending, completed, failed
@@ -1423,6 +1432,138 @@ class SystemSettings(Base):
     monthly_price = Column(Float, default=29.99)
     quarterly_price = Column(Float, default=79.99)
     yearly_price = Column(Float, default=299.99)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# ============================================================================
+# MISSIONS SYSTEM MODELS
+# ============================================================================
+
+class Mission(Base):
+    """
+    Missions are structured action plans that guide users through tasks.
+    Each mission has multiple steps and rewards chops upon completion.
+    """
+    __tablename__ = "missions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    category = Column(String(100), nullable=True)  # sales, marketing, product, etc.
+    difficulty = Column(String(50), default="beginner")  # beginner, intermediate, advanced
+    total_steps = Column(Integer, nullable=False)
+    points_reward = Column(Integer, default=0)
+    estimated_days = Column(Integer, nullable=False)
+    is_active = Column(Boolean, default=True)
+    order_index = Column(Integer, default=0)
+    icon = Column(String(100), nullable=True)
+    color_theme = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    steps = relationship("MissionStep", back_populates="mission", cascade="all, delete-orphan", order_by="MissionStep.order_index")
+    user_missions = relationship("UserMission", back_populates="mission")
+
+
+class MissionStep(Base):
+    """
+    Individual steps within a mission.
+    Each step has a specific task and can award points.
+    """
+    __tablename__ = "mission_steps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    mission_id = Column(Integer, ForeignKey("missions.id", ondelete="CASCADE"), nullable=False)
+    day = Column(Integer, nullable=False)
+    label = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    points = Column(Integer, default=0)
+    order_index = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    mission = relationship("Mission", back_populates="steps")
+    user_step_completions = relationship("UserMissionStep", back_populates="step")
+
+
+class UserMission(Base):
+    """
+    Tracks which missions a user has started/completed.
+    """
+    __tablename__ = "user_missions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    mission_id = Column(Integer, ForeignKey("missions.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(50), default="active")  # active, completed, abandoned
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    progress_percentage = Column(Integer, default=0)
+    completed_steps = Column(Integer, default=0)
+
+    # Relationships
+    mission = relationship("Mission", back_populates="user_missions")
+    step_completions = relationship("UserMissionStep", back_populates="user_mission", cascade="all, delete-orphan")
+
+    # Indexes
+    __table_args__ = (
+        Index('idx_user_mission_user_id', 'user_id'),
+        Index('idx_user_mission_status', 'status'),
+    )
+
+
+class UserMissionStep(Base):
+    """
+    Tracks completion of individual mission steps by users.
+    """
+    __tablename__ = "user_mission_steps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_mission_id = Column(Integer, ForeignKey("user_missions.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_id = Column(Integer, ForeignKey("mission_steps.id", ondelete="CASCADE"), nullable=False, index=True)
+    completed = Column(Boolean, default=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    reflection = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    user_mission = relationship("UserMission", back_populates="step_completions")
+    step = relationship("MissionStep", back_populates="user_step_completions")
+
+
+# ============================================================================
+# USER SETTINGS MODEL
+# ============================================================================
+
+class UserSettings(Base):
+    """
+    Stores user preferences and settings.
+    """
+    __tablename__ = "user_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+
+    # Notification Settings
+    email_notifications = Column(Boolean, default=True)
+    push_notifications = Column(Boolean, default=True)
+    analysis_reminders = Column(Boolean, default=True)
+    community_notifications = Column(Boolean, default=True)
+
+    # Decision Engine Settings
+    active_constraint_mode = Column(Boolean, default=True)
+    pending_task_reminders = Column(Boolean, default=True)
+
+    # Display Settings
+    dark_mode = Column(Boolean, default=False)
+    compact_view = Column(Boolean, default=False)
+
+    # Privacy Settings
+    profile_visibility = Column(String(50), default="community")  # public, community, private
+    show_earnings = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
