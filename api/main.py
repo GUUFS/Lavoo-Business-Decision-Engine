@@ -21,7 +21,7 @@ from api.routes.auth import login, signup, forgot_password
 from api.routes.auth.login import get_current_user
 from api.routes.decision_engine import analyzer as business_analyzer
 from api.routes.support import customer_service, reviews
-from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings
+from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions
 from api.security.firewall import FirewallMiddleware, initialize_default_firewall_rules, firewall_manager
 from api.security.vulnerability_scanner import vulnerability_scanner
 from config.logging import get_logger, setup_logging
@@ -47,25 +47,7 @@ except ImportError:
 setup_logging(level=logging.INFO if os.getenv("DEBUG") != "true" else logging.DEBUG)
 logger = get_logger(__name__)
 
-<<<<<<< HEAD
-=======
-# import the router page
-# from api.routes import ai_db as ai  # PostgreSQL-based AI routes - DEPRECATED (uses deleted analyst_db)
-from api.routes import dependencies
-from api.routes.auth import login, signup, forgot_password
-from api.routes.decision_engine import analyzer as business_analyzer
-from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions
-from api.routes.support import customer_service, reviews
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings
 
-# Payment routes
-from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
-
-# Email service
-from emailing import email_service
-
-
->>>>>>> 111231fe02d9a1f6a0aaffe726bd404769b81012
 logger.info("✓ Using Neon PostgreSQL database")
 
 app = FastAPI(debug=True)
