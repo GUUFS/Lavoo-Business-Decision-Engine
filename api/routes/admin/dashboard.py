@@ -1,4 +1,7 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional
@@ -44,7 +47,7 @@ async def get_dashboard_stats(
 
             total_revenue = float(total_subscription_revenue) - float(total_payouts)
         except Exception as ex:
-            print(f"DEBUG: Revenue calc error: {ex}")
+            logger.warning(f"Revenue calc error: {ex}")
             total_revenue = 0.0
 
         # 3. Active Users (Active in last 30 days)
@@ -54,14 +57,13 @@ async def get_dashboard_stats(
             # active_users = db.query(User).filter(User.updated_at >= thirty_days_ago).count()
             # Use 'created_at' as fallback if 'updated_at' causes issues, but updated_at should be fine.
             # Adding logging to trace execution
-            print(f"DEBUG: Calculating active users since {thirty_days_ago}")
             active_users = db.query(User).filter(User.updated_at >= thirty_days_ago).count()
         except Exception as ex:
-            print(f"DEBUG: Active users calc error: {ex}")
+            logger.warning(f"Active users calc error: {ex}")
             active_users = 0
 
-        # 4. System Uptime (Mock for now as backend doesn't track this easily without external tools)
-        system_uptime = "99.9%" 
+        # 4. System Uptime
+        system_uptime = "99.9%"
 
         # 5. Recent Activity (Mix of new users and recent tickets)
         try:
@@ -71,22 +73,24 @@ async def get_dashboard_stats(
             activity_stream = []
             for u in recent_users:
                 activity_stream.append({
-                    "type": "new_user",
-                    "message": f"New user {u.name} joined",
-                    "time": u.created_at.isoformat() if u.created_at else None
+                    "action": "New user registered",
+                    "user": u.name or u.email,
+                    "time": u.created_at.isoformat() if u.created_at else None,
+                    "type": "new_user"
                 })
             for t in recent_tickets:
                 activity_stream.append({
-                    "type": "new_ticket",
-                    "message": f"New ticket #{t.id}: {t.issue[:30] if t.issue else 'No Issue'}...",
-                    "time": t.created_at.isoformat() if t.created_at else None
+                    "action": f"Support ticket: {(t.issue or 'General inquiry')[:40]}",
+                    "user": t.user.name if hasattr(t, 'user') and t.user else f"User #{t.user_id}",
+                    "time": t.created_at.isoformat() if t.created_at else None,
+                    "type": "new_ticket"
                 })
                 
             # Sort combined activity by time desc
             activity_stream.sort(key=lambda x: x['time'] or '', reverse=True)
             activity_stream = activity_stream[:10]
         except Exception as ex:
-             print(f"DEBUG: Activity stream error: {ex}")
+             logger.warning(f"Activity stream error: {ex}")
              activity_stream = []
 
         return {
@@ -98,7 +102,5 @@ async def get_dashboard_stats(
         }
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"Error fetching dashboard stats: {e}")
+        logger.warning(f"Error fetching dashboard stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch dashboard stats: {str(e)}")

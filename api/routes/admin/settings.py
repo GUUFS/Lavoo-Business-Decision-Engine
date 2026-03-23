@@ -12,14 +12,17 @@ router = APIRouter(prefix="/control/settings", tags=["settings"])
 class SettingsUpdate(BaseModel):
     # General
     site_name: Optional[str] = None
+    system_name: Optional[str] = None  # alias for site_name
     support_email: Optional[str] = None
     default_language: Optional[str] = None
     timezone: Optional[str] = None
-    
+    allow_new_registrations: Optional[bool] = None  # frontend compatibility field
+
     # Limits
     max_analyses_basic: Optional[int] = None
     max_analyses_pro: Optional[int] = None
     max_analyses_premium: Optional[int] = None
+    max_analyses_per_user: Optional[int] = None  # sets all three tiers
     
     # AI
     primary_ai_model: Optional[str] = None
@@ -59,8 +62,12 @@ def get_settings(
         db.add(settings)
         db.commit()
         db.refresh(settings)
-    
-    return settings
+
+    # Build response dict with aliases for frontend compatibility
+    result = {col.name: getattr(settings, col.name) for col in settings.__table__.columns}
+    result["system_name"] = settings.site_name  # alias for frontend compatibility
+    result["allow_new_registrations"] = True  # no DB field; echo back as always-true default
+    return result
 
 @router.patch("")
 def update_settings(
@@ -76,11 +83,24 @@ def update_settings(
         settings = SystemSettings()
         db.add(settings)
     
-    # Apply updates
+    # Resolve aliases before applying updates
+    if update_data.system_name is not None and update_data.site_name is None:
+        update_data.site_name = update_data.system_name
+    if update_data.max_analyses_per_user is not None:
+        settings.max_analyses_basic = update_data.max_analyses_per_user
+        settings.max_analyses_pro = update_data.max_analyses_per_user
+        settings.max_analyses_premium = update_data.max_analyses_per_user
+
+    # Apply updates (skip virtual/alias fields that have no DB column)
+    _virtual_fields = {"system_name", "max_analyses_per_user", "allow_new_registrations"}
     update_dict = update_data.model_dump(exclude_unset=True)
     for key, value in update_dict.items():
-        setattr(settings, key, value)
-    
+        if key not in _virtual_fields:
+            setattr(settings, key, value)
+
     db.commit()
     db.refresh(settings)
-    return settings
+    result = {col.name: getattr(settings, col.name) for col in settings.__table__.columns}
+    result["system_name"] = settings.site_name
+    result["allow_new_registrations"] = True
+    return result

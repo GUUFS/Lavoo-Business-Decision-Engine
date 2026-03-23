@@ -82,6 +82,11 @@ class User(Base):
     card_saved_at = Column(DateTime(timezone=True), nullable=True)
     subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Business profile fields
+    company_name = Column(String(255), nullable=True)
+    industry = Column(String(100), nullable=True)
+    avatar_url = Column(Text, nullable=True)
+
     # User Settings and Metadata
     user_metadata = Column(JSON, nullable=True)  # Stores user settings, preferences, and other metadata
 
@@ -886,6 +891,7 @@ class AlertResponse(BaseModel):
     source: Optional[str]
     url: Optional[str] = None
     date: str
+    posted_date: Optional[str] = None  # crawled/posted date derived from created_at
     total_views: int
     total_shares: int
     has_viewed: bool = False
@@ -1565,3 +1571,174 @@ class UserSettings(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# ──────────────────────────────────────────────
+# Community Models
+# ──────────────────────────────────────────────
+
+class CommunityChannel(Base):
+    __tablename__ = "community_channels"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    slug = Column(String(100), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(50), nullable=False, default="General")
+    member_count = Column(Integer, default=0)
+    post_count = Column(Integer, default=0)
+    icon = Column(String(20), nullable=True)
+    is_public = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    members = relationship("ChannelMember", back_populates="channel", cascade="all, delete-orphan")
+    discussions = relationship("CommunityDiscussion", back_populates="channel", cascade="all, delete-orphan")
+
+
+class ChannelMember(Base):
+    __tablename__ = "channel_members"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    channel_id = Column(Integer, ForeignKey("community_channels.id", ondelete="CASCADE"), nullable=False)
+    is_moderator = Column(Boolean, default=False)
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+    channel = relationship("CommunityChannel", back_populates="members")
+    user = relationship("User")
+
+
+class CommunityDiscussion(Base):
+    __tablename__ = "community_discussions"
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(Integer, ForeignKey("community_channels.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(255), nullable=False)
+    content = Column(Text, nullable=False)
+    tags = Column(JSON, nullable=True)
+    like_count = Column(Integer, default=0)
+    reply_count = Column(Integer, default=0)
+    view_count = Column(Integer, default=0)
+    is_pinned = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    channel = relationship("CommunityChannel", back_populates="discussions")
+    user = relationship("User")
+    replies = relationship("DiscussionReply", back_populates="discussion", cascade="all, delete-orphan")
+    likes = relationship("DiscussionLike", back_populates="discussion", cascade="all, delete-orphan")
+
+
+class DiscussionReply(Base):
+    __tablename__ = "discussion_replies"
+    id = Column(Integer, primary_key=True, index=True)
+    discussion_id = Column(Integer, ForeignKey("community_discussions.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    content = Column(Text, nullable=False)
+    like_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    discussion = relationship("CommunityDiscussion", back_populates="replies")
+    user = relationship("User")
+
+
+class DiscussionLike(Base):
+    __tablename__ = "discussion_likes"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    discussion_id = Column(Integer, ForeignKey("community_discussions.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    discussion = relationship("CommunityDiscussion", back_populates="likes")
+
+
+class CommunityEvent(Base):
+    __tablename__ = "community_events"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    event_type = Column(String(50), nullable=False, default="Webinar")
+    scheduled_at = Column(DateTime(timezone=True), nullable=True)
+    duration_minutes = Column(Integer, default=60)
+    max_attendees = Column(Integer, nullable=True)
+    attendee_count = Column(Integer, default=0)
+    host_name = Column(String(100), nullable=True)
+    meeting_link = Column(String(500), nullable=True)
+    is_published = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    registrations = relationship("EventRegistration", back_populates="event", cascade="all, delete-orphan")
+
+
+class EventRegistration(Base):
+    __tablename__ = "event_registrations"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    event_id = Column(Integer, ForeignKey("community_events.id", ondelete="CASCADE"), nullable=False)
+    registered_at = Column(DateTime(timezone=True), server_default=func.now())
+    event = relationship("CommunityEvent", back_populates="registrations")
+    user = relationship("User")
+
+
+class CommunityActivity(Base):
+    __tablename__ = "community_activities"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    action_type = Column(String(50), nullable=False)
+    target_id = Column(Integer, nullable=True)
+    target_type = Column(String(50), nullable=True)
+    target_name = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user = relationship("User")
+
+
+class SavedItem(Base):
+    __tablename__ = "saved_items"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    item_id = Column(Integer, nullable=False)
+    item_type = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user = relationship("User")
+
+# ─── Marketplace Models ──────────────────────────────────────────────────────
+
+class MarketplaceTool(Base):
+    __tablename__ = "marketplace_tools"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    author = Column(String(100), nullable=False)
+    description = Column(Text, nullable=False)
+    full_description = Column(Text, nullable=True)
+    category = Column(String(100), nullable=False, default="AI Tools")
+    price = Column(Float, default=0.0)
+    tags = Column(JSON, nullable=True)
+    features = Column(JSON, nullable=True)  # list of strings
+    icon_name = Column(String(50), nullable=False, default="Cpu")
+    color_theme = Column(String(30), nullable=False, default="orange")
+    sales_count = Column(Integer, default=0)
+    rating = Column(Float, default=0.0)
+    review_count = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    purchase_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    purchases = relationship("MarketplacePurchase", back_populates="tool", cascade="all, delete-orphan")
+
+
+class MarketplacePurchase(Base):
+    __tablename__ = "marketplace_purchases"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    tool_id = Column(Integer, ForeignKey("marketplace_tools.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(50), nullable=False, default="pending")  # pending, completed, refunded
+    amount_paid = Column(Float, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user = relationship("User")
+    tool = relationship("MarketplaceTool", back_populates="purchases")
+
+
+class MarketplaceRequest(Base):
+    __tablename__ = "marketplace_requests"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    budget = Column(String(100), nullable=True)
+    timeline = Column(String(100), nullable=True)
+    status = Column(String(50), nullable=False, default="open")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user = relationship("User")

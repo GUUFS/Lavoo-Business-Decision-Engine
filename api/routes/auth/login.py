@@ -25,8 +25,7 @@ bearer_scheme = HTTPBearer()
 router = APIRouter(prefix="", tags=["authenticate"])
 
 def log_debug(message):
-    with open("auth_debug.log", "a") as f:
-        f.write(f"{datetime.utcnow()}: {message}\n")
+    logger.debug(message)
 
 """Generating and storing the secret key"""
 
@@ -487,7 +486,7 @@ def login(request: ShowUser, response: Response, fastapi_request: Request, db: S
         max_age=60 * 60 * 24 * 30  # 30 days
     )
 
-    print(f"DEBUG: User logged in: {user.email}, role: {role}, token: {access_token[:20]}...")
+    logger.info(f"User logged in: {user.email}, role: {role}")
 
     return {
         "access_token": access_token,
@@ -525,7 +524,7 @@ def refresh_token_endpoint(refresh_token: str = Cookie(None), response: Response
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Refresh token has expired")
     except JWTError as e:
-        print(f"Refresh token decode error: {str(e)}")
+        logger.warning(f"Refresh token decode error: {str(e)}")
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     user = db.query(User).filter(User.email == email).first()
@@ -581,7 +580,7 @@ def login_for_swagger(
     user = db.query(User).filter(User.email == form_data.username).first()
 
     if not user:
-        print(f"User not found: {form_data.username}")
+        logger.warning(f"Login attempt for unknown user: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -589,7 +588,7 @@ def login_for_swagger(
         )
 
     if not pwd_context.verify(form_data.password, user.password):
-        print(f"Password verification failed for: {form_data.username}")
+        logger.warning(f"Password verification failed for: {form_data.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",

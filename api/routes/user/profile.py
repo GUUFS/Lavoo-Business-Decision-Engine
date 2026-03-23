@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
+import base64
 
 from api.routes.auth.login import get_current_user
 from database.pg_connections import get_db
@@ -33,6 +34,7 @@ def get_profile(
         "company_name": current_user.company_name,
         "industry": current_user.industry,
         "bio": current_user.bio,
+        "avatar_url": current_user.avatar_url,
         "subscription_status": current_user.subscription_status or "Free",
         "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
     }
@@ -75,3 +77,33 @@ def update_profile(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
+
+
+@router.post("/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a user profile avatar. Accepts image files up to 5MB."""
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image files are allowed")
+
+    # Read file content
+    content = await file.read()
+
+    # Limit to 5MB
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 5MB.")
+
+    # Convert to base64 data URL for simple storage (no external storage required)
+    mime_type = file.content_type
+    b64 = base64.b64encode(content).decode("utf-8")
+    data_url = f"data:{mime_type};base64,{b64}"
+
+    # Store in avatar_url field
+    current_user.avatar_url = data_url
+    db.commit()
+
+    return {"message": "Avatar uploaded successfully", "avatar_url": data_url}

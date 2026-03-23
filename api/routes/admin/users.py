@@ -251,12 +251,17 @@ async def get_users(
             "id": user.id,
             "name": user.name,
             "email": user.email,
+            "role": "admin" if user.is_admin else "user",
             "plan": user.subscription_plan or "Free",
+            "subscription_status": user.subscription_status or "none",
             "status": user_status,
-            "joinDate": user.created_at.strftime("%Y-%m-%d"),
+            # is_active: the raw DB boolean — drives the Activate/Deactivate button
+            "is_active": user.is_active,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "joinDate": user.created_at.strftime("%Y-%m-%d") if user.created_at else None,
             "lastActive": last_active,
             "analyses": analysis_count,
-            "avatar": ''.join([n[0] for n in user.name.split(' ')[:2]]).upper()
+            "avatar": ''.join([n[0] for n in (user.name or "U").split(' ')[:2]]).upper()
         })
 
     return {

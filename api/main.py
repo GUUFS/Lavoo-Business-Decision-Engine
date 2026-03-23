@@ -47,11 +47,11 @@ logger = get_logger(__name__)
 # import the router page
 # from api.routes import ai_db as ai  # PostgreSQL-based AI routes - DEPRECATED (uses deleted analyst_db)
 from api.routes import dependencies
-from api.routes.auth import login, signup, forgot_password
+from api.routes.auth import login, signup, forgot_password, google_oauth
 from api.routes.decision_engine import analyzer as business_analyzer
-from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions
+from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions, profile as user_profile
 from api.routes.support import customer_service, reviews
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, content as admin_content
 
 # Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
@@ -63,8 +63,7 @@ from emailing import email_service
 logger.info("✓ Using Neon PostgreSQL database")
 
 
-app = FastAPI(debug=True)
-print("APP TYPE:", type(app))
+app = FastAPI(debug=os.getenv("DEBUG", "false").lower() == "true")
 
 # DEBUG: Global Request Logger to confirm traffic
 @app.middleware("http")
@@ -75,12 +74,18 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-origins = [
+_origins_base = [
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:5173",
-    "http://localhost:8080"
+    "http://localhost:8080",
 ]
+# Allow additional origins from environment (comma-separated list)
+_extra_origins = os.getenv("ALLOWED_ORIGINS", "")
+if _extra_origins:
+    _origins_base.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
+
+origins = _origins_base
 
 
 # Initialize and Register Firewall Middleware
@@ -194,7 +199,10 @@ async def startup_event():
                     ADD COLUMN IF NOT EXISTS location VARCHAR(100) DEFAULT 'Nigeria',
                     ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT 'IT Operations',
                     ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE,
-                    ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN DEFAULT TRUE;
+                    ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS company_name VARCHAR(255),
+                    ADD COLUMN IF NOT EXISTS industry VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS avatar_url TEXT;
                 """))
 
                 db.execute(text("ALTER TABLE reviews ADD COLUMN IF NOT EXISTS is_attended BOOLEAN DEFAULT FALSE"))
@@ -349,6 +357,162 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Error during security SQL initialization: {e}")
 
+        # Create community tables
+        db = SessionLocal()
+        try:
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS community_channels (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    slug VARCHAR(100) UNIQUE NOT NULL,
+                    description TEXT,
+                    category VARCHAR(50) NOT NULL DEFAULT 'General',
+                    member_count INTEGER DEFAULT 0,
+                    post_count INTEGER DEFAULT 0,
+                    icon VARCHAR(10),
+                    is_public BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS channel_members (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    channel_id INTEGER NOT NULL REFERENCES community_channels(id) ON DELETE CASCADE,
+                    is_moderator BOOLEAN DEFAULT FALSE,
+                    joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, channel_id)
+                );
+                CREATE TABLE IF NOT EXISTS community_discussions (
+                    id SERIAL PRIMARY KEY,
+                    channel_id INTEGER NOT NULL REFERENCES community_channels(id) ON DELETE CASCADE,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    title VARCHAR(255) NOT NULL,
+                    content TEXT NOT NULL,
+                    tags JSONB,
+                    like_count INTEGER DEFAULT 0,
+                    reply_count INTEGER DEFAULT 0,
+                    view_count INTEGER DEFAULT 0,
+                    is_pinned BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS discussion_replies (
+                    id SERIAL PRIMARY KEY,
+                    discussion_id INTEGER NOT NULL REFERENCES community_discussions(id) ON DELETE CASCADE,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    content TEXT NOT NULL,
+                    like_count INTEGER DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS discussion_likes (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    discussion_id INTEGER NOT NULL REFERENCES community_discussions(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, discussion_id)
+                );
+                CREATE TABLE IF NOT EXISTS community_events (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT,
+                    event_type VARCHAR(50) NOT NULL DEFAULT 'Webinar',
+                    scheduled_at TIMESTAMP WITH TIME ZONE,
+                    duration_minutes INTEGER DEFAULT 60,
+                    max_attendees INTEGER,
+                    attendee_count INTEGER DEFAULT 0,
+                    host_name VARCHAR(100),
+                    meeting_link VARCHAR(500),
+                    is_published BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS event_registrations (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    event_id INTEGER NOT NULL REFERENCES community_events(id) ON DELETE CASCADE,
+                    registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, event_id)
+                );
+                CREATE TABLE IF NOT EXISTS community_activities (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    action_type VARCHAR(50) NOT NULL,
+                    target_id INTEGER,
+                    target_type VARCHAR(50),
+                    target_name VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS saved_items (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    item_id INTEGER NOT NULL,
+                    item_type VARCHAR(50) NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, item_id, item_type)
+                );
+                CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members(user_id);
+                CREATE INDEX IF NOT EXISTS idx_channel_members_channel ON channel_members(channel_id);
+                CREATE INDEX IF NOT EXISTS idx_discussions_channel ON community_discussions(channel_id);
+                CREATE INDEX IF NOT EXISTS idx_discussions_user ON community_discussions(user_id);
+                CREATE INDEX IF NOT EXISTS idx_community_activities_user ON community_activities(user_id);
+                CREATE INDEX IF NOT EXISTS idx_saved_items_user ON saved_items(user_id);
+            """))
+            db.commit()
+            logger.info("✓ Community tables created/verified")
+        except Exception as e:
+            logger.warning(f"Community table migration: {e}")
+            db.rollback()
+
+        # Marketplace tables
+        try:
+            db.execute(text("""
+                CREATE TABLE IF NOT EXISTS marketplace_tools (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    author VARCHAR(100) NOT NULL,
+                    description TEXT NOT NULL,
+                    full_description TEXT,
+                    category VARCHAR(100) NOT NULL DEFAULT 'AI Tools',
+                    price FLOAT DEFAULT 0.0,
+                    tags JSONB,
+                    features JSONB,
+                    icon_name VARCHAR(50) NOT NULL DEFAULT 'Cpu',
+                    color_theme VARCHAR(30) NOT NULL DEFAULT 'orange',
+                    sales_count INTEGER DEFAULT 0,
+                    rating FLOAT DEFAULT 0.0,
+                    review_count INTEGER DEFAULT 0,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    purchase_url VARCHAR(500),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+                );
+                CREATE TABLE IF NOT EXISTS marketplace_purchases (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    tool_id INTEGER NOT NULL REFERENCES marketplace_tools(id) ON DELETE CASCADE,
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    amount_paid FLOAT DEFAULT 0.0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, tool_id)
+                );
+                CREATE TABLE IF NOT EXISTS marketplace_requests (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    title VARCHAR(255) NOT NULL,
+                    description TEXT NOT NULL,
+                    budget VARCHAR(100),
+                    timeline VARCHAR(100),
+                    status VARCHAR(50) NOT NULL DEFAULT 'open',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+            db.commit()
+            logger.info("✓ Marketplace tables created/verified")
+        except Exception as e:
+            logger.warning(f"Marketplace table migration: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
         # Initialize Redis/in-memory cache
         await init_cache()
 
@@ -365,6 +529,7 @@ async def shutdown_event():
 # Include API routers (specific routes)
 # app.include_router(ai.router, prefix="/api")  # DEPRECATED: ai_db uses deleted analyst_db module
 app.include_router(signup.router, prefix="/api")  # For React frontend that uses /api/signup
+app.include_router(google_oauth.router, prefix="/api")  # Google OAuth — /api/auth/google/login, /api/auth/google/callback
 app.include_router(login.router, prefix="/api")  # For React frontend that uses /api/login
 app.include_router(forgot_password.router, prefix="/api")  # Password reset endpoints
 app.include_router(signup.router)  # Also register without prefix for /signup
@@ -377,7 +542,7 @@ app.include_router(paypal.router) # endpoints start with /api/paypal
 app.include_router(flutterwave.router) # internally prefix /api/payments
 app.include_router(stripe.router) # internally prefix /api/stripe
 app.include_router(customer_service.router, prefix="/api") # internally prefix /api/customer-service
-app.include_router(reviews.router) # internal endpoints start with /api/reviews
+app.include_router(reviews.router, prefix="/api") # endpoints: /api/reviews, /api/admin/reviews
 app.include_router(alerts.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")  # internally prefix /api
 app.include_router(referrals.router, prefix="/api")
@@ -387,13 +552,19 @@ app.include_router(revenue.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(user_settings.router, prefix="/api")  # User settings
 app.include_router(user_missions.router, prefix="/api")  # Missions system
+app.include_router(user_profile.router)  # User profile — prefix /api/profile is set internally
 app.include_router(stripe_connect.router, prefix="/api/stripe-connect")
 app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
+app.include_router(admin_content.router, prefix="/api")
 app.include_router(email_service.router)
 from api.routes import notifications
 app.include_router(notifications.router, prefix="/api")
+from api.routes.community import community as community_routes
+app.include_router(community_routes.router)  # internally prefixed /api/community
+from api.routes.marketplace import marketplace as marketplace_routes
+app.include_router(marketplace_routes.router)  # internally prefixed /api/marketplace
 
 # Note: Index/catch-all router removed as we're using Next.js frontend

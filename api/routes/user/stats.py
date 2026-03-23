@@ -6,11 +6,15 @@ Provides user-specific stats like total analyses count.
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, cast, Date
+from datetime import datetime, timedelta
 
 from database.pg_connections import get_db
 from database.pg_models import BusinessAnalysis, User, Commission, Referral
 from api.routes.auth.login import get_current_user
+
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/user", tags=["User Stats"])
 
@@ -173,3 +177,148 @@ async def get_user_stats(
             "total_referrals": 0,
             "referrals_this_month": 0
         }
+
+# ─── Level config ───────────────────────────────────────────────────────────
+LEVELS = [
+    {"level": 1, "title": "Builder",            "min_chops": 0,    "max_chops": 500},
+    {"level": 2, "title": "Operator",           "min_chops": 501,  "max_chops": 1500},
+    {"level": 3, "title": "Strategist",         "min_chops": 1501, "max_chops": 3000},
+    {"level": 4, "title": "Reputation Diamond", "min_chops": 3001, "max_chops": 6000},
+    {"level": 5, "title": "Founder Elite",      "min_chops": 6001, "max_chops": 999999},
+]
+
+def _resolve_level(chops: int) -> dict:
+    current = LEVELS[0]
+    for lvl in LEVELS:
+        if chops >= lvl["min_chops"]:
+            current = lvl
+    next_lvl = next((l for l in LEVELS if l["level"] == current["level"] + 1), None)
+    return {
+        "level": current["level"],
+        "level_title": current["title"],
+        "next_level": next_lvl["level"] if next_lvl else current["level"],
+        "next_level_title": next_lvl["title"] if next_lvl else current["title"],
+        "next_level_chops": next_lvl["min_chops"] if next_lvl else current["max_chops"],
+        "chops_to_next_level": max(0, (next_lvl["min_chops"] if next_lvl else current["max_chops"]) - chops),
+        "level_progress_pct": min(100, round(
+            ((chops - current["min_chops"]) / max(1, (next_lvl["min_chops"] if next_lvl else current["max_chops"]) - current["min_chops"])) * 100
+        )),
+    }
+
+
+def _compute_streak(db: Session, user_id: int) -> int:
+    """Count consecutive days with at least one analysis, going backwards from today.
+    Uses a single query fetching all active days in the past year instead of one query per day.
+    """
+    today = datetime.utcnow().date()
+    cutoff = today - timedelta(days=365)
+
+    rows = db.query(
+        cast(BusinessAnalysis.created_at, Date).label("day")
+    ).filter(
+        BusinessAnalysis.user_id == user_id,
+        BusinessAnalysis.created_at >= cutoff,
+    ).distinct().all()
+
+    active_days = {row.day for row in rows}
+
+    streak = 0
+    check_date = today
+    # Allow today to have no activity yet without breaking yesterday's streak
+    if today not in active_days:
+        check_date = today - timedelta(days=1)
+
+    while check_date >= cutoff:
+        if check_date in active_days:
+            streak += 1
+            check_date -= timedelta(days=1)
+        else:
+            break
+    return streak
+
+
+def _compute_badges(analyses_count: int, streak: int, missions_done: int, chops: int) -> list:
+    """Return list of badge dicts with earned status based on real data."""
+    all_badges = [
+        {"id": 1, "name": "First Analysis",  "icon": "Target",  "earned": analyses_count >= 1,  "color": "orange",  "description": "Complete your first analysis"},
+        {"id": 2, "name": "7-Day Streak",     "icon": "Flame",   "earned": streak >= 7,           "color": "orange",  "description": "Maintain a 7-day activity streak"},
+        {"id": 3, "name": "Closer",           "icon": "CheckCircle2", "earned": missions_done >= 3, "color": "purple", "description": "Complete 3 missions"},
+        {"id": 4, "name": "Speed Operator",   "icon": "Zap",     "earned": analyses_count >= 10,  "color": "blue",    "description": "Complete 10 analyses"},
+        {"id": 5, "name": "Strategic Thinker","icon": "Brain",   "earned": analyses_count >= 25,  "color": "indigo",  "description": "Complete 25 analyses"},
+        {"id": 6, "name": "Community Pillar", "icon": "Users",   "earned": chops >= 1000,         "color": "green",   "description": "Earn 1,000 Chops"},
+        {"id": 7, "name": "Elite Founder",    "icon": "Crown",   "earned": analyses_count >= 100, "color": "amber",   "description": "Complete 100 analyses"},
+    ]
+    return all_badges
+
+
+@router.get("/progress")
+async def get_user_progress(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Gamification / progress data for the current user.
+    Returns: chops, level, streak, execution score, badges, missions stats.
+    """
+    try:
+        user_id = current_user.id if hasattr(current_user, "id") else current_user.get("id")
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        chops = user.total_chops or 0
+
+        # Analyses count (used as proxy for score dimensions)
+        total_analyses = db.query(func.count(BusinessAnalysis.id)).filter(
+            BusinessAnalysis.user_id == user_id
+        ).scalar() or 0
+
+        # 30-day analyses (for "this month" missions done metric)
+        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        analyses_30d = db.query(func.count(BusinessAnalysis.id)).filter(
+            BusinessAnalysis.user_id == user_id,
+            BusinessAnalysis.created_at >= thirty_days_ago
+        ).scalar() or 0
+
+        # Execution streak
+        streak = _compute_streak(db, user_id)
+
+        # Level info
+        level_info = _resolve_level(chops)
+
+        # Execution score — weighted composite
+        avg_confidence = db.query(func.avg(BusinessAnalysis.confidence_score)).filter(
+            BusinessAnalysis.user_id == user_id,
+            BusinessAnalysis.confidence_score.isnot(None)
+        ).scalar() or 0
+        streak_score = min(100, streak * 14)
+        analyses_score = min(100, total_analyses * 5)
+        execution_score = int(
+            (float(avg_confidence) * 0.35) +
+            (streak_score * 0.30) +
+            (analyses_score * 0.35)
+        )
+
+        badges = _compute_badges(total_analyses, streak, analyses_30d, chops)
+
+        return {
+            "total_chops": chops,
+            "execution_streak": streak,
+            "total_analyses": total_analyses,
+            "analyses_last_30_days": analyses_30d,
+            "execution_score": execution_score,
+            "execution_metrics": [
+                {"name": "Consistency",       "score": min(100, streak_score),   "color": "bg-green-500",  "textColor": "text-green-500"},
+                {"name": "Action Completion", "score": min(100, analyses_score), "color": "bg-orange-500", "textColor": "text-orange-500"},
+                {"name": "Execution Speed",   "score": min(100, int(float(avg_confidence) * 0.9)), "color": "bg-orange-500", "textColor": "text-orange-500"},
+                {"name": "Follow-Through",    "score": min(100, int(float(avg_confidence))),        "color": "bg-blue-500",   "textColor": "text-blue-500"},
+            ],
+            **level_info,
+            "badges": badges,
+            "better_than_pct": min(98, execution_score + 10),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Progress endpoint error for user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

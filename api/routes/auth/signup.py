@@ -27,6 +27,9 @@ from api.services.notification_service import NotificationService
 from database.pg_models import NotificationType
 
 import random, string
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["signup"])
 
@@ -51,38 +54,26 @@ def signup(
     email: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
+    company_name: str = Form(None),
     referrer_code: str = Form(None),
     db: Session = Depends(get_db),
 ):
     """
     Create a new user account with optional referral support.
     """
-    # 🔍 DEBUG: Print what we received
-    print(f"DEBUG - Received referrer_code: '{referrer_code}'")
-    print(f"DEBUG - Type: {type(referrer_code)}")
-
     # Check if email exists
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
-        print(f"DEBUG - Signup failed: User {email} already exists")
         raise HTTPException(status_code=400, detail="User already exists")
 
     # Validate passwords match
     if password != confirm_password:
-        print("DEBUG - Signup failed: Passwords do not match")
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
     # Validate and fetch referrer if code provided
     referrer = None
     if referrer_code and referrer_code.strip():
-        # 🔍 DEBUG: Show what we're searching for
         search_code = referrer_code.upper().strip()
-        print(f"DEBUG - Searching for referral_code: '{search_code}'")
-
-        # 🔍 DEBUG: Show all referral codes in database
-        all_codes = db.query(User.referral_code).all()
-        print(f"DEBUG - All referral codes in DB: {[code[0] for code in all_codes]}")
-
         referrer = db.query(User).filter(
             User.referral_code == search_code
         ).first()
@@ -90,10 +81,10 @@ def signup(
         if not referrer:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid referral code: '{referrer_code}'. No matching user found."
+                detail=f"Invalid referral code. No matching user found."
             )
 
-        print(f"DEBUG - Found referrer: {referrer.name} (ID: {referrer.id})")
+        logger.info(f"Referral code '{search_code}' validated for referrer ID {referrer.id}")
 
     # Generate unique referral code for new user
     user_refcode = generate_referral_code()
@@ -112,6 +103,7 @@ def signup(
         confirm_password=passcode,
         referral_code=user_refcode,
         referrer_code=referrer.referral_code if referrer else None,
+        company_name=company_name if company_name else None,
     )
 
     from subscriptions.beta_service import BetaService
@@ -147,10 +139,10 @@ def signup(
     try:
         db.commit()
         db.refresh(new_user)
-        print(f"INFO - User {new_user.email} created successfully in DB (ID: {new_user.id})")
+        logger.info(f"User {new_user.email} created successfully (ID: {new_user.id})")
     except Exception as e:
         db.rollback()
-        print(f"ERROR - Database commit failed during signup: {e}")
+        logger.error(f"Database commit failed during signup: {e}")
         raise HTTPException(status_code=500, detail="Database error occurred during signup")
 
     # Send welcome email

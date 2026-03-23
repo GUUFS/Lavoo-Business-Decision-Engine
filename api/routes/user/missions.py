@@ -175,6 +175,130 @@ async def get_active_missions(
         )
 
 
+@router.get("/constraints/active")
+async def get_active_constraints(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get all active constraints from user's analyses.
+    These are bottlenecks and constraints that haven't been resolved yet.
+    """
+    try:
+        analyses = db.query(BusinessAnalysis).filter(
+            BusinessAnalysis.user_id == current_user.id
+        ).order_by(BusinessAnalysis.created_at.desc()).all()
+
+        active_constraints = []
+
+        for analysis in analyses:
+            user_progress = analysis.user_progress or {}
+            resolved_constraints = user_progress.get('resolved_constraints', [])
+
+            # Add primary bottleneck if exists and not resolved
+            if analysis.primary_bottleneck:
+                constraint_id = f"{analysis.id}_primary"
+                if constraint_id not in resolved_constraints:
+                    active_constraints.append({
+                        'id': constraint_id,
+                        'analysis_id': analysis.id,
+                        'type': 'primary_bottleneck',
+                        'title': analysis.primary_bottleneck.get('title', 'Primary Bottleneck'),
+                        'description': analysis.primary_bottleneck.get('description', ''),
+                        'impact': analysis.primary_bottleneck.get('impact', 'high'),
+                        'consequence': analysis.primary_bottleneck.get('consequence', ''),
+                        'created_at': analysis.created_at.isoformat() if analysis.created_at else None
+                    })
+
+            # Add secondary constraints if not resolved
+            if analysis.secondary_constraints:
+                for idx, constraint in enumerate(analysis.secondary_constraints, 1):
+                    constraint_id = f"{analysis.id}_constraint_{idx}"
+                    if constraint_id not in resolved_constraints:
+                        active_constraints.append({
+                            'id': constraint_id,
+                            'analysis_id': analysis.id,
+                            'type': 'secondary_constraint',
+                            'number': idx,
+                            'title': constraint.get('title', f'Constraint {idx}'),
+                            'description': constraint.get('description', ''),
+                            'impact': constraint.get('impact', 'medium'),
+                            'created_at': analysis.created_at.isoformat() if analysis.created_at else None
+                        })
+
+        return {
+            "success": True,
+            "data": active_constraints,
+            "count": len(active_constraints)
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching active constraints: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch active constraints"
+        )
+
+
+@router.post("/constraints/{constraint_id}/resolve")
+async def resolve_constraint(
+    constraint_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Mark a constraint as resolved"""
+    try:
+        # Extract analysis_id from constraint_id (format: {analysis_id}_primary or {analysis_id}_constraint_{idx})
+        analysis_id = int(constraint_id.split('_')[0])
+
+        analysis = db.query(BusinessAnalysis).filter(
+            BusinessAnalysis.id == analysis_id,
+            BusinessAnalysis.user_id == current_user.id
+        ).first()
+
+        if not analysis:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Analysis not found"
+            )
+
+        # Initialize user_progress if not exists
+        user_progress = analysis.user_progress or {}
+
+        if 'resolved_constraints' not in user_progress:
+            user_progress['resolved_constraints'] = []
+
+        if constraint_id not in user_progress['resolved_constraints']:
+            user_progress['resolved_constraints'].append(constraint_id)
+
+            # Award chops for resolving constraint
+            current_user.total_chops = (current_user.total_chops or 0) + 30
+
+        analysis.user_progress = user_progress
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Constraint marked as resolved",
+            "data": {
+                'constraint_id': constraint_id,
+                'resolved': True,
+                'chops_earned': 30,
+                'total_chops': current_user.total_chops
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resolving constraint: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to resolve constraint"
+        )
+
+
 @router.get("/{analysis_id}")
 async def get_mission_details(
     analysis_id: int,
@@ -349,128 +473,4 @@ async def complete_mission_step(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to complete mission step"
-        )
-
-
-@router.get("/constraints/active")
-async def get_active_constraints(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Get all active constraints from user's analyses.
-    These are bottlenecks and constraints that haven't been resolved yet.
-    """
-    try:
-        analyses = db.query(BusinessAnalysis).filter(
-            BusinessAnalysis.user_id == current_user.id
-        ).order_by(BusinessAnalysis.created_at.desc()).all()
-
-        active_constraints = []
-
-        for analysis in analyses:
-            user_progress = analysis.user_progress or {}
-            resolved_constraints = user_progress.get('resolved_constraints', [])
-
-            # Add primary bottleneck if exists and not resolved
-            if analysis.primary_bottleneck:
-                constraint_id = f"{analysis.id}_primary"
-                if constraint_id not in resolved_constraints:
-                    active_constraints.append({
-                        'id': constraint_id,
-                        'analysis_id': analysis.id,
-                        'type': 'primary_bottleneck',
-                        'title': analysis.primary_bottleneck.get('title', 'Primary Bottleneck'),
-                        'description': analysis.primary_bottleneck.get('description', ''),
-                        'impact': analysis.primary_bottleneck.get('impact', 'high'),
-                        'consequence': analysis.primary_bottleneck.get('consequence', ''),
-                        'created_at': analysis.created_at.isoformat() if analysis.created_at else None
-                    })
-
-            # Add secondary constraints if not resolved
-            if analysis.secondary_constraints:
-                for idx, constraint in enumerate(analysis.secondary_constraints, 1):
-                    constraint_id = f"{analysis.id}_constraint_{idx}"
-                    if constraint_id not in resolved_constraints:
-                        active_constraints.append({
-                            'id': constraint_id,
-                            'analysis_id': analysis.id,
-                            'type': 'secondary_constraint',
-                            'number': idx,
-                            'title': constraint.get('title', f'Constraint {idx}'),
-                            'description': constraint.get('description', ''),
-                            'impact': constraint.get('impact', 'medium'),
-                            'created_at': analysis.created_at.isoformat() if analysis.created_at else None
-                        })
-
-        return {
-            "success": True,
-            "data": active_constraints,
-            "count": len(active_constraints)
-        }
-
-    except Exception as e:
-        logger.error(f"Error fetching active constraints: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch active constraints"
-        )
-
-
-@router.post("/constraints/{constraint_id}/resolve")
-async def resolve_constraint(
-    constraint_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Mark a constraint as resolved"""
-    try:
-        # Extract analysis_id from constraint_id (format: {analysis_id}_primary or {analysis_id}_constraint_{idx})
-        analysis_id = int(constraint_id.split('_')[0])
-
-        analysis = db.query(BusinessAnalysis).filter(
-            BusinessAnalysis.id == analysis_id,
-            BusinessAnalysis.user_id == current_user.id
-        ).first()
-
-        if not analysis:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Analysis not found"
-            )
-
-        # Initialize user_progress if not exists
-        user_progress = analysis.user_progress or {}
-
-        if 'resolved_constraints' not in user_progress:
-            user_progress['resolved_constraints'] = []
-
-        if constraint_id not in user_progress['resolved_constraints']:
-            user_progress['resolved_constraints'].append(constraint_id)
-
-            # Award chops for resolving constraint
-            current_user.total_chops = (current_user.total_chops or 0) + 30
-
-        analysis.user_progress = user_progress
-        db.commit()
-
-        return {
-            "success": True,
-            "message": "Constraint marked as resolved",
-            "data": {
-                'constraint_id': constraint_id,
-                'resolved': True,
-                'chops_earned': 30,
-                'total_chops': current_user.total_chops
-            }
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error resolving constraint: {str(e)}")
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to resolve constraint"
         )
