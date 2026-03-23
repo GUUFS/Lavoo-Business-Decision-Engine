@@ -63,7 +63,7 @@ class MailerLiteEmailService:
             }
 
             response = requests.post(
-                f"{self.base_url}/email",
+                f"{self.base_url}/emails",
                 headers=headers,
                 json=payload,
                 timeout=10
@@ -262,6 +262,62 @@ class MailerLiteEmailService:
         """
 
         text_content = f"Subscription Confirmed!\n\nPlan: {plan_type.title()}\nAmount: {currency}{amount:.2f}\nNext Billing: {next_billing_date}"
+
+        return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_payment_success_email(self, user_email: str, name: str, amount: float, plan_type: str, next_billing_date: str):
+        """Wrapper for subscription confirmation used in stripe.py"""
+        return self.send_subscription_confirmation(user_email, name, plan_type, amount, "$", next_billing_date)
+
+    def send_beta_card_saved_email(self, user_email: str, name: str, card_last4: str, card_brand: str, grace_period_days: int):
+        """Send confirmation when card is saved in beta mode"""
+        subject = "Card Saved - Welcome to Lavoo Beta!"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
+                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                .header {{
+                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+                    color: white; padding: 30px; text-align: center;
+                    border-radius: 10px 10px 0 0;
+                }}
+                .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
+                .info-box {{ background: white; border-left: 4px solid #f97316; padding: 20px; margin: 20px 0; }}
+                .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="margin: 0;">💳 Card Saved Successfully!</h1>
+                </div>
+                <div class="content">
+                    <h2>Hi {name},</h2>
+                    <p>Your card has been securely saved for the Lavoo Beta.</p>
+
+                    <div class="info-box">
+                        <p><strong>Card:</strong> {card_brand.upper()} ending in {card_last4}</p>
+                        <p><strong>Grace Period:</strong> {grace_period_days} days after launch</p>
+                    </div>
+
+                    <p>You won't be charged today. We'll notify you before your first official billing begins at launch.</p>
+                    
+                    <p>Thank you for being an early supporter!</p>
+                </div>
+                <div class="footer">
+                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"Card Saved!\n\nHi {name},\n\nYour {card_brand} card ending in {card_last4} has been saved. You have a {grace_period_days} day grace period after launch before billing begins."
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 

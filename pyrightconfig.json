@@ -1,0 +1,12 @@
+{
+    "include": ["."],
+    "extraPaths": ["."],
+    "venvPath": "/home/emeka/Lavoo-Business-Decision-Engine",
+    "venv": "venv",
+    "typeCheckingMode": "basic",
+    "pythonVersion": "3.12",
+    "pythonPlatform": "Linux"
+}
+
+
+

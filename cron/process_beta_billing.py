@@ -5,10 +5,15 @@ Run daily via cron.
 """
 
 import os
+import sys
 from datetime import datetime
 from decimal import Decimal
 import stripe
 from sqlalchemy.orm import Session
+
+# Add parent directory to Python path to resolve imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from database.pg_connections import get_db
 from database.pg_models import User, Subscriptions
 from subscriptions.beta_service import BetaService

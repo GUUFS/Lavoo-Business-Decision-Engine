@@ -60,7 +60,7 @@ async def get_notifications(
             "title": n.title,
             "message": n.message,
             "link": n.link,
-            "read": n.is_read,
+            "is_read": n.is_read,
             "created_at": n.created_at.isoformat()
         })
         
@@ -73,7 +73,7 @@ async def get_notifications(
             "title": f"New Alert: {ua.alert.title}",
             "message": ua.alert.why_act_now[:100] + "..." if len(ua.alert.why_act_now) > 100 else ua.alert.why_act_now,
             "link": f"/dashboard/alerts/detail?id={ua.alert_id}",
-            "read": ua.is_attended, # In this context, is_attended means "read" for the count
+            "is_read": ua.is_attended, # In this context, is_attended means "read" for the count
             "created_at": ua.created_at.isoformat()
         })
         

@@ -51,7 +51,8 @@ async def init_cache():
         )
 
         # Test connection
-        await redis_client.ping()
+        if redis_client is not None:
+            await redis_client.ping()
 
         # Initialize FastAPICache with Redis backend
         FastAPICache.init(RedisBackend(redis_client), prefix="aianalyst:")
@@ -240,7 +241,7 @@ async def get_cached(key: str) -> Optional[Any]:
                     return value
                 else:
                     # Expired - remove it
-                    del _memory_cache[full_key]
+                    _memory_cache.pop(full_key, None)
     except Exception as e:
         logger.warning(f"Cache get error for '{key}': {e}")
 
