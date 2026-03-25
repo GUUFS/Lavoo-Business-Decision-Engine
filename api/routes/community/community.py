@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/community", tags=["community"])
 
+# Module-level flag — seed only runs once per process (not on every request)
+_channels_seeded: bool = False
+
 # ─── Default seed channels ──────────────────────────────────────────────────
 
 DEFAULT_CHANNELS = [
@@ -37,13 +40,17 @@ DEFAULT_CHANNELS = [
 
 
 def _seed_channels(db: Session):
-    """Seed default channels if the table is empty."""
+    """Seed default channels if the table is empty. Skips the DB count on subsequent calls."""
+    global _channels_seeded
+    if _channels_seeded:
+        return
     count = db.query(CommunityChannel).count()
     if count == 0:
         for ch in DEFAULT_CHANNELS:
             db.add(CommunityChannel(**ch))
         db.commit()
         logger.info("Seeded default community channels")
+    _channels_seeded = True
 
 
 def _log_activity(db: Session, user_id: int, action_type: str, target_id: Optional[int] = None, target_type: Optional[str] = None, target_name: Optional[str] = None):
@@ -54,36 +61,29 @@ def _log_activity(db: Session, user_id: int, action_type: str, target_id: Option
         db.rollback()
 
 
-def _channel_dict(ch: CommunityChannel, user_id: Optional[int] = None, db: Optional[Session] = None) -> dict:
-    is_member = False
-    if user_id and db:
-        is_member = db.query(ChannelMember).filter_by(user_id=user_id, channel_id=ch.id).first() is not None
+def _channel_dict(ch: CommunityChannel, joined_ids: Optional[set] = None) -> dict:
+    is_member = ch.id in joined_ids if joined_ids is not None else False
     return {
         "id": ch.id, "name": ch.name, "slug": ch.slug, "description": ch.description,
         "category": ch.category, "member_count": ch.member_count,
-        # Frontend aliases
-        "members": ch.member_count,
+        "members": ch.member_count,  # frontend alias
         "active": True,
-        "isJoined": is_member,
-        "color": None,
+        "isJoined": is_member, "is_member": is_member,
         "post_count": ch.post_count,
-        "icon": ch.icon, "is_public": ch.is_public, "is_member": is_member,
+        "icon": ch.icon, "is_public": ch.is_public,
         "created_at": ch.created_at.isoformat() if ch.created_at else None,
     }
 
 
-def _discussion_dict(d: CommunityDiscussion, user_id: Optional[int] = None, db: Optional[Session] = None) -> dict:
-    has_liked = False
-    if user_id and db:
-        has_liked = db.query(DiscussionLike).filter_by(user_id=user_id, discussion_id=d.id).first() is not None
+def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None) -> dict:
+    has_liked = d.id in liked_ids if liked_ids is not None else False
     return {
         "id": d.id, "channel_id": d.channel_id, "title": d.title, "content": d.content,
         "tags": d.tags or [], "like_count": d.like_count, "reply_count": d.reply_count,
-        # Frontend aliases
-        "likes": d.like_count, "replies": d.reply_count,
-        "pinned": d.is_pinned, "hot": False,
-        "view_count": d.view_count, "is_pinned": d.is_pinned, "has_liked": has_liked,
-        "liked_by_user": has_liked,
+        "likes": d.like_count, "replies": d.reply_count,  # frontend aliases
+        "pinned": d.is_pinned, "is_pinned": d.is_pinned,
+        "hot": d.like_count >= 10,  # computed: hot if 10+ likes
+        "view_count": d.view_count, "has_liked": has_liked, "liked_by_user": has_liked,
         "author": {"id": d.user.id, "name": d.user.name} if d.user else None,
         "channel": {"id": d.channel.id, "name": d.channel.name, "slug": d.channel.slug} if d.channel else None,
         "created_at": d.created_at.isoformat() if d.created_at else None,
@@ -91,32 +91,22 @@ def _discussion_dict(d: CommunityDiscussion, user_id: Optional[int] = None, db: 
     }
 
 
-def _event_dict(ev: CommunityEvent, user_id: Optional[int] = None, db: Optional[Session] = None) -> dict:
-    is_registered = False
-    if user_id and db:
-        is_registered = db.query(EventRegistration).filter_by(user_id=user_id, event_id=ev.id).first() is not None
-    # Format scheduled_at for frontend display
-    formatted_date = None
-    formatted_time = None
-    if ev.scheduled_at:
-        formatted_date = ev.scheduled_at.strftime("%b %d, %Y")  # e.g. "Feb 27, 2026"
-        formatted_time = ev.scheduled_at.strftime("%I:%M %p")    # e.g. "12:00 PM"
-    # Map event_type to frontend type (Live/Workshop/Webinar)
-    type_map = {"live": "Live", "workshop": "Workshop", "webinar": "Webinar"}
-    frontend_type = type_map.get((ev.event_type or "").lower(), ev.event_type or "Live")
+EVENT_TYPE_MAP = {"live": "Live", "workshop": "Workshop", "webinar": "Webinar"}
+
+def _event_dict(ev: CommunityEvent, registered_ids: Optional[set] = None) -> dict:
+    is_registered = ev.id in registered_ids if registered_ids is not None else False
+    formatted_date = ev.scheduled_at.strftime("%b %d, %Y") if ev.scheduled_at else None
+    formatted_time = ev.scheduled_at.strftime("%I:%M %p") if ev.scheduled_at else None
+    frontend_type = EVENT_TYPE_MAP.get((ev.event_type or "").lower(), ev.event_type or "Live")
     return {
         "id": ev.id, "title": ev.title, "description": ev.description,
-        "event_type": ev.event_type,
-        # Frontend aliases
-        "type": frontend_type,
-        "date": formatted_date,
-        "time": formatted_time,
-        "attendees": ev.attendee_count,
-        "registered": is_registered,
+        "event_type": ev.event_type, "type": frontend_type,
+        "date": formatted_date, "time": formatted_time,
+        "attendees": ev.attendee_count, "attendee_count": ev.attendee_count,
+        "registered": is_registered, "is_registered": is_registered,
         "scheduled_at": ev.scheduled_at.isoformat() if ev.scheduled_at else None,
         "duration_minutes": ev.duration_minutes, "max_attendees": ev.max_attendees,
-        "attendee_count": ev.attendee_count, "host_name": ev.host_name,
-        "meeting_link": ev.meeting_link, "is_registered": is_registered,
+        "host_name": ev.host_name, "meeting_link": ev.meeting_link,
         "created_at": ev.created_at.isoformat() if ev.created_at else None,
     }
 
@@ -174,7 +164,8 @@ async def get_my_channels(
 ):
     try:
         memberships = db.query(ChannelMember).filter_by(user_id=current_user.id).all()
-        channels = [_channel_dict(m.channel, current_user.id, db) for m in memberships if m.channel]
+        joined = {m.channel_id for m in memberships}
+        channels = [_channel_dict(m.channel, joined) for m in memberships if m.channel]
         return {"success": True, "data": channels}
     except Exception as e:
         logger.error(f"Get my channels error: {e}")
@@ -190,7 +181,8 @@ async def get_channel_by_name(
     ch = db.query(CommunityChannel).filter_by(slug=channel_name).first()
     if not ch:
         raise HTTPException(status_code=404, detail="Channel not found")
-    return {"success": True, "data": _channel_dict(ch, current_user.id, db)}
+    joined = {m.channel_id for m in db.query(ChannelMember.channel_id).filter_by(user_id=current_user.id).all()}
+    return {"success": True, "data": _channel_dict(ch, joined)}
 
 
 @router.get("/channels")
@@ -205,7 +197,9 @@ async def get_channels(
         if category and category.lower() != "all":
             q = q.filter(CommunityChannel.category == category)
         channels = q.order_by(CommunityChannel.member_count.desc()).all()
-        return {"success": True, "data": [_channel_dict(ch, current_user.id, db) for ch in channels]}
+        # Batch-fetch memberships to avoid N+1
+        joined = {m.channel_id for m in db.query(ChannelMember.channel_id).filter_by(user_id=current_user.id).all()}
+        return {"success": True, "data": [_channel_dict(ch, joined) for ch in channels]}
     except Exception as e:
         logger.error(f"Get channels error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch channels")
@@ -265,7 +259,13 @@ async def get_discussions(
         if channel_id:
             q = q.filter_by(channel_id=channel_id)
         discussions = q.order_by(CommunityDiscussion.is_pinned.desc(), CommunityDiscussion.created_at.desc()).offset(offset).limit(limit).all()
-        return {"success": True, "data": [_discussion_dict(d, current_user.id, db) for d in discussions]}
+        # Batch-fetch likes to avoid N+1
+        discussion_ids = [d.id for d in discussions]
+        liked = {l.discussion_id for l in db.query(DiscussionLike.discussion_id).filter(
+            DiscussionLike.user_id == current_user.id,
+            DiscussionLike.discussion_id.in_(discussion_ids)
+        ).all()} if discussion_ids else set()
+        return {"success": True, "data": [_discussion_dict(d, liked) for d in discussions]}
     except Exception as e:
         logger.error(f"Get discussions error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch discussions")
@@ -289,7 +289,8 @@ async def get_discussion(
         "created_at": r.created_at.isoformat() if r.created_at else None,
     } for r in d.replies]
 
-    data = _discussion_dict(d, current_user.id, db)
+    liked = {d.id} if db.query(DiscussionLike).filter_by(user_id=current_user.id, discussion_id=d.id).first() else set()
+    data = _discussion_dict(d, liked)
     data["replies"] = replies
     return {"success": True, "data": data}
 
@@ -375,7 +376,8 @@ async def get_my_events(
     db: Session = Depends(get_db)
 ):
     regs = db.query(EventRegistration).filter_by(user_id=current_user.id).all()
-    events = [_event_dict(r.event, current_user.id, db) for r in regs if r.event]
+    registered = {r.event_id for r in regs}
+    events = [_event_dict(r.event, registered) for r in regs if r.event]
     return {"success": True, "data": events}
 
 
@@ -390,7 +392,13 @@ async def get_events(
         if type and type.lower() != "all":
             q = q.filter(CommunityEvent.event_type == type)
         events = q.order_by(CommunityEvent.scheduled_at.asc()).all()
-        return {"success": True, "data": [_event_dict(ev, current_user.id, db) for ev in events]}
+        # Batch-fetch registrations to avoid N+1
+        event_ids = [ev.id for ev in events]
+        registered = {r.event_id for r in db.query(EventRegistration.event_id).filter(
+            EventRegistration.user_id == current_user.id,
+            EventRegistration.event_id.in_(event_ids)
+        ).all()} if event_ids else set()
+        return {"success": True, "data": [_event_dict(ev, registered) for ev in events]}
     except Exception as e:
         logger.error(f"Get events error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch events")
