@@ -143,7 +143,8 @@ def signup(
     except Exception as e:
         db.rollback()
         logger.error(f"Database commit failed during signup: {e}")
-        raise HTTPException(status_code=500, detail="Database error occurred during signup")
+        # Send the actual error string to frontend to diagnose the production issue
+        raise HTTPException(status_code=500, detail=f"Database error occurred during signup: {str(e)}")
 
     # Send welcome email
     background_tasks.add_task(
