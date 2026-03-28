@@ -136,7 +136,7 @@ def get_amount_from_stripe_price(price_id: str) -> float:
     if not price_id:
         raise ValueError("Cannot fetch amount: price_id is empty or not configured.")
     price = stripe.Price.retrieve(price_id)
-    unit_amount = price.get("unit_amount")
+    unit_amount = getattr(price, "unit_amount", None)
     if unit_amount is None:
         raise ValueError(f"Stripe Price {price_id} has no unit_amount (is it a metered or tiered price?)")
     return round(unit_amount / 100, 2)
@@ -1210,7 +1210,9 @@ async def stripe_webhook(
 
 def handle_payout_paid(event: dict, db: Session):
     stripe_payout = event.data.object
-    internal_payout_id = (stripe_payout.get("metadata") or {}).get("stripe_connect_payout_id")
+    # Use getattr as StripeObject in v14+ does not have .get()
+    metadata = getattr(stripe_payout, "metadata", {}) or {}
+    internal_payout_id = metadata.get("stripe_connect_payout_id")
     if not internal_payout_id:
         return
     from database.pg_models import Payout
@@ -1224,13 +1226,16 @@ def handle_payout_paid(event: dict, db: Session):
 
 def handle_payout_failed(event: dict, db: Session):
     stripe_payout = event.data.object
-    internal_payout_id = (stripe_payout.get("metadata") or {}).get("stripe_connect_payout_id")
+    # Use getattr as StripeObject in v14+ does not have .get()
+    metadata = getattr(stripe_payout, "metadata", {}) or {}
+    internal_payout_id = metadata.get("stripe_connect_payout_id")
     if not internal_payout_id:
         return
     from subscriptions.payout_service import PayoutService
     PayoutService.reverse_payout(
         internal_payout_id,
-        stripe_payout.get("failure_message") or "Stripe payout failed",
+        # Use getattr as StripeObject in v14+ does not have .get()
+        getattr(stripe_payout, "failure_message", None) or "Stripe payout failed",
         db
     )
 
