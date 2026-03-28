@@ -1,7 +1,7 @@
 {
     "include": ["."],
     "extraPaths": ["."],
-    "venvPath": "/home/emeka/Lavoo-Business-Decision-Engine",
+    "venvPath": ".",
     "venv": "venv",
     "typeCheckingMode": "basic",
     "pythonVersion": "3.12",

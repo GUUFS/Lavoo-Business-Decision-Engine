@@ -61,41 +61,55 @@ def signup(
     """
     Create a new user account with optional referral support.
     """
+    logger.info(f"[SIGNUP] Received signup request for email: {email}, name: {name}, company: {company_name}")
+    
     # Check if email exists
+    logger.info(f"[SIGNUP] Checking if email {email} already exists...")
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
+        logger.warning(f"[SIGNUP] Email {email} already exists, user_id: {existing_user.id}")
         raise HTTPException(status_code=400, detail="User already exists")
 
     # Validate passwords match
+    logger.info(f"[SIGNUP] Validating password match...")
     if password != confirm_password:
+        logger.warning("[SIGNUP] Passwords do not match")
         raise HTTPException(status_code=400, detail="Passwords do not match")
 
     # Validate and fetch referrer if code provided
     referrer = None
     if referrer_code and referrer_code.strip():
         search_code = referrer_code.upper().strip()
+        logger.info(f"[SIGNUP] Processing referral code: {search_code}")
         referrer = db.query(User).filter(
             User.referral_code == search_code
         ).first()
 
         if not referrer:
+            logger.warning(f"[SIGNUP] Invalid referral code: {search_code}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid referral code. No matching user found."
             )
 
-        logger.info(f"Referral code '{search_code}' validated for referrer ID {referrer.id}")
+        logger.info(f"[SIGNUP] Referral code '{search_code}' validated for referrer ID {referrer.id}")
 
     # Generate unique referral code for new user
+    logger.info(f"[SIGNUP] Generating referral code...")
     user_refcode = generate_referral_code()
 
     # Ensure referral code is unique
     while db.query(User).filter(User.referral_code == user_refcode).first():
         user_refcode = generate_referral_code()
+    
+    logger.info(f"[SIGNUP] Created user referral code: {user_refcode}")
 
     # Create user
+    logger.info(f"[SIGNUP] Hashing password and creating user object...")
     hashed = pwd_context.hash(password)
     passcode = pwd_context.hash(confirm_password)
+    
+    logger.info(f"[SIGNUP] Creating User object in database...")
     new_user = User(
         name=name,
         email=email,
@@ -106,14 +120,18 @@ def signup(
         company_name=company_name if company_name else None,
     )
 
+    logger.info(f"[SIGNUP] Calling BetaService.initialize_grace_period...")
     from subscriptions.beta_service import BetaService
     BetaService.initialize_grace_period(new_user, db)
 
+    logger.info(f"[SIGNUP] Adding user to database session...")
     db.add(new_user)
     db.flush()
+    logger.info(f"[SIGNUP] User object added, new user ID: {new_user.id}")
 
     # Process referral rewards (Note: Chops awarding removed as per user request)
     if referrer:
+        logger.info(f"[SIGNUP] Processing referral for referrer ID: {referrer.id}")
         # Update referrer stats (Increment count only, no chops)
         referrer.referral_count = (referrer.referral_count or 0) + 1
 
@@ -137,22 +155,28 @@ def signup(
         )
 
     try:
+        logger.info(f"[SIGNUP] Committing to database...")
         db.commit()
         db.refresh(new_user)
-        logger.info(f"User {new_user.email} created successfully (ID: {new_user.id})")
+        logger.info(f"[SIGNUP] User {new_user.email} created successfully (ID: {new_user.id})")
     except Exception as e:
         db.rollback()
-        logger.error(f"Database commit failed during signup: {e}")
+        logger.error(f"[SIGNUP] Database commit failed during signup: {e}")
+        logger.error(f"[SIGNUP] Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"[SIGNUP] Full traceback: {traceback.format_exc()}")
         # Send the actual error string to frontend to diagnose the production issue
         raise HTTPException(status_code=500, detail=f"Database error occurred during signup: {str(e)}")
 
     # Send welcome email
+    logger.info(f"[SIGNUP] Scheduling welcome email to: {new_user.email}")
     background_tasks.add_task(
         email_service.send_welcome_email,
         new_user.email,
         new_user.name
     )
 
+    logger.info(f"[SIGNUP] Completed successfully for email: {email}")
     return {
         "message": "User created successfully",
         "user_id": new_user.id,

@@ -126,6 +126,22 @@ def generate_tx_ref(prefix: str = "STRIPE") -> str:
     return f"{prefix}-{timestamp}-{random_str}"
 
 
+def get_amount_from_stripe_price(price_id: str) -> float:
+    """
+    Fetch the unit amount for a Price ID directly from Stripe.
+    This is the single source of truth — avoids database price duplication
+    and ensures the amount recorded in our DB always matches what Stripe charges.
+    Returns the amount in the Price's major currency unit (e.g. dollars, not cents).
+    """
+    if not price_id:
+        raise ValueError("Cannot fetch amount: price_id is empty or not configured.")
+    price = stripe.Price.retrieve(price_id)
+    unit_amount = price.get("unit_amount")
+    if unit_amount is None:
+        raise ValueError(f"Stripe Price {price_id} has no unit_amount (is it a metered or tiered price?)")
+    return round(unit_amount / 100, 2)
+
+
 def extract_user_id(current_user) -> int:
     if isinstance(current_user, dict):
         if "user" in current_user:
@@ -548,14 +564,9 @@ async def save_card_for_beta(
                 )
             )
 
-        from api.routes.control.settings import get_settings
-        settings = get_settings(db=db, current_user=user)
-        price_map = {
-            "monthly": settings.monthly_price,
-            "quarterly": settings.quarterly_price,
-            "yearly": settings.yearly_price
-        }
-        amount = price_map.get(plan_type, 29.95)
+        # Get the real price amount directly from Stripe — transparent, no hardcoding
+        amount = get_amount_from_stripe_price(price_id)
+
 
         state = resolve_stripe_subscription_state(user, db)
         logger.info(f"🔍 Stripe state for user {user.id}: case='{state['case']}'")
@@ -1263,14 +1274,8 @@ async def create_subscription_with_saved_card(
             customer_id=customer_id, set_as_default=True
         )
 
-        from api.routes.control.settings import get_settings
-        settings = get_settings(db=db, current_user=user)
-        price_map = {
-            "monthly": settings.monthly_price,
-            "quarterly": settings.quarterly_price,
-            "yearly": settings.yearly_price
-        }
-        amount = price_map.get(request.plan_type, 29.95)
+        # Get the real price amount directly from Stripe — transparent, no hardcoding
+        amount = get_amount_from_stripe_price(price_id)
 
         state = resolve_stripe_subscription_state(user, db)
         logger.info(f"🔍 create-sub state for user {user.id}: case='{state['case']}'")
@@ -1456,9 +1461,9 @@ async def confirm_subscription(
         from api.routes.control.settings import get_settings
         settings = get_settings(db=db, current_user=user)
         price_map = {
-            "monthly": settings.monthly_price,
-            "quarterly": settings.quarterly_price,
-            "yearly": settings.yearly_price
+            "monthly": settings.get("monthly_price") or 29.95,
+            "quarterly": settings.get("quarterly_price") or 79.95,
+            "yearly": settings.get("yearly_price") or 299.95
         }
         amount = price_map.get(plan_type, 29.95)
         start_date, end_date = get_subscription_dates_from_stripe(subscription_details, plan_type)
