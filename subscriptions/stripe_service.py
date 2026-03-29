@@ -63,7 +63,7 @@ class StripeService:
                     "currency": "USD",
                     "payment_method": intent.payment_method,
                     "customer_email": None,
-                    "metadata": intent.metadata
+                    "metadata": intent.metadata.to_dict() if hasattr(intent.metadata, "to_dict") else dict(intent.metadata)
                 }
             else:
                 intent = stripe.PaymentIntent.retrieve(payment_intent_id)
@@ -73,7 +73,7 @@ class StripeService:
                     "currency": intent.currency,
                     "payment_method": intent.payment_method,
                     "customer_email": intent.receipt_email,
-                    "metadata": intent.metadata
+                    "metadata": intent.metadata.to_dict() if hasattr(intent.metadata, "to_dict") else dict(intent.metadata)
                 }
         except stripe.error.StripeError as e:
             raise Exception(f"Stripe verification error: {str(e)}")

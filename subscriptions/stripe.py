@@ -835,9 +835,11 @@ async def stripe_webhook(
             if not subscription_id:
                 lines = getattr(getattr(invoice, 'lines', None), 'data', []) or []
                 for line in lines:
-                    meta = getattr(line, 'metadata', None) or {}
-                    if hasattr(meta, 'get'):
-                        sid = meta.get('subscription') or meta.get('subscription_id')
+                    meta = getattr(line, 'metadata', None)
+                    if meta:
+                        # StripeObject in v14+ does not have .get()
+                        m_dict = meta.to_dict() if hasattr(meta, 'to_dict') else dict(meta)
+                        sid = m_dict.get('subscription') or m_dict.get('subscription_id')
                         if sid:
                             subscription_id = sid
                             logger.info(f"ℹ️ subscription_id from line metadata: {subscription_id}")
@@ -919,8 +921,9 @@ async def stripe_webhook(
             else:
                 logger.warning(f"⚠️ Could not determine period for sub {subscription_id} — using fallback dates")
                 start_date = datetime.utcnow()
-                sub_meta_check = getattr(stripe_sub, 'metadata', None) or {}
-                plan_fallback = sub_meta_check.get("plan_type", "monthly")
+                sub_meta_obj = getattr(stripe_sub, 'metadata', None)
+                sub_meta_dict = (sub_meta_obj.to_dict() if hasattr(sub_meta_obj, 'to_dict') else dict(sub_meta_obj)) if sub_meta_obj else {}
+                plan_fallback = sub_meta_dict.get("plan_type", "monthly")
                 delta_map = {"monthly": 30, "quarterly": 90, "yearly": 365}
                 end_date = start_date + timedelta(days=delta_map.get(plan_fallback, 30))
 
@@ -935,7 +938,9 @@ async def stripe_webhook(
                 logger.info(f"👤 User found via stripe_subscription_id: {user.email}")
 
             if not user:
-                uid = (getattr(invoice, 'metadata', None) or {}).get("user_id")
+                inv_meta = getattr(invoice, 'metadata', None)
+                inv_meta_dict = (inv_meta.to_dict() if hasattr(inv_meta, 'to_dict') else dict(inv_meta)) if inv_meta else {}
+                uid = inv_meta_dict.get("user_id")
                 if uid:
                     user = db.query(User).filter(User.id == int(uid)).first()
                     if user:
@@ -955,8 +960,9 @@ async def stripe_webhook(
             # basil API: user_id is also in line item metadata
             if not user:
                 for line in lines:
-                    line_meta = getattr(line, 'metadata', None) or {}
-                    uid = line_meta.get("user_id") if hasattr(line_meta, 'get') else None
+                    meta_obj = getattr(line, 'metadata', None)
+                    meta_dict = (meta_obj.to_dict() if hasattr(meta_obj, 'to_dict') else dict(meta_obj)) if meta_obj else {}
+                    uid = meta_dict.get("user_id")
                     if uid:
                         user = db.query(User).filter(User.id == int(uid)).first()
                         if user:
@@ -964,8 +970,9 @@ async def stripe_webhook(
                             break
 
             if not user:
-                sub_meta = getattr(stripe_sub, 'metadata', None) or {}
-                uid = sub_meta.get("user_id")
+                sub_meta_obj = getattr(stripe_sub, 'metadata', None)
+                sub_meta_dict = (sub_meta_obj.to_dict() if hasattr(sub_meta_obj, 'to_dict') else dict(sub_meta_obj)) if sub_meta_obj else {}
+                uid = sub_meta_dict.get("user_id")
                 if uid:
                     user = db.query(User).filter(User.id == int(uid)).first()
                     if user:
@@ -997,7 +1004,8 @@ async def stripe_webhook(
                 logger.info(f"ℹ️ Invoice {payment_intent_id} already recorded — skipping")
                 return {"status": "success"}
 
-            sub_meta = getattr(stripe_sub, 'metadata', None) or {}
+            sub_meta_obj = getattr(stripe_sub, 'metadata', None)
+            sub_meta = (sub_meta_obj.to_dict() if hasattr(sub_meta_obj, 'to_dict') else dict(sub_meta_obj)) if sub_meta_obj else {}
             plan_type = sub_meta.get("plan_type") or getattr(user, 'subscription_plan', None) or "monthly"
 
             user.subscription_status = "active"
@@ -1111,7 +1119,9 @@ async def stripe_webhook(
             user = None
 
             # Strategy 1: metadata user_id (most reliable — set by our API)
-            uid = (getattr(stripe_sub, 'metadata', {}) or {}).get("user_id")
+            sub_meta_obj = getattr(stripe_sub, 'metadata', None)
+            sub_meta_dict = (sub_meta_obj.to_dict() if hasattr(sub_meta_obj, 'to_dict') else dict(sub_meta_obj)) if sub_meta_obj else {}
+            uid = sub_meta_dict.get("user_id")
             if uid:
                 user = db.query(User).filter(User.id == int(uid)).first()
 
@@ -1136,7 +1146,7 @@ async def stripe_webhook(
                     "active": "active", "past_due": "past_due",
                     "unpaid": "unpaid", "canceled": "cancelled", "trialing": "active"
                 }
-                mapped = status_map.get(stripe_sub.status)
+                mapped = status_map.get(getattr(stripe_sub, 'status', ''))
                 if mapped and hasattr(user, 'subscription_status'):
                     logger.info(
                         f"📋 subscription.updated: user={user.email}, "                        f"sub={stripe_sub.id}, status={stripe_sub.status} → {mapped}"
@@ -1150,7 +1160,8 @@ async def stripe_webhook(
 
         elif event.type == "payment_intent.succeeded":
             payment_intent = event.data.object
-            metadata = payment_intent.metadata or {}
+            meta_obj = getattr(payment_intent, 'metadata', None)
+            metadata = (meta_obj.to_dict() if hasattr(meta_obj, 'to_dict') else dict(meta_obj)) if meta_obj else {}
             if not metadata.get("legacy_payment_intent"):
                 return {"status": "success"}
             existing = db.query(Subscriptions).filter(
