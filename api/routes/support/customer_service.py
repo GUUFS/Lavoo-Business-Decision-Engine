@@ -153,6 +153,7 @@ def extract_user_id(current_user):
 
 # USER ENDPOINTS
 
+@router.post("/tickets")
 @router.post("/tickets/create")
 async def create_ticket(
     ticket_data: TicketCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)

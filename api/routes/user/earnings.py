@@ -24,20 +24,23 @@ def get_month_ranges():
     """Pre-calculate month ranges to avoid repeated calculations"""
     today = datetime.now()
     first_day_this_month = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    
+
     if today.month == 1:
-        last_month = today.replace(year=today.year-1, month=12)
+        last_month = today.replace(year=today.year-1, month=12, day=1)
     else:
-        last_month = today.replace(month=today.month-1)
-    
+        # Reset day to 1 FIRST to avoid day-out-of-range errors
+        # e.g. March 31 -> replace(month=2) would fail since Feb has no day 31
+        last_month = today.replace(day=1, month=today.month-1)
+
     first_day_last_month = last_month.replace(day=1)
     last_day_last_month = (last_month.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-    
+
     return {
         'this_month_start': first_day_this_month,
         'last_month_start': first_day_last_month,
         'last_month_end': last_day_last_month
     }
+
 
 
 @router.get("/user/me")
