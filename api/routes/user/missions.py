@@ -146,6 +146,15 @@ async def get_active_missions(
                 continue
 
             user_progress = analysis.user_progress or {}
+            if isinstance(user_progress, str):
+                import json
+                try:
+                    user_progress = json.loads(user_progress)
+                except json.JSONDecodeError:
+                    user_progress = {}
+            if not isinstance(user_progress, dict):
+                user_progress = {}
+                
             completed_steps = user_progress.get('completed_actions', [])
             total_steps = len(analysis.action_plans)
 
@@ -154,8 +163,8 @@ async def get_active_missions(
                 active_missions.append({
                     'id': analysis.id,
                     'analysis_id': analysis.id,
-                    'business_goal': analysis.business_goal,
-                    'title': analysis.strategic_priority or analysis.business_goal[:50],
+                    'business_goal': analysis.business_goal or "Business Goal",
+                    'title': analysis.strategic_priority or (analysis.business_goal[:50] if analysis.business_goal else "Business Goal"),
                     'progress': round(len(completed_steps) / total_steps * 100, 1) if total_steps > 0 else 0,
                     'total_steps': total_steps,
                     'completed_steps': len(completed_steps),
