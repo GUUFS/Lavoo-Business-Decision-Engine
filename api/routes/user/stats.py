@@ -148,13 +148,64 @@ async def get_user_stats(
             "referrals_this_month": 0
         }
 
-# ─── Level config ───────────────────────────────────────────────────────────
+# ─── Level config (AiTugo Chops Framework v6 — Levels 1–51) ────────────────
 LEVELS = [
-    {"level": 1, "title": "Builder",            "min_chops": 0,    "max_chops": 500},
-    {"level": 2, "title": "Operator",           "min_chops": 501,  "max_chops": 1500},
-    {"level": 3, "title": "Strategist",         "min_chops": 1501, "max_chops": 3000},
-    {"level": 4, "title": "Reputation Diamond", "min_chops": 3001, "max_chops": 6000},
-    {"level": 5, "title": "Founder Elite",      "min_chops": 6001, "max_chops": 999999},
+    # Tier 1 – Foundation
+    {"level": 1,  "title": "Builder",               "tier": "Foundation",  "min_chops": 0,              "max_chops": 999},
+    {"level": 2,  "title": "Initiate",              "tier": "Foundation",  "min_chops": 1_000,          "max_chops": 1_999},
+    {"level": 3,  "title": "Apprentice",            "tier": "Foundation",  "min_chops": 2_000,          "max_chops": 3_999},
+    {"level": 4,  "title": "Forgehand",             "tier": "Foundation",  "min_chops": 4_000,          "max_chops": 7_999},
+    {"level": 5,  "title": "Pioneer",               "tier": "Foundation",  "min_chops": 8_000,          "max_chops": 11_999},
+    {"level": 6,  "title": "Vision Crafter",        "tier": "Foundation",  "min_chops": 12_000,         "max_chops": 16_999},
+    {"level": 7,  "title": "Operator",              "tier": "Foundation",  "min_chops": 17_000,         "max_chops": 21_999},
+    {"level": 8,  "title": "Trailblazer",           "tier": "Foundation",  "min_chops": 22_000,         "max_chops": 30_999},
+    {"level": 9,  "title": "Strategist",            "tier": "Foundation",  "min_chops": 31_000,         "max_chops": 34_999},
+    {"level": 10, "title": "Groundbreaker",         "tier": "Foundation",  "min_chops": 35_000,         "max_chops": 40_999},
+    # Tier 2 – Growth
+    {"level": 11, "title": "Connector",             "tier": "Growth",      "min_chops": 41_000,         "max_chops": 50_999},
+    {"level": 12, "title": "Catalyst",              "tier": "Growth",      "min_chops": 51_000,         "max_chops": 61_999},
+    {"level": 13, "title": "Innovator",             "tier": "Growth",      "min_chops": 62_000,         "max_chops": 73_999},
+    {"level": 14, "title": "Navigator",             "tier": "Growth",      "min_chops": 74_000,         "max_chops": 86_999},
+    {"level": 15, "title": "Signal Weaver",         "tier": "Growth",      "min_chops": 87_000,         "max_chops": 101_999},
+    {"level": 16, "title": "Momentum Maker",        "tier": "Growth",      "min_chops": 102_000,        "max_chops": 118_999},
+    {"level": 17, "title": "Orchestrator",          "tier": "Growth",      "min_chops": 119_000,        "max_chops": 137_999},
+    {"level": 18, "title": "Insight Sculptor",      "tier": "Growth",      "min_chops": 138_000,        "max_chops": 159_999},
+    {"level": 19, "title": "Opportunity Engineer",  "tier": "Growth",      "min_chops": 160_000,        "max_chops": 185_999},
+    {"level": 20, "title": "Alchemist",             "tier": "Growth",      "min_chops": 186_000,        "max_chops": 214_999},
+    # Tier 3 – Mastery
+    {"level": 21, "title": "Growth Architect",      "tier": "Mastery",     "min_chops": 215_000,        "max_chops": 250_999},
+    {"level": 22, "title": "Commerce Marshal",      "tier": "Mastery",     "min_chops": 251_000,        "max_chops": 301_999},
+    {"level": 23, "title": "Mentor Maven",          "tier": "Mastery",     "min_chops": 302_000,        "max_chops": 365_999},
+    {"level": 24, "title": "Blueprint Maker",       "tier": "Mastery",     "min_chops": 366_000,        "max_chops": 444_999},
+    {"level": 25, "title": "Insight Sage",          "tier": "Mastery",     "min_chops": 445_000,        "max_chops": 537_999},
+    {"level": 26, "title": "Community Leader",      "tier": "Mastery",     "min_chops": 538_000,        "max_chops": 654_999},
+    {"level": 27, "title": "Strategy Guardian",     "tier": "Mastery",     "min_chops": 655_000,        "max_chops": 798_999},
+    {"level": 28, "title": "Network Navigator",     "tier": "Mastery",     "min_chops": 799_000,        "max_chops": 966_999},
+    {"level": 29, "title": "Ecosystem Builder",     "tier": "Mastery",     "min_chops": 967_000,        "max_chops": 1_169_999},
+    {"level": 30, "title": "Market Sculptor",       "tier": "Mastery",     "min_chops": 1_170_000,      "max_chops": 1_436_999},
+    # Tier 4 – Prestige
+    {"level": 31, "title": "Culture Steward",       "tier": "Prestige",    "min_chops": 1_437_000,      "max_chops": 1_865_999},
+    {"level": 32, "title": "Ecosystem Keeper",      "tier": "Prestige",    "min_chops": 1_866_000,      "max_chops": 2_398_999},
+    {"level": 33, "title": "Market Commander",      "tier": "Prestige",    "min_chops": 2_399_000,      "max_chops": 3_078_999},
+    {"level": 34, "title": "Vision Chancellor",     "tier": "Prestige",    "min_chops": 3_079_000,      "max_chops": 3_927_999},
+    {"level": 35, "title": "Growth Sage",           "tier": "Prestige",    "min_chops": 3_928_000,      "max_chops": 4_947_999},
+    {"level": 36, "title": "Opportunity Sentinel",  "tier": "Prestige",    "min_chops": 4_948_000,      "max_chops": 6_172_999},
+    {"level": 37, "title": "Innovation Regent",     "tier": "Prestige",    "min_chops": 6_173_000,      "max_chops": 7_699_999},
+    {"level": 38, "title": "Legacy Maker",          "tier": "Prestige",    "min_chops": 7_700_000,      "max_chops": 9_549_999},
+    {"level": 39, "title": "Empire Guardian",       "tier": "Prestige",    "min_chops": 9_550_000,      "max_chops": 11_931_999},
+    {"level": 40, "title": "Luminary",              "tier": "Prestige",    "min_chops": 11_932_000,     "max_chops": 14_916_999},
+    # Tier 5 – Legendary
+    {"level": 41, "title": "Vision Keeper",         "tier": "Legendary",   "min_chops": 14_917_000,     "max_chops": 18_645_999},
+    {"level": 42, "title": "Momentum Master",       "tier": "Legendary",   "min_chops": 18_646_000,     "max_chops": 23_880_999},
+    {"level": 43, "title": "Domain Sage",           "tier": "Legendary",   "min_chops": 23_881_000,     "max_chops": 30_711_999},
+    {"level": 44, "title": "The Chairman",          "tier": "Legendary",   "min_chops": 30_712_000,     "max_chops": 39_460_999},
+    {"level": 45, "title": "Reality Shaper",        "tier": "Legendary",   "min_chops": 39_461_000,     "max_chops": 50_000_999},
+    {"level": 46, "title": "Epoch Driver",          "tier": "Legendary",   "min_chops": 50_001_000,     "max_chops": 65_501_299},
+    {"level": 47, "title": "Ascendant Visionary",   "tier": "Legendary",   "min_chops": 65_501_300,     "max_chops": 86_951_699},
+    {"level": 48, "title": "Super Creator",         "tier": "Legendary",   "min_chops": 86_951_700,     "max_chops": 100_000_999},
+    {"level": 49, "title": "Supreme Creator",       "tier": "Legendary",   "min_chops": 100_001_000,    "max_chops": 249_999_999},
+    {"level": 50, "title": "Top Boss (Oga at The Top)", "tier": "Legendary","min_chops": 250_000_000,   "max_chops": 49_999_999_999},
+    {"level": 51, "title": "The Oracle",            "tier": "Legendary",   "min_chops": 50_000_000_000, "max_chops": 999_999_999_999},
 ]
 
 def _resolve_level(chops: int) -> dict:
@@ -166,6 +217,7 @@ def _resolve_level(chops: int) -> dict:
     return {
         "level": current["level"],
         "level_title": current["title"],
+        "level_tier": current.get("tier", "Foundation"),
         "next_level": next_lvl["level"] if next_lvl else current["level"],
         "next_level_title": next_lvl["title"] if next_lvl else current["title"],
         "next_level_chops": next_lvl["min_chops"] if next_lvl else current["max_chops"],

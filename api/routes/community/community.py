@@ -492,7 +492,7 @@ async def get_leaderboard(
     db: Session = Depends(get_db)
 ):
     top_users = db.query(User).filter(User.is_active == True)\
-        .order_by(User.total_chops.desc()).limit(limit).all()
+        .order_by(User.total_chops.desc(), User.created_at.asc()).limit(limit).all()
 
     return {"success": True, "data": [{
         "rank": idx + 1,
@@ -500,6 +500,7 @@ async def get_leaderboard(
         "name": u.name,
         "total_chops": u.total_chops or 0,
         "referral_count": u.referral_count or 0,
+        "joined_at": u.created_at.isoformat() if u.created_at else None,
     } for idx, u in enumerate(top_users)]}
 
 
