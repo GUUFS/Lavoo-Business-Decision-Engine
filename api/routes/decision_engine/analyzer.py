@@ -7,7 +7,7 @@ action plans, toolkits, and execution roadmaps.
 
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
@@ -157,31 +157,68 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
 # =========================================================================
 @router.post("/analyze", response_model=dict)
 async def analyze_business_goal(
-    request: AnalyzeRequest,
+    request: Request,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     Analyze business goal using the Agentic Analyzer.
-
-    This endpoint triggers a 4-stage AI analysis:
-    1. Primary Bottleneck Agent (THE critical constraint + consequences)
-    2. Secondary Constraints Agent (2-4 supporting issues)
-    3. Action Plans Agent (ranked by leverage, with optional toolkits)
-    4. Roadmap & Execution Agent (timeline + motivational quote)
-
-    Returns complete analysis matching Clinton's new result page structure.
     """
     from decision_engine.agentic_analyzer import create_analyzer
+    from decision_engine.multimodal.handler import MultimodalHandler
 
     try:
         user_id = get_user_id(current_user)
         logger.info(f"🚀 Starting agentic analysis for user {user_id}")
 
+        content_type = request.headers.get("content-type", "")
+        business_goal = ""
+        files = []
+        
+        if "application/json" in content_type:
+            body = await request.json()
+            business_goal = body.get("business_goal")
+        elif "multipart/form-data" in content_type:
+            form_data = await request.form()
+            business_goal = form_data.get("business_goal")
+            files = form_data.getlist("files")
+        else:
+            raise HTTPException(status_code=400, detail="Invalid Content-Type")
+
+        if not business_goal:
+            raise HTTPException(status_code=400, detail="Business goal is required")
+
+        # Process multimodal files if present
+        if files:
+            image_bytes_list = []
+            document_bytes_list = []
+            
+            for file in files:
+                file_bytes = await file.read()
+                filename = getattr(file, "filename", "").lower()
+                
+                if filename.endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                    image_bytes_list.append((file_bytes, filename))
+                elif filename.endswith(('.pdf', '.docx', '.doc', '.xlsx', '.csv', '.txt')):
+                    document_bytes_list.append((file_bytes, filename))
+            
+            if image_bytes_list or document_bytes_list:
+                logger.info(f"Processing {len(image_bytes_list)} images and {len(document_bytes_list)} documents for user {user_id}")
+                mm_handler = MultimodalHandler(use_grok_vision=True)
+                mm_result = mm_handler.process_multimodal_query(
+                    user_query=business_goal,
+                    image_bytes_list=image_bytes_list,
+                    document_bytes_list=document_bytes_list,
+                    enhance_with_llm=False
+                )
+                combined_context = mm_result.get("combined_context", "")
+                if combined_context:
+                    business_goal = f"{business_goal}\n\n[Additional Context from Uploaded Files]:\n{combined_context}"
+
         # Create analyzer and run analysis
         analyzer = create_analyzer(db)
         result = await analyzer.analyze(
-            user_query=request.business_goal,
+            user_query=business_goal,
             user_id=user_id
         )
 
