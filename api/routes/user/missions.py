@@ -9,6 +9,21 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+import json
+
+def _parse_action_plans(analysis):
+    if not analysis or getattr(analysis, 'action_plans', None) is None:
+        return []
+    plans = getattr(analysis, 'action_plans', [])
+    if isinstance(plans, str):
+        try:
+            plans = json.loads(plans)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(plans, list):
+        return [plans] if plans else []
+    return plans
+
 from pydantic import BaseModel
 
 from database.pg_connections import get_db
@@ -60,7 +75,7 @@ async def get_user_missions(
 
         for analysis in analyses:
             # Skip if no action plans
-            if not analysis.action_plans or len(analysis.action_plans) == 0:
+            if not _parse_action_plans(analysis) or len(_parse_action_plans(analysis)) == 0:
                 continue
 
             # Get user progress from analysis metadata
@@ -69,7 +84,7 @@ async def get_user_missions(
 
             # Convert action plans to mission steps
             steps = []
-            for idx, action in enumerate(analysis.action_plans, 1):
+            for idx, action in enumerate(_parse_action_plans(analysis), 1):
                 step_id = f"{analysis.id}_action_{idx}"
                 is_completed = step_id in completed_steps
 
@@ -142,7 +157,7 @@ async def get_active_missions(
         active_missions = []
 
         for analysis in analyses:
-            if not analysis.action_plans:
+            if not _parse_action_plans(analysis):
                 continue
 
             user_progress = analysis.user_progress or {}
@@ -154,9 +169,9 @@ async def get_active_missions(
                     user_progress = {}
             if not isinstance(user_progress, dict):
                 user_progress = {}
-                
+
             completed_steps = user_progress.get('completed_actions', [])
-            total_steps = len(analysis.action_plans)
+            total_steps = len(_parse_action_plans(analysis))
 
             # Only include if not fully completed
             if len(completed_steps) < total_steps:
@@ -168,7 +183,7 @@ async def get_active_missions(
                     'progress': round(len(completed_steps) / total_steps * 100, 1) if total_steps > 0 else 0,
                     'total_steps': total_steps,
                     'completed_steps': len(completed_steps),
-                    'next_action': analysis.action_plans[len(completed_steps)].get('title', '') if len(completed_steps) < len(analysis.action_plans) else None
+                    'next_action': _parse_action_plans(analysis)[len(completed_steps)].get('title', '') if len(completed_steps) < len(_parse_action_plans(analysis)) else None
                 })
 
         return {
@@ -327,7 +342,7 @@ async def get_mission_details(
                 detail="Mission not found"
             )
 
-        if not analysis.action_plans:
+        if not _parse_action_plans(analysis):
             return {
                 "success": True,
                 "data": {
@@ -341,7 +356,7 @@ async def get_mission_details(
         completed_steps = user_progress.get('completed_actions', [])
 
         steps = []
-        for idx, action in enumerate(analysis.action_plans, 1):
+        for idx, action in enumerate(_parse_action_plans(analysis), 1):
             step_id = f"{analysis.id}_action_{idx}"
             is_completed = step_id in completed_steps
 
@@ -375,11 +390,11 @@ async def get_mission_details(
                 'title': analysis.strategic_priority or analysis.business_goal,
                 'description': analysis.primary_bottleneck.get('description', '') if analysis.primary_bottleneck else '',
                 'strategic_priority': analysis.strategic_priority,
-                'progress': round(len(completed_steps) / len(analysis.action_plans) * 100, 1),
-                'total_steps': len(analysis.action_plans),
+                'progress': round(len(completed_steps) / len(_parse_action_plans(analysis)) * 100, 1),
+                'total_steps': len(_parse_action_plans(analysis)),
                 'completed_steps': len(completed_steps),
-                'points_reward': len(analysis.action_plans) * 20,
-                'status': 'completed' if len(completed_steps) == len(analysis.action_plans) else 'active',
+                'points_reward': len(_parse_action_plans(analysis)) * 20,
+                'status': 'completed' if len(completed_steps) == len(_parse_action_plans(analysis)) else 'active',
                 'steps': steps
             }
         }
@@ -415,7 +430,7 @@ async def complete_mission_step(
                 detail="Mission not found"
             )
 
-        if not analysis.action_plans or step_number > len(analysis.action_plans):
+        if not _parse_action_plans(analysis) or step_number > len(_parse_action_plans(analysis)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid step number"
@@ -453,11 +468,11 @@ async def complete_mission_step(
         analysis.user_progress = user_progress
 
         # Check if mission completed
-        is_mission_completed = len(user_progress['completed_actions']) == len(analysis.action_plans)
+        is_mission_completed = len(user_progress['completed_actions']) == len(_parse_action_plans(analysis))
 
         if is_mission_completed:
             # Award bonus chops for completing entire mission
-            bonus_chops = len(analysis.action_plans) * 5
+            bonus_chops = len(_parse_action_plans(analysis)) * 5
             current_user.total_chops = (current_user.total_chops or 0) + bonus_chops
 
         db.commit()

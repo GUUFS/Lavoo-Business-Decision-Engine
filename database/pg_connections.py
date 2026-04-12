@@ -24,10 +24,27 @@ from sqlalchemy.orm import sessionmaker
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
+    import os.path
 
-    load_dotenv()  # Load .env file into environment
+    # Get the project root directory (one level up from database/)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # Try .env.local first (local development), fallback to .env
+    env_local = os.path.join(project_root, '.env.local')
+    env_file = os.path.join(project_root, '.env')
+
+    if os.path.exists(env_local):
+        load_dotenv(env_local)
+        print(f"✓ Loaded environment from {env_local}")
+    elif os.path.exists(env_file):
+        load_dotenv(env_file)
+        print(f"✓ Loaded environment from {env_file}")
+    else:
+        load_dotenv()  # Try loading from default locations
+        print("✓ Loaded environment from default location")
 except ImportError:
     # python-dotenv not installed, will use system environment variables
+    print("⚠️  python-dotenv not installed, using system environment variables")
     pass
 
 # Base class for all ORM models
@@ -47,7 +64,7 @@ print("✓ Connecting to PostgreSQL database...")
 try:
     # Create PostgreSQL engine
     # Connection pooling settings optimized for cloud deployments like Neon/Railway
-    # pool_recycle: Set to 120 (2 mins) because Neon's proxy/pooler often terminates 
+    # pool_recycle: Set to 120 (2 mins) because Neon's proxy/pooler often terminates
     # idle connections after 5 minutes. Recycling sooner prevents "SSL SYSCALL error: EOF detected".
     engine = create_engine(
         DATABASE_URL,
@@ -99,7 +116,7 @@ except Exception as e:
         print("This is likely a WSL2 networking issue. Try restarting WSL:")
         print(" PowerShell (Admin): wsl --shutdown")
         print(" Then restart your backend.")
-    
+
     print(f"Error: {e}")
     print(f"URL format: {DATABASE_URL.split('@')[0]}@***")
     sys.exit(1)

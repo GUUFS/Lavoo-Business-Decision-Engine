@@ -33,15 +33,28 @@ from subscriptions.beta_service import BetaService
 
 # Load environment variables from .env file (must be done early)
 try:
+    from dotenv import load_dotenv
+
+    # Get project root directory (one level up from api/)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
     # Try .env.local first (local development), fallback to .env
-    if os.path.exists('.env.local'):
-        load_dotenv('.env.local')
+    env_local = os.path.join(project_root, '.env.local')
+    env_file = os.path.join(project_root, '.env')
+
+    if os.path.exists(env_local):
+        load_dotenv(env_local)
         print("✅ Environment variables loaded from .env.local file")
-    else:
-        load_dotenv()  # Load .env file
+    elif os.path.exists(env_file):
+        load_dotenv(env_file)
         print("✅ Environment variables loaded from .env file")
+    else:
+        load_dotenv()  # Try default locations
+        print("✅ Environment variables loaded from default location")
 except ImportError:
     print("⚠️  python-dotenv not installed, using system environment")
+except Exception as e:
+    print(f"⚠️  Error loading environment variables: {e}")
 
 # Initialize logging system
 setup_logging(level=logging.INFO if os.getenv("DEBUG") != "true" else logging.DEBUG)
