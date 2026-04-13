@@ -185,8 +185,10 @@ async def analyze_business_goal(
         else:
             raise HTTPException(status_code=400, detail="Invalid Content-Type")
 
-        if not business_goal:
-            raise HTTPException(status_code=400, detail="Business goal is required")
+        if not business_goal and not files:
+            raise HTTPException(status_code=400, detail="Business goal or a document/image upload is required")
+
+        business_goal = business_goal or ""
 
         # Process multimodal files if present
         if files:
@@ -204,7 +206,7 @@ async def analyze_business_goal(
             
             if image_bytes_list or document_bytes_list:
                 logger.info(f"Processing {len(image_bytes_list)} images and {len(document_bytes_list)} documents for user {user_id}")
-                mm_handler = MultimodalHandler(use_grok_vision=True)
+                mm_handler = MultimodalHandler(use_vision_for_images=True)
                 mm_result = mm_handler.process_multimodal_query(
                     user_query=business_goal,
                     image_bytes_list=image_bytes_list,
@@ -213,7 +215,10 @@ async def analyze_business_goal(
                 )
                 combined_context = mm_result.get("combined_context", "")
                 if combined_context:
-                    business_goal = f"{business_goal}\n\n[Additional Context from Uploaded Files]:\n{combined_context}"
+                    business_goal = f"{business_goal}\n\n[Additional Context from Uploaded Files]:\n{combined_context}".strip()
+
+        if not business_goal:
+            raise HTTPException(status_code=400, detail="Could not extract any content from the uploaded files to analyze.")
 
         # Create analyzer and run analysis
         analyzer = create_analyzer(db)
