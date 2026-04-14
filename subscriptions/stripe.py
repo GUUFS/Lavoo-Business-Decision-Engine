@@ -334,6 +334,47 @@ async def get_stripe_config():
     return {"publishableKey": publishable_key}
 
 
+@router.get("/prices")
+async def get_subscription_prices(current_user: User = Depends(get_current_user)):
+    """
+    Fetch live subscription prices from Stripe using the Price IDs stored in
+    environment variables. Returns the actual unit_amount for each plan/currency
+    combination so the frontend never needs hardcoded values.
+
+    Env var naming convention (matches .env and Railway variables):
+        STRIPE_{PLAN}_PRICE_ID_{CURRENCY}
+        e.g. STRIPE_MONTHLY_PRICE_ID_USD, STRIPE_YEARLY_PRICE_ID_NGN
+    """
+    plans = ["monthly", "quarterly", "yearly"]
+    currencies = ["USD", "GBP", "NGN"]
+
+    result: dict = {}
+
+    for currency in currencies:
+        result[currency] = {}
+        for plan in plans:
+            env_key = f"STRIPE_{plan.upper()}_PRICE_ID_{currency}"
+            price_id = os.getenv(env_key, "").strip()
+            if not price_id:
+                logger.warning(f"[prices] env var {env_key} is not set — skipping")
+                result[currency][plan] = None
+                continue
+            try:
+                price_obj = stripe.Price.retrieve(price_id)
+                # unit_amount is in the smallest currency unit (cents/pence/kobo)
+                # Stripe stores NGN in kobo (100 kobo = ₦1), USD in cents, GBP in pence
+                unit_amount = price_obj.get("unit_amount", 0) or 0
+                result[currency][plan] = unit_amount / 100
+            except stripe.error.InvalidRequestError as e:
+                logger.error(f"[prices] Invalid price ID {price_id} ({env_key}): {e}")
+                result[currency][plan] = None
+            except Exception as e:
+                logger.error(f"[prices] Failed to fetch {env_key}: {e}")
+                result[currency][plan] = None
+
+    return result
+
+
 # =============================================================================
 # SUBSCRIPTION HISTORY
 # =============================================================================
