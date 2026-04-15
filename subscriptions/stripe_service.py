@@ -6,7 +6,18 @@ from decimal import Decimal
 
 load_dotenv()
 
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+# Do NOT set stripe.api_key globally — that creates a shared mutable global
+# that can be contaminated across concurrent requests in async workers.
+# Every call below passes api_key= explicitly from _sk() so the correct
+# account key is always used, regardless of import order or global state.
+
+def _sk() -> str:
+    """Return the Stripe secret key. Raises clearly if not configured."""
+    key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if not key:
+        raise Exception("STRIPE_SECRET_KEY is not set in environment variables")
+    return key
+
 
 class StripeService:
     
@@ -37,6 +48,7 @@ class StripeService:
                 automatic_payment_methods={
                     'enabled': True,
                 },
+                api_key=_sk(),
             )
             
             return {
@@ -56,7 +68,7 @@ class StripeService:
         """
         try:
             if payment_intent_id.startswith("seti_"):
-                intent = stripe.SetupIntent.retrieve(payment_intent_id)
+                intent = stripe.SetupIntent.retrieve(payment_intent_id, api_key=_sk())
                 return {
                     "status": intent.status,
                     "amount": 0,
@@ -66,7 +78,7 @@ class StripeService:
                     "metadata": intent.metadata.to_dict() if hasattr(intent.metadata, "to_dict") else dict(intent.metadata)
                 }
             else:
-                intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                intent = stripe.PaymentIntent.retrieve(payment_intent_id, api_key=_sk())
                 return {
                     "status": intent.status,
                     "amount": intent.amount / 100,
@@ -85,7 +97,7 @@ class StripeService:
             refund_data = {"payment_intent": payment_intent_id}
             if amount:
                 refund_data["amount"] = int(amount * 100)
-            refund = stripe.Refund.create(**refund_data)
+            refund = stripe.Refund.create(**refund_data, api_key=_sk())
             return {
                 "refund_id": refund.id,
                 "status": refund.status,
@@ -149,19 +161,20 @@ class StripeService:
         try:
             if stripe_customer_id:
                 try:
-                    customer = stripe.Customer.retrieve(stripe_customer_id)
+                    customer = stripe.Customer.retrieve(stripe_customer_id, api_key=_sk())
                     if not getattr(customer, 'deleted', False):
                         return customer.id
                 except stripe.error.InvalidRequestError:
                     pass  # Customer deleted or doesn't exist, create new one
-            
+
             customer = stripe.Customer.create(
                 email=email,
                 name=name,
                 metadata={
                     "user_id": str(user_id),
                     "platform": "lavoo_bi"
-                }
+                },
+                api_key=_sk(),
             )
             return customer.id
             
@@ -183,16 +196,19 @@ class StripeService:
         try:
             # Attach — idempotent if already attached
             try:
-                stripe.PaymentMethod.attach(payment_method_id, customer=customer_id)
+                stripe.PaymentMethod.attach(
+                    payment_method_id, customer=customer_id, api_key=_sk()
+                )
             except stripe.error.InvalidRequestError as e:
                 # Already attached to this customer — that's fine
                 if "already been attached" not in str(e):
                     raise
-            
+
             if set_as_default:
                 stripe.Customer.modify(
                     customer_id,
                     invoice_settings={"default_payment_method": payment_method_id},
+                    api_key=_sk(),
                 )
             
             return {
@@ -268,6 +284,7 @@ class StripeService:
             if off_session:
                 create_params["off_session"] = True
 
+            create_params["api_key"] = _sk()
             subscription = stripe.Subscription.create(**create_params)
             
             print(f"✅ Subscription created: {subscription.id}, status: {subscription.status}")
@@ -283,7 +300,7 @@ class StripeService:
                         pi = latest_invoice.payment_intent
                         if isinstance(pi, str):
                             # Not expanded — retrieve it
-                            payment_intent = stripe.PaymentIntent.retrieve(pi)
+                            payment_intent = stripe.PaymentIntent.retrieve(pi, api_key=_sk())
                             payment_intent_id = payment_intent.id
                             client_secret = payment_intent.client_secret
                         elif pi:
@@ -295,7 +312,7 @@ class StripeService:
                 # Fallback: search recent payment intents for this customer
                 if not client_secret:
                     try:
-                        recent_intents = stripe.PaymentIntent.list(customer=customer_id, limit=5)
+                        recent_intents = stripe.PaymentIntent.list(customer=customer_id, limit=5, api_key=_sk())
                         for intent in recent_intents.data:
                             if intent.status in ["requires_action", "requires_payment_method", "requires_confirmation"]:
                                 payment_intent_id = intent.id
@@ -324,7 +341,7 @@ class StripeService:
             if subscription.status == "active" and not (current_period_start and current_period_end):
                 # Fresh retrieve without expand to get clean period fields
                 try:
-                    fresh = stripe.Subscription.retrieve(subscription.id)
+                    fresh = stripe.Subscription.retrieve(subscription.id, api_key=_sk())
                     current_period_start = getattr(fresh, 'current_period_start', None)
                     current_period_end = getattr(fresh, 'current_period_end', None)
                     print(f"📅 Retrieved period dates: {current_period_start} → {current_period_end}")
@@ -360,7 +377,8 @@ class StripeService:
         try:
             subscription = stripe.Subscription.retrieve(
                 subscription_id,
-                expand=["latest_invoice"]
+                expand=["latest_invoice"],
+                api_key=_sk(),
             )
 
             # Access via dict to bypass SDK attribute caching that can return None
@@ -402,10 +420,11 @@ class StripeService:
             if at_period_end:
                 subscription = stripe.Subscription.modify(
                     subscription_id,
-                    cancel_at_period_end=True
+                    cancel_at_period_end=True,
+                    api_key=_sk(),
                 )
             else:
-                subscription = stripe.Subscription.delete(subscription_id)
+                subscription = stripe.Subscription.delete(subscription_id, api_key=_sk())
             
             return {
                 "id": subscription.id,
@@ -424,7 +443,7 @@ class StripeService:
     ) -> Dict[str, Any]:
         """Update subscription to a different plan (upgrade/downgrade)."""
         try:
-            subscription = stripe.Subscription.retrieve(subscription_id)
+            subscription = stripe.Subscription.retrieve(subscription_id, api_key=_sk())
             subscription = stripe.Subscription.modify(
                 subscription_id,
                 items=[{
@@ -432,6 +451,7 @@ class StripeService:
                     'price': new_price_id,
                 }],
                 proration_behavior='always_invoice' if prorate else 'none',
+                api_key=_sk(),
             )
             return {
                 "id": subscription.id,
@@ -445,7 +465,7 @@ class StripeService:
     def get_customer_payment_methods(customer_id: str) -> list:
         """Get all saved payment methods for a customer."""
         try:
-            payment_methods = stripe.PaymentMethod.list(customer=customer_id, type="card")
+            payment_methods = stripe.PaymentMethod.list(customer=customer_id, type="card", api_key=_sk())
             return [{
                 "id": pm.id,
                 "brand": pm.card.brand,
@@ -463,6 +483,7 @@ class StripeService:
             setup_intent = stripe.SetupIntent.create(
                 customer=customer_id,
                 payment_method_types=["card"],
+                api_key=_sk(),
             )
             return {
                 "client_secret": setup_intent.client_secret,
@@ -475,7 +496,7 @@ class StripeService:
     def detach_payment_method(payment_method_id: str) -> Dict[str, Any]:
         """Detach a payment method from a customer."""
         try:
-            payment_method = stripe.PaymentMethod.detach(payment_method_id)
+            payment_method = stripe.PaymentMethod.detach(payment_method_id, api_key=_sk())
             return {"status": "success", "payment_method_id": payment_method.id}
         except stripe.error.StripeError as e:
             raise Exception(f"Payment method detachment error: {str(e)}")
