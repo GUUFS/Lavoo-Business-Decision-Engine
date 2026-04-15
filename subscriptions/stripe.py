@@ -32,6 +32,12 @@ from .beta_service import BetaService
 
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 
+# Log the Stripe mode at startup so Railway logs immediately show whether the
+# backend is using a live or test key — helps catch test/live mismatches fast.
+_startup_key = os.getenv("STRIPE_SECRET_KEY", "")
+_stripe_mode = "LIVE" if _startup_key.startswith("sk_live_") else ("TEST" if _startup_key.startswith("sk_test_") else "UNKNOWN/MISSING")
+logger.info(f"[Stripe] Initialised in {_stripe_mode} mode (key prefix: {_startup_key[:14]}...)")
+
 
 # =============================================================================
 # BILLING FLOW
@@ -554,7 +560,10 @@ async def save_card_for_beta(
         )
 
         # ── Save card metadata ────────────────────────────────────────────────
-        payment_method = stripe.PaymentMethod.retrieve(request.payment_method_id)
+        _stripe_key = os.getenv("STRIPE_SECRET_KEY")
+        payment_method = stripe.PaymentMethod.retrieve(
+            request.payment_method_id, api_key=_stripe_key
+        )
         user.stripe_payment_method_id = request.payment_method_id
         user.card_last4 = payment_method.card.last4
         user.card_brand = payment_method.card.brand
@@ -1375,7 +1384,8 @@ async def create_subscription_with_saved_card(
                 plan_type=request.plan_type, amount=amount, tx_ref_prefix="ADOPT"
             )
             try:
-                pm = stripe.PaymentMethod.retrieve(request.payment_method_id)
+                _sk = os.getenv("STRIPE_SECRET_KEY")
+                pm = stripe.PaymentMethod.retrieve(request.payment_method_id, api_key=_sk)
                 user.stripe_payment_method_id = request.payment_method_id
                 user.card_last4 = pm.card.last4
                 user.card_brand = pm.card.brand
@@ -1429,7 +1439,8 @@ async def create_subscription_with_saved_card(
                 plan_type=request.plan_type, amount=amount, tx_ref_prefix="STRIPE-SUB"
             )
             try:
-                pm = stripe.PaymentMethod.retrieve(request.payment_method_id)
+                _sk = os.getenv("STRIPE_SECRET_KEY")
+                pm = stripe.PaymentMethod.retrieve(request.payment_method_id, api_key=_sk)
                 user.stripe_payment_method_id = request.payment_method_id
                 user.card_last4 = pm.card.last4
                 user.card_brand = pm.card.brand

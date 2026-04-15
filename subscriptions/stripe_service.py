@@ -96,23 +96,35 @@ class StripeService:
     
     @staticmethod
     def verify_webhook_signature(payload: bytes, sig_header: str) -> Dict[str, Any]:
-        """Verify Stripe webhook signature."""
-        webhook_secret = (
-            os.getenv("STRIPE_WEBHOOK_SECRET")
-            or os.getenv("STRIPE_CONNECT_WEBHOOK_SECRET")
-            or os.getenv("STRIPE_PLATFORM_WEBHOOK_SECRET")
-        )
-        
-        if not webhook_secret:
-            raise Exception("STRIPE_WEBHOOK_SECRET is not set in environment variables")
-        
-        try:
-            event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-            return event
-        except ValueError:
-            raise Exception("Invalid payload")
-        except stripe.error.SignatureVerificationError:
-            raise Exception("Invalid signature")
+        """Verify Stripe webhook signature.
+
+        Tries each configured webhook secret in order so that both the platform
+        webhook and the Connect webhook (which use different signing secrets) are
+        handled correctly.  The first secret that produces a valid signature wins.
+        """
+        secrets_to_try = [
+            os.getenv("STRIPE_WEBHOOK_SECRET"),
+            os.getenv("STRIPE_CONNECT_WEBHOOK_SECRET"),
+            os.getenv("STRIPE_PLATFORM_WEBHOOK_SECRET"),
+        ]
+        # Filter out empty / unset values
+        secrets_to_try = [s for s in secrets_to_try if s and s.strip()]
+
+        if not secrets_to_try:
+            raise Exception("No webhook secret configured — set STRIPE_WEBHOOK_SECRET in environment variables")
+
+        last_error: Exception = Exception("Invalid signature")
+        for secret in secrets_to_try:
+            try:
+                event = stripe.Webhook.construct_event(payload, sig_header, secret)
+                return event  # ← matched
+            except ValueError:
+                raise Exception("Invalid payload")
+            except stripe.error.SignatureVerificationError as e:
+                last_error = e  # try next secret
+                continue
+
+        raise last_error
     
     # ============================================================================
     # CUSTOMER MANAGEMENT
