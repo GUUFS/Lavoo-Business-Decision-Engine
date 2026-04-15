@@ -338,16 +338,20 @@ async def get_stripe_config():
 async def get_subscription_prices(current_user: User = Depends(get_current_user)):
     """
     Fetch live subscription prices from Stripe using the Price IDs stored in
-    environment variables. Returns the actual unit_amount for each plan/currency
-    combination so the frontend never needs hardcoded values.
+    environment variables. Returns the actual amount for each plan/currency
+    so the frontend never needs hardcoded values.
 
-    Env var naming convention (matches .env and Railway variables):
-        STRIPE_{PLAN}_PRICE_ID_{CURRENCY}
-        e.g. STRIPE_MONTHLY_PRICE_ID_USD, STRIPE_YEARLY_PRICE_ID_NGN
+    Env var naming: STRIPE_{PLAN}_PRICE_ID_{CURRENCY}
+    e.g. STRIPE_MONTHLY_PRICE_ID_USD, STRIPE_YEARLY_PRICE_ID_NGN
     """
+    # Ensure the API key is set for this call
+    api_key = os.getenv("STRIPE_SECRET_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not configured")
+
     plans = ["monthly", "quarterly", "yearly"]
     currencies = ["USD", "GBP", "NGN"]
-
+    errors = {}
     result: dict = {}
 
     for currency in currencies:
@@ -356,21 +360,27 @@ async def get_subscription_prices(current_user: User = Depends(get_current_user)
             env_key = f"STRIPE_{plan.upper()}_PRICE_ID_{currency}"
             price_id = os.getenv(env_key, "").strip()
             if not price_id:
-                logger.warning(f"[prices] env var {env_key} is not set — skipping")
+                logger.warning(f"[prices] {env_key} not set")
                 result[currency][plan] = None
+                errors[env_key] = "not set"
                 continue
             try:
-                price_obj = stripe.Price.retrieve(price_id)
-                # unit_amount is in the smallest currency unit (cents/pence/kobo)
-                # Stripe stores NGN in kobo (100 kobo = ₦1), USD in cents, GBP in pence
-                unit_amount = price_obj.get("unit_amount", 0) or 0
-                result[currency][plan] = unit_amount / 100
-            except stripe.error.InvalidRequestError as e:
-                logger.error(f"[prices] Invalid price ID {price_id} ({env_key}): {e}")
-                result[currency][plan] = None
+                price_obj = stripe.Price.retrieve(price_id, api_key=api_key)
+                # Use attribute access (works across all Stripe library versions)
+                # unit_amount is in smallest currency unit: cents, pence, kobo
+                unit_amount = getattr(price_obj, "unit_amount", None)
+                if unit_amount is None:
+                    # Fallback for dict-style objects
+                    unit_amount = price_obj["unit_amount"] if "unit_amount" in price_obj else 0
+                result[currency][plan] = (unit_amount or 0) / 100
+                logger.info(f"[prices] {env_key} ({price_id}) = {result[currency][plan]}")
             except Exception as e:
-                logger.error(f"[prices] Failed to fetch {env_key}: {e}")
+                logger.error(f"[prices] {env_key} ({price_id}): {e}")
                 result[currency][plan] = None
+                errors[env_key] = str(e)
+
+    if errors:
+        logger.warning(f"[prices] Some prices could not be fetched: {errors}")
 
     return result
 
