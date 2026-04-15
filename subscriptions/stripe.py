@@ -334,10 +334,14 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
 
 @router.get("/config")
 async def get_stripe_config():
-    publishable_key = os.getenv("STRIPE_PUBLISHABLE_KEY")
-    if not publishable_key:
-        raise HTTPException(status_code=500, detail="Stripe configuration not found")
-    return {"publishableKey": publishable_key}
+    # Accept both env var names so Railway config is flexible
+    publishable_key = (
+        os.getenv("STRIPE_PUBLISHABLE_KEY") or
+        os.getenv("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY")
+    )
+    if not publishable_key or not publishable_key.strip().startswith("pk_"):
+        raise HTTPException(status_code=500, detail="Stripe publishable key not configured on backend")
+    return {"publishableKey": publishable_key.strip()}
 
 
 @router.get("/prices")
