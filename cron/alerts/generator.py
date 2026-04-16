@@ -49,7 +49,7 @@ logging.basicConfig(
 )
 
 
-class ContentGenerator:
+class AlertsGenerator:
     """
     AI-powered content generator that:
     1. Uses Grok 4.1 to search the web for fresh business/AI news
@@ -239,172 +239,6 @@ class ContentGenerator:
             logger.warning(f"Unexpected error validating URL: {url[:50]}... - {str(e)[:50]}")
             return False
 
-    async def generate_insights(self, count: int = 3) -> List[Dict]:
-        """
-        Generate fresh AI/Business insights by searching the web.
-
-        Args:
-            count: Number of insights to generate
-
-        Returns:
-            List of generated insights
-        """
-        if not self.client:
-            logger.error("Grok client not initialized")
-            return []
-
-        existing_hashes = self._get_existing_titles('insight')
-        existing_titles = self._get_existing_title_list('insight')
-        existing_urls = self._get_existing_urls('insight')
-        logger.info(f"Found {len(existing_hashes)} existing insights in database")
-
-        # Calculate date range (24 hours)
-        from datetime import timedelta
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-
-        prompt = f"""You are Lavoo's AI Research & Insights Engine, an elite technology journalist, business intelligence analyst, with 20+ years experience across AI, startups, venture funding, automation, productivity and global tech trends.
-
-Your mission: Quickly scan the web and fetch ONLY the most fresh, high-value, globally relevant news published within the last 24 hours (between {yesterday} and {self.today}). Identify insights creators, entrepreneurs and business operators can act on immediately.
-
-Output 5–7 items per request then pick the top 2 items. Prioritize speed and relevance. Keep responses lightweight, sharp, and insight-rich with minimum fluff.
-
-Strict rules:
-• No duplicates: never return a link previously delivered.
-• Ignore anything older than 24 hours (between {yesterday} and {self.today}).
-• Verify sources: only credible publications.
-• Rewrite insights uniquely: NO summaries copied from articles.
-• Return ONLY 2 news that feels useful, forward-moving, monetizable or strategic.
-• Headlines must trigger curiosity + clicks + urgency.
-• Each item MUST have an impact score (60–100) where:
-  - 90–100 = Critical / game-changing / viral-worthy
-  - 75–89 = High value / immediate opportunity
-  - 60–74 = Useful insight, moderate urgency
-  - <60 = Do not include
-• Prioritize high-scoring stories first.
-
-Your writing style: Clear. Punchy. Smart. No jargon.
-Think better than Bloomberg clarity, Wired creativity, and a newsletter voice that feels human, exciting and easy to read.
-The reader should feel like they're getting inside information.
-
-Return results in THIS EXACT JSON array format only:
-[
-  {{
-    "title": "Irresistible headline that sparks clicks (max 80 chars)",
-    "category": "AI Technology | Funding | Automation | Business Strategy | Productivity | Marketing | Creator Economy | Networking | Financial Technology",
-    "impact_score": 60-100,
-    "read_time": "2 min | 3 min | 5 min",
-    "what_changed": "What happened + core details + numbers where possible (2-3 sentences)",
-    "why_it_matters": "Explain implications for creators/entrepreneurs. Highlight opportunities, risks and competitive edge (2-4 sentences)",
-    "action_to_take": "One actionable move a reader can take now (1-2 practical lines)",
-    "source": "Publication name only",
-    "url": "Direct link to original article"
-  }}
-]
-
-After generating items:
-• Sort highest impact_score → lowest.
-• Remove any weak, vague or low-value stories.
-• Final output should feel like a cheat code for staying ahead of the world.
-
-Tone guideline for headlines: Create FOMO, curiosity, and urgency without exaggerating.
-Examples:
-• "New AI Model Overtakes GPT-5: Startups Should Pay Attention"
-• "$120M Funding Round Signals Huge New Market: Early Founders Win"
-• "This AI Tool Cuts Editing Time 80%: Creators Are Switching Fast"
-• "E-commerce Automation Just Leveled Up. Here's How to Cash In"
-
-DO NOT CREATE DUPLICATES - These titles already exist:
-{chr(10).join(['- ' + t for t in existing_titles[:20]]) if existing_titles else '(No existing insights)'}
-
-Return only the JSON. No commentary, no explanation. Deliver pure gold at speed."""
-
-        try:
-            # Create chat with xAI SDK Agent Tools
-            chat = self.client.chat.create(
-                model=self.model,
-                tools=[web_search()],  # Enable web search tool
-            )
-
-            # Add system message and user prompt
-            chat.append(user(
-                "You are a business intelligence analyst with web search capabilities. You find and summarize the latest business and AI news. Always return valid JSON arrays only."
-            ))
-            chat.append(user(prompt))
-
-            # Sample response (non-streaming)
-            response = chat.sample()
-
-            content = response.content.strip() if response.content else ""
-
-            # Debug: Log raw response
-            logger.info(f"Raw API response (first 500 chars): {content[:500]}")
-
-            # Parse JSON response
-            # Handle potential markdown code blocks
-            if content.startswith("```"):
-                parts = content.split("```")
-                if len(parts) >= 2:
-                    content = parts[1]
-                    if content.startswith("json"):
-                        content = content[4:]
-                    content = content.strip()
-
-            insights = json.loads(content)
-
-            if not isinstance(insights, list):
-                insights = [insights]
-
-            # Filter out duplicates and validate URLs
-            new_insights = []
-            for insight in insights:
-                title = insight.get('title', 'Unknown')
-                url = insight.get('url', '')
-
-                # Type conversion: Handle string impact scores
-                impact_score = insight.get('impact_score', 0)
-                if isinstance(impact_score, str):
-                    try:
-                        impact_score = int(impact_score)
-                        insight['impact_score'] = impact_score  # Convert in place
-                    except (ValueError, TypeError):
-                        impact_score = 0  # Invalid score
-
-                # Enhanced duplicate check (title AND URL)
-                is_duplicate, reason = self._is_duplicate_content(
-                    title, url, existing_hashes, existing_urls
-                )
-                if is_duplicate:
-                    logger.info(f"Skipping {reason}: {title[:50]}... (URL: {url[:50]}...)")
-                    continue
-
-                # Validate URL format
-                if not url or not url.startswith('http'):
-                    logger.warning(f"Skipping insight with invalid URL format: {title[:50]}... (URL: {url})")
-                    continue
-
-                # Quick pattern validation (check if it's obviously fake)
-                if self._is_suspicious_url(url):
-                    logger.warning(f"Skipping insight with suspicious URL pattern: {title[:50]}... (URL: {url})")
-                    continue
-
-                # HTTP validation - actually test if URL works
-                if not self._validate_url_response(url):
-                    logger.warning(f"Skipping insight with non-accessible URL: {title[:50]}... (URL: {url})")
-                    continue
-
-                new_insights.append(insight)
-                logger.info(f"✓ Valid insight: {title[:50]}...")
-
-            return new_insights
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse insights JSON: {e}")
-            logger.error(f"Raw content: {content[:500]}")
-            return []
-        except Exception as e:
-            logger.error(f"Error generating insights: {e}")
-            return []
-
     async def generate_alerts(self, count: int = 2) -> List[Dict]:
         """
         Generate fresh opportunity alerts by searching the web.
@@ -431,7 +265,7 @@ Return only the JSON. No commentary, no explanation. Deliver pure gold at speed.
 
         prompt = f"""You are Lavoo's Opportunity Intelligence Engine, an elite strategist who finds real business opportunities before they go mainstream. You scan the web for openings creators, entrepreneurs and businesses can act on today.
 
-Your job is to fetch ONLY opportunities that are:
+CRITICAL: You MUST use your web search capabilities to find REAL, LIVE, active opportunities on the internet.\nDO NOT hallucinate or make up URLs.\nDO NOT make up fake grants, fake hackathons, or fake events.\nIf you cannot find real opportunities, return an empty array [].\nYour job is to fetch ONLY opportunities that are:
 • new, recent, ongoing OR still open within defined timeframe
 • announced within the last 24–72 hours OR still accepting submissions/invitations
 • actionable, profitable, time-sensitive or early-mover advantages
@@ -507,7 +341,7 @@ Return ONLY the formatted JSON: no intro text, no commentary."""
 
             # Add system message and user prompt
             chat.append(user(
-                "You are an opportunity scout with web search capabilities. You find time-sensitive business opportunities. Always return valid JSON arrays only."
+                "You are an opportunity scout with web search capabilities. SEARCH THE WEB FIRST before answering. VERY IMPORTANT: You must NOT hallucinate. Only use real articles and opportunities from the search results. Provide real URLs. You find time-sensitive business opportunities. Always return valid JSON arrays only."
             ))
             chat.append(user(prompt))
 
@@ -595,58 +429,6 @@ Return ONLY the formatted JSON: no intro text, no commentary."""
         except Exception as e:
             logger.error(f"Error generating alerts: {e}")
             return []
-
-    def save_insights(self, insights: List[Dict]) -> Tuple[int, int]:
-        """
-        Save insights to database.
-
-        Args:
-            insights: List of insight dictionaries
-
-        Returns:
-            Tuple of (saved_count, skipped_count)
-        """
-        saved = 0
-        skipped = 0
-
-        for insight_data in insights:
-            try:
-                # Validate required fields (impact_score is optional for backwards compatibility)
-                required = ['title', 'category', 'what_changed', 'why_it_matters', 'action_to_take']
-                if not all(insight_data.get(f) for f in required):
-                    logger.warning(f"Skipping insight with missing fields: {insight_data.get('title', 'Unknown')}")
-                    skipped += 1
-                    continue
-
-                # Handle date field - use impact_score as fallback if date not present
-                date_value = insight_data.get('date', self.today)
-
-                insight = Insight(
-                    title=insight_data['title'][:255],  # Truncate if needed
-                    category=insight_data.get('category', 'General'),
-                    read_time=insight_data.get('read_time', '3 min'),
-                    date=date_value,
-                    source=insight_data.get('source', 'AI Generated'),
-                    url=insight_data.get('url', ''),  # URL of the source article
-                    what_changed=insight_data['what_changed'],
-                    why_it_matters=insight_data['why_it_matters'],
-                    action_to_take=insight_data['action_to_take'],
-                    is_active=True,
-                    total_views=0,
-                    total_shares=0
-                )
-
-                self.db.add(insight)
-                self.db.commit()
-                saved += 1
-                logger.info(f"✅ Saved insight: {insight.title[:50]}...")
-
-            except Exception as e:
-                self.db.rollback()
-                logger.error(f"Failed to save insight: {e}")
-                skipped += 1
-
-        return saved, skipped
 
     def save_alerts(self, alerts: List[Dict]) -> Tuple[int, int]:
         """
@@ -776,3 +558,21 @@ if __name__ == "__main__":
         insight_count=args.insights,
         alert_count=args.alerts
     ))
+
+
+async def run_content_generation(alert_count: int = 2):
+    db = SessionLocal()
+    try:
+        generator = AlertsGenerator(db)
+        logger.info("\n🚨 Generating Opportunity Alerts...")
+        alerts = await generator.generate_alerts(count=alert_count)
+        if alerts:
+            saved, skipped = generator.save_alerts(alerts)
+            logger.info(f"Alerts: {saved} saved, {skipped} skipped")
+        else:
+            logger.info("No new alerts found")
+        logger.info("✅ Content Generation Complete")
+    except Exception as e:
+        logger.error(f"Failed to generate alerts: {e}")
+    finally:
+        db.close()
