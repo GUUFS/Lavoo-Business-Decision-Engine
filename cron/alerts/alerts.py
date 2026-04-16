@@ -11,14 +11,14 @@ from pathlib import Path
 from datetime import datetime
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv(".env.local")
 load_dotenv(".env.production")
 
-from decision_engine.content_generator import run_content_generation
+from cron.alerts.generator import run_content_generation
 from config.logging import setup_logging
 import logging
 
@@ -35,7 +35,7 @@ async def main():
 
     try:
         # Generate 0 insights, 2 alerts
-        await run_content_generation(insight_count=0, alert_count=2)
+        await run_content_generation(alert_count=2)
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
