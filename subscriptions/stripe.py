@@ -1200,14 +1200,17 @@ async def stripe_webhook(
                 cid = getattr(stripe_sub, 'customer', None)
                 if cid:
                     user = db.query(User).filter(User.stripe_customer_id == cid).first()
+            
             if user:
                 user.subscription_status = "cancelled"
                 if hasattr(user, 'stripe_subscription_id'):
                     user.stripe_subscription_id = None
+
                 sub_record = db.query(Subscriptions).filter(
                     Subscriptions.user_id == user.id,
                     Subscriptions.subscription_status == "active"
                 ).first()
+
                 if sub_record:
                     sub_record.subscription_status = "cancelled"
                     sub_record.status = "cancelled"
