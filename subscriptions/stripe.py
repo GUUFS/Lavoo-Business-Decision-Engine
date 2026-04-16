@@ -575,8 +575,12 @@ async def save_card_for_beta(
             user_id=user_id, email=user.email, name=user.name,
             stripe_customer_id=getattr(user, 'stripe_customer_id', None)
         )
-        if not getattr(user, 'stripe_customer_id', None):
+        # Always persist the customer_id — if the old one was stale (404 from
+        # a different Stripe account), get_or_create_customer creates a new one
+        # and we must save it or every request will repeat the 404 cycle.
+        if getattr(user, 'stripe_customer_id', None) != customer_id:
             user.stripe_customer_id = customer_id
+            logger.info(f"💾 Updated stripe_customer_id for user {user_id}: {customer_id}")
 
         StripeService.attach_payment_method(
             payment_method_id=request.payment_method_id,
@@ -814,8 +818,27 @@ async def save_card_for_beta(
         raise
     except stripe.error.CardError as e:
         db.rollback()
-        error_msg = str(e.user_message) if hasattr(e, 'user_message') else str(e)
-        raise HTTPException(status_code=400, detail=error_msg)
+        decline_code = getattr(e, 'code', None) or 'unknown'
+        user_message = str(e.user_message) if hasattr(e, 'user_message') and e.user_message else str(e)
+        logger.error(
+            f"💳 Card declined for user {user_id} — "
+            f"code={decline_code!r} message={user_message!r}"
+        )
+        # Create the failure notification in a clean state after rollback
+        try:
+            NotificationService.create_notification(
+                db=db,
+                user_id=user_id,
+                type="payment_failed",
+                title="❌ Payment Failed",
+                message=f"Your payment was declined: {user_message}. Please check your card details and try again.",
+                link="/dashboard/upgrade",
+            )
+            db.commit()
+        except Exception as notif_err:
+            logger.warning(f"⚠️ Could not save payment-failed notification: {notif_err}")
+            db.rollback()
+        raise HTTPException(status_code=400, detail=user_message)
     except Exception as e:
         db.rollback()
         traceback.print_exc()
