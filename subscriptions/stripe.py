@@ -575,11 +575,14 @@ async def save_card_for_beta(
             user_id=user_id, email=user.email, name=user.name,
             stripe_customer_id=getattr(user, 'stripe_customer_id', None)
         )
-        # Always persist the customer_id — if the old one was stale (404 from
-        # a different Stripe account), get_or_create_customer creates a new one
-        # and we must save it or every request will repeat the 404 cycle.
+        # Always persist the customer_id immediately — if the old one was stale
+        # (404 from a different Stripe account), get_or_create_customer creates a
+        # new one. We commit it NOW, before the attach, so that even if the card
+        # is later declined and we db.rollback(), the new customer_id survives and
+        # the next payment attempt doesn't repeat the 404 cycle.
         if getattr(user, 'stripe_customer_id', None) != customer_id:
             user.stripe_customer_id = customer_id
+            db.commit()
             logger.info(f"💾 Updated stripe_customer_id for user {user_id}: {customer_id}")
 
         StripeService.attach_payment_method(
