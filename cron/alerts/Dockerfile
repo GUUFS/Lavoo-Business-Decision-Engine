@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Run the alerts cron job
-CMD ["python", "cron/alerts.py"]
+CMD ["python", "cron/alerts/alerts.py"]
