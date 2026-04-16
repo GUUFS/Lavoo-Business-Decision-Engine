@@ -333,17 +333,25 @@ class StripeService:
             
             # Use Stripe's current_period_end as the authoritative end date.
             # Do NOT calculate locally with timedelta — Stripe owns the billing cycle.
-            # After expand=["latest_invoice.payment_intent"], the subscription object
-            # sometimes doesn't hydrate period fields directly. Retrieve fresh if needed.
-            current_period_end = getattr(subscription, 'current_period_end', None)
-            current_period_start = getattr(subscription, 'current_period_start', None)
+            # Stripe Python v5 StripeObject: prefer dict-style access over getattr
+            # because attribute caching can return None for integer timestamp fields.
+            def _period(sub_obj: Any) -> tuple:
+                try:
+                    d = sub_obj.to_dict() if hasattr(sub_obj, 'to_dict') else dict(sub_obj)
+                    return d.get('current_period_start'), d.get('current_period_end')
+                except Exception:
+                    return (
+                        getattr(sub_obj, 'current_period_start', None),
+                        getattr(sub_obj, 'current_period_end', None),
+                    )
+
+            current_period_start, current_period_end = _period(subscription)
 
             if subscription.status == "active" and not (current_period_start and current_period_end):
                 # Fresh retrieve without expand to get clean period fields
                 try:
                     fresh = stripe.Subscription.retrieve(subscription.id, api_key=_sk())
-                    current_period_start = getattr(fresh, 'current_period_start', None)
-                    current_period_end = getattr(fresh, 'current_period_end', None)
+                    current_period_start, current_period_end = _period(fresh)
                     print(f"📅 Retrieved period dates: {current_period_start} → {current_period_end}")
                 except Exception as e:
                     print(f"⚠️ Could not retrieve fresh subscription for period dates: {e}")

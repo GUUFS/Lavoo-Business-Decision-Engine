@@ -997,9 +997,17 @@ async def stripe_webhook(
             # Find user — 5 strategies, log which one succeeds.
             # The basil API puts user_id in line item metadata, so check there too.
             # ----------------------------------------------------------------
-            user = db.query(User).filter(User.stripe_subscription_id == subscription_id).first()
-            if user:
-                logger.info(f"👤 User found via stripe_subscription_id: {user.email}")
+            # Strategy 1: look up via Subscriptions table (stripe_subscription_id
+            # lives there, not on User — querying User.stripe_subscription_id
+            # raises AttributeError if that column doesn't exist on the model)
+            user = None
+            sub_record = db.query(Subscriptions).filter(
+                Subscriptions.stripe_subscription_id == subscription_id
+            ).first()
+            if sub_record:
+                user = db.query(User).filter(User.id == sub_record.user_id).first()
+                if user:
+                    logger.info(f"👤 User found via Subscriptions table: {user.email}")
 
             if not user:
                 inv_meta = getattr(invoice, 'metadata', None)
