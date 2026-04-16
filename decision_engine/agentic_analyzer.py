@@ -611,7 +611,7 @@ Only recommend if it genuinely adds value."""
         Returns:
             {
                 "total_phases": 3,
-                "estimated_days": 14,
+                "estimated_days": 7,
                 "execution_roadmap": [
                     {
                         "phase": "Days 1-3: Discovery",
@@ -632,13 +632,13 @@ Only recommend if it genuinely adds value."""
 USER QUERY: "{user_query}"
 ACTION PLANS: {action_list}
 
-Your task: Create a 7-30 day execution roadmap AND generate a motivational quote.
+Your task: Create a strict 7-Day Sprint execution roadmap AND generate a motivational quote.
 
 CRITICAL RULES FOR ROADMAP:
 1. Break into 2-4 phases (not more than 4)
 2. Each phase = specific day range (e.g., "Days 1-3", "Days 4-7")
 3. Each phase has 2-4 concrete tasks
-4. Total timeline should be 7-30 days (be realistic)
+4. Total timeline must be exactly 7 days (a 7-Day Sprint)
 5. Order phases logically (setup → execute → optimize)
 
 CRITICAL RULES FOR QUOTE:
@@ -650,7 +650,7 @@ CRITICAL RULES FOR QUOTE:
 OUTPUT FORMAT (JSON):
 {{
     "total_phases": 3,
-    "estimated_days": 14,
+    "estimated_days": 7,
     "execution_roadmap": [
         {{
             "phase": "Days 1-3: The Fix",

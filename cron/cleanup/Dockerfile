@@ -13,4 +13,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Run the cleanup cron job
-CMD ["python", "cron/cleanup.py"]
+CMD ["python", "cron/cleanup/cleanup.py"]
