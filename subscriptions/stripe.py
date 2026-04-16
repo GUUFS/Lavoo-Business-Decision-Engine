@@ -192,7 +192,28 @@ def resolve_stripe_subscription_state(user: User, db: Session) -> dict:
         No live Stripe subscription → safe to call Subscription.create().
         Caller must cancel any stale incomplete sub first.
     """
-    sub_id = str(getattr(user, 'stripe_subscription_id', '') or '').strip()
+    # IMPORTANT: User model does not have stripe_subscription_id column.
+    # The subscription ID lives in the Subscriptions table. We look up the
+    # most recent active DB record first, then fall back to user attribute
+    # (for legacy rows that may have it). Using getattr blindly returns ''
+    # which causes needs_new_sub every time → double-billing for active users.
+    sub_id = None
+
+    # Primary: look up from Subscriptions table (authoritative source)
+    active_db_sub = db.query(Subscriptions).filter(
+        Subscriptions.user_id == user.id,
+        Subscriptions.subscription_status == "active",
+        Subscriptions.end_date > datetime.utcnow(),
+    ).order_by(Subscriptions.created_at.desc()).first()
+
+    if active_db_sub:
+        sub_id = getattr(active_db_sub, 'stripe_subscription_id', None) or \
+                 getattr(active_db_sub, 'transaction_id', None)
+        sub_id = str(sub_id or '').strip() or None
+
+    # Fallback: user model attribute (may exist on some schema versions)
+    if not sub_id:
+        sub_id = str(getattr(user, 'stripe_subscription_id', '') or '').strip() or None
 
     if not sub_id:
         return {"case": "needs_new_sub", "stripe_sub": None, "stripe_sub_id": None}
@@ -1138,10 +1159,14 @@ async def stripe_webhook(
                             if sub_id:
                                 break
 
-            # Find user — try subscription ID first, then customer ID
+            # Find user — try Subscriptions table first, then customer ID
             user = None
             if sub_id:
-                user = db.query(User).filter(User.stripe_subscription_id == sub_id).first()
+                sub_record = db.query(Subscriptions).filter(
+                    Subscriptions.stripe_subscription_id == sub_id
+                ).first()
+                if sub_record:
+                    user = db.query(User).filter(User.id == sub_record.user_id).first()
 
             if not user:
                 cid = getattr(invoice, 'customer', None)
@@ -1166,7 +1191,15 @@ async def stripe_webhook(
 
         elif event.type == "customer.subscription.deleted":
             stripe_sub = event.data.object
-            user = db.query(User).filter(User.stripe_subscription_id == stripe_sub.id).first()
+            # User model has no stripe_subscription_id column — look up via Subscriptions table
+            sub_record = db.query(Subscriptions).filter(
+                Subscriptions.stripe_subscription_id == stripe_sub.id
+            ).first()
+            user = db.query(User).filter(User.id == sub_record.user_id).first() if sub_record else None
+            if not user:
+                cid = getattr(stripe_sub, 'customer', None)
+                if cid:
+                    user = db.query(User).filter(User.stripe_customer_id == cid).first()
             if user:
                 user.subscription_status = "cancelled"
                 if hasattr(user, 'stripe_subscription_id'):
@@ -1197,21 +1230,19 @@ async def stripe_webhook(
             if uid:
                 user = db.query(User).filter(User.id == int(uid)).first()
 
-            # Strategy 2: match on stripe_subscription_id (exact match only)
+            # Strategy 2: match via Subscriptions table (User has no stripe_subscription_id column)
             if not user:
-                user = db.query(User).filter(
-                    User.stripe_subscription_id == stripe_sub.id
+                sub_rec = db.query(Subscriptions).filter(
+                    Subscriptions.stripe_subscription_id == stripe_sub.id
                 ).first()
+                if sub_rec:
+                    user = db.query(User).filter(User.id == sub_rec.user_id).first()
 
-            # Strategy 3: customer_id — only use if this sub matches what we
-            # have recorded for the user. Avoids overwriting status when a
-            # test/secondary sub fires an update for the same customer.
+            # Strategy 3: customer_id fallback
             if not user and stripe_sub.customer:
-                candidate = db.query(User).filter(
+                user = db.query(User).filter(
                     User.stripe_customer_id == stripe_sub.customer
                 ).first()
-                if candidate and getattr(candidate, 'stripe_subscription_id', None) == stripe_sub.id:
-                    user = candidate
 
             if user:
                 status_map = {
