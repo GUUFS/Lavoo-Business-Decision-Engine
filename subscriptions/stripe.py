@@ -8,7 +8,7 @@ import os
 import secrets
 import stripe
 
-from database.pg_connections import get_db
+from database.pg_connections import get_db, SessionLocal
 from database.pg_models import (
     PaymentIntentCreate, PaymentIntentResponse, PaymentVerify,
     SubscriptionResponse, CreateSubscriptionRequest,
@@ -575,15 +575,24 @@ async def save_card_for_beta(
             user_id=user_id, email=user.email, name=user.name,
             stripe_customer_id=getattr(user, 'stripe_customer_id', None)
         )
-        # Always persist the customer_id immediately — if the old one was stale
-        # (404 from a different Stripe account), get_or_create_customer creates a
-        # new one. We commit it NOW, before the attach, so that even if the card
-        # is later declined and we db.rollback(), the new customer_id survives and
-        # the next payment attempt doesn't repeat the 404 cycle.
+        # Always persist the customer_id in its own independent session so it
+        # survives any rollback on the main request session (card decline,
+        # pool recycle, etc.).  Using a separate SessionLocal guarantees a
+        # separate DB connection and transaction that nothing in this request
+        # can accidentally roll back.
         if getattr(user, 'stripe_customer_id', None) != customer_id:
-            user.stripe_customer_id = customer_id
-            db.commit()
-            logger.info(f"💾 Updated stripe_customer_id for user {user_id}: {customer_id}")
+            try:
+                with SessionLocal() as _s:
+                    _s.query(User).filter(User.id == user_id).update(
+                        {"stripe_customer_id": customer_id}
+                    )
+                    _s.commit()
+                # Also update the in-memory object so the rest of this request
+                # sees the correct value without a DB round-trip.
+                user.stripe_customer_id = customer_id
+                logger.info(f"💾 Persisted stripe_customer_id for user {user_id}: {customer_id}")
+            except Exception as _e:
+                logger.warning(f"⚠️ Could not persist stripe_customer_id: {_e}")
 
         StripeService.attach_payment_method(
             payment_method_id=request.payment_method_id,
