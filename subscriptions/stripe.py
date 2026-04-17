@@ -539,6 +539,84 @@ async def verify_payment(
 # SAVE CARD / CHECKOUT
 # =============================================================================
 
+class SetupIntentRequest(BaseModel):
+    currency: Optional[str] = "USD"
+
+
+@router.post("/setup-intent")
+async def create_setup_intent(
+    request: SetupIntentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Step 1 of the SetupIntent card-save flow.
+
+    Creates a Stripe SetupIntent for the authenticated user's customer record
+    and returns the client_secret the frontend needs to call
+    stripe.confirmCardSetup().  That call opens the bank's OTP popup, satisfies
+    3DS, and attaches the payment method to the customer — all without a charge.
+
+    Why this exists:
+    - PaymentMethod.attach() does a silent card verification that Nigerian banks
+      block because no OTP was presented to the cardholder.
+    - confirmCardSetup() triggers the bank's OTP/3DS popup so the cardholder
+      authenticates before any money moves, which most Nigerian banks require.
+    """
+    user_id = None
+    try:
+        user_id = extract_user_id(current_user)
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Get or create Stripe customer (same logic as save-card-beta)
+        customer_id = StripeService.get_or_create_customer(
+            user_id=user_id, email=user.email, name=user.name,
+            stripe_customer_id=getattr(user, 'stripe_customer_id', None)
+        )
+
+        # Persist customer_id in its own session so it survives any rollback
+        if getattr(user, 'stripe_customer_id', None) != customer_id:
+            try:
+                with SessionLocal() as _s:
+                    _s.query(User).filter(User.id == user_id).update(
+                        {"stripe_customer_id": customer_id}
+                    )
+                    _s.commit()
+                user.stripe_customer_id = customer_id
+                logger.info(f"💾 Persisted stripe_customer_id for user {user_id}: {customer_id}")
+            except Exception as _e:
+                logger.warning(f"⚠️ Could not persist stripe_customer_id: {_e}")
+
+        # Create the SetupIntent
+        # usage='off_session' tells Stripe this card will be charged automatically
+        # in the future (subscriptions), so the bank must authenticate it now.
+        setup_intent = stripe.SetupIntent.create(
+            customer=customer_id,
+            usage="off_session",
+            payment_method_types=["card"],
+            api_key=os.getenv("STRIPE_SECRET_KEY"),
+        )
+
+        logger.info(
+            f"🔐 SetupIntent {setup_intent.id} created for user {user_id} "
+            f"(customer {customer_id})"
+        )
+
+        return {
+            "client_secret": setup_intent.client_secret,
+            "setup_intent_id": setup_intent.id,
+            "customer_id": customer_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ SetupIntent creation failed for user {user_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/save-card-beta")
 async def save_card_for_beta(
     request: SaveCardRequest,
