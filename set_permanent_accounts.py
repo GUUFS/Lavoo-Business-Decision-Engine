@@ -42,6 +42,8 @@ from database.pg_models import User, Subscriptions
 PERMANENT_EMAILS = [
     "wealththecreator01@gmail.com",
     "clinton@gmail.com",
+    "agadiajeffrey@gmail.com",
+    "alewibolu05@gmail.com",
 ]
 
 # Date far enough in the future that it will never naturally expire

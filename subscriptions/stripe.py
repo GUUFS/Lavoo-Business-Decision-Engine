@@ -672,11 +672,14 @@ async def save_card_for_beta(
             except Exception as _e:
                 logger.warning(f"⚠️ Could not persist stripe_customer_id: {_e}")
 
-        StripeService.attach_payment_method(
-            payment_method_id=request.payment_method_id,
-            customer_id=customer_id,
-            set_as_default=True
-        )
+        # NOTE: We deliberately do NOT call PaymentMethod.attach() here.
+        # attach() sends a silent $0 card verification to the bank with no OTP —
+        # CBN regulations require every Nigerian card transaction to have explicit
+        # cardholder authentication, so banks decline silent verifications.
+        # The card will be authenticated and attached by Stripe automatically when
+        # the frontend calls stripe.confirmCardPayment() with the card element
+        # inline (the path that banks accept). For off_session cron billing the
+        # PM is already attached from a previous successful confirmation.
 
         # ── Save card metadata ────────────────────────────────────────────────
         _stripe_key = os.getenv("STRIPE_SECRET_KEY")
@@ -827,7 +830,7 @@ async def save_card_for_beta(
         sub_result = StripeService.create_subscription_with_saved_card(
             customer_id=customer_id,
             price_id=price_id,
-            payment_method_id=request.payment_method_id,
+            payment_method_id=None,  # No pre-attach — frontend confirms inline
             metadata={
                 "user_id": str(user.id),
                 "plan_type": plan_type,
@@ -835,7 +838,7 @@ async def save_card_for_beta(
                 "source": "save_card_launch",
                 "is_beta_user": str(getattr(user, 'is_beta_user', False))
             },
-            off_session=False  # User is present — allows 3DS modal
+            off_session=False  # User is present — frontend confirms via OTP
         )
 
         sub_status = sub_result.get("status")
@@ -1737,8 +1740,8 @@ async def confirm_subscription(
 
         try:
             pm_id = verification.get("payment_method")
-            if pm_id and not getattr(user, 'stripe_payment_method_id', None):
-                pm = stripe.PaymentMethod.retrieve(pm_id)
+            if pm_id:
+                pm = stripe.PaymentMethod.retrieve(pm_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
                 user.stripe_payment_method_id = pm_id
                 user.card_last4 = pm.card.last4
                 user.card_brand = pm.card.brand

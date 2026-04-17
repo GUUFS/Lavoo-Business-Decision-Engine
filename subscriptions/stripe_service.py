@@ -228,7 +228,7 @@ class StripeService:
     def create_subscription_with_saved_card(
         customer_id: str,
         price_id: str,
-        payment_method_id: str,
+        payment_method_id: Optional[str] = None,
         metadata: Dict[str, Any] = None,
         off_session: bool = False
     ) -> Dict[str, Any]:
@@ -271,7 +271,6 @@ class StripeService:
             create_params = dict(
                 customer=customer_id,
                 items=[{"price": price_id}],
-                default_payment_method=payment_method_id,
                 payment_behavior=payment_behavior,
                 payment_settings={
                     "save_default_payment_method": "on_subscription",
@@ -280,6 +279,13 @@ class StripeService:
                 metadata=metadata or {},
                 expand=["latest_invoice.payment_intent"]
             )
+            # Only set default_payment_method when the PM is already attached
+            # (off_session cron billing). For user-present flows, omit it so the
+            # subscription starts as 'incomplete' and the frontend confirms with
+            # confirmCardPayment() passing the card element inline — the
+            # authenticated path that Nigerian banks accept.
+            if payment_method_id and off_session:
+                create_params["default_payment_method"] = payment_method_id
 
             if off_session:
                 create_params["off_session"] = True
