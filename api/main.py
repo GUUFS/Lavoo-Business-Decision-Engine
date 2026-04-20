@@ -594,7 +594,7 @@ app.include_router(settings.router, prefix="/api")
 app.include_router(user_settings.router, prefix="/api")  # User settings
 app.include_router(user_missions.router, prefix="/api")  # Missions system
 app.include_router(user_profile.router)  # User profile — prefix /api/profile is set internally
-app.include_router(stripe_connect.router, prefix="/api/stripe-connect")
+app.include_router(stripe_connect.router)  # router itself carries prefix="/api/stripe/connect"
 app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")

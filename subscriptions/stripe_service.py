@@ -342,14 +342,51 @@ class StripeService:
             # Stripe Python v5 StripeObject: prefer dict-style access over getattr
             # because attribute caching can return None for integer timestamp fields.
             def _period(sub_obj: Any) -> tuple:
+                """
+                Extract current_period_start / current_period_end from a Stripe
+                Subscription object.  Stripe Python v5 (basil API) may cache
+                integer timestamp fields as None via attribute access, and in
+                some API versions the period fields moved to the first subscription
+                item.  Try four sources in order of reliability.
+                """
                 try:
                     d = sub_obj.to_dict() if hasattr(sub_obj, 'to_dict') else dict(sub_obj)
-                    return d.get('current_period_start'), d.get('current_period_end')
+                    ps = d.get('current_period_start')
+                    pe = d.get('current_period_end')
+                    if ps and pe:
+                        return ps, pe
+
+                    # Basil API: period fields may be on items[0]
+                    items = d.get('items', {})
+                    items_data = items.get('data', []) if isinstance(items, dict) else []
+                    for item in items_data:
+                        item_d = item if isinstance(item, dict) else (item.to_dict() if hasattr(item, 'to_dict') else {})
+                        ps = item_d.get('current_period_start') or ps
+                        pe = item_d.get('current_period_end') or pe
+                        if ps and pe:
+                            return ps, pe
+
+                    return ps, pe
                 except Exception:
-                    return (
-                        getattr(sub_obj, 'current_period_start', None),
-                        getattr(sub_obj, 'current_period_end', None),
-                    )
+                    pass
+
+                # Fallback: direct attribute access
+                ps = getattr(sub_obj, 'current_period_start', None)
+                pe = getattr(sub_obj, 'current_period_end', None)
+                if ps and pe:
+                    return ps, pe
+
+                # Last resort: check items via attribute access
+                try:
+                    for item in (getattr(sub_obj, 'items', None) or {}).get('data', []):
+                        ps = ps or getattr(item, 'current_period_start', None)
+                        pe = pe or getattr(item, 'current_period_end', None)
+                        if ps and pe:
+                            break
+                except Exception:
+                    pass
+
+                return ps, pe
 
             current_period_start, current_period_end = _period(subscription)
 
@@ -358,7 +395,10 @@ class StripeService:
                 try:
                     fresh = stripe.Subscription.retrieve(subscription.id, api_key=_sk())
                     current_period_start, current_period_end = _period(fresh)
-                    print(f"📅 Retrieved period dates: {current_period_start} → {current_period_end}")
+                    if current_period_start and current_period_end:
+                        print(f"📅 Retrieved period dates: {current_period_start} → {current_period_end}")
+                    else:
+                        print(f"⚠️ Period dates still unavailable after fresh retrieve — Stripe may not expose them yet for this subscription")
                 except Exception as e:
                     print(f"⚠️ Could not retrieve fresh subscription for period dates: {e}")
 

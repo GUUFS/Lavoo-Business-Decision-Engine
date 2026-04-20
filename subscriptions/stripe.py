@@ -1138,8 +1138,10 @@ async def stripe_webhook(
             # lives there, not on User — querying User.stripe_subscription_id
             # raises AttributeError if that column doesn't exist on the model)
             user = None
+            # Subscriptions.transaction_id stores the Stripe subscription ID (sub_xxx).
+            # There is no stripe_subscription_id column on this model.
             sub_record = db.query(Subscriptions).filter(
-                Subscriptions.stripe_subscription_id == subscription_id
+                Subscriptions.transaction_id == subscription_id
             ).first()
             if sub_record:
                 user = db.query(User).filter(User.id == sub_record.user_id).first()
