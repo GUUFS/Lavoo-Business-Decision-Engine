@@ -69,7 +69,7 @@ async def create_stripe_connect_account(
 
         stripe_account_id = None
 
-        # ── Step 1: check for an existing Stripe account ─────────────────────
+        # ── Step 1: check for an existing Stripe account 
         if payout_account and payout_account.stripe_account_id:
             stripe_account_id = payout_account.stripe_account_id
             logger.info(
@@ -103,79 +103,130 @@ async def create_stripe_connect_account(
 
         # ── Step 2: create a new Express account if needed ────────────────────
         if not stripe_account_id:
-            logger.info(
-                f"[Stripe Connect /onboard] creating new Express account for "
-                f"user_id={user_id} email={user_email}"
-            )
+            # Before creating, search Stripe for an existing Express account with
+            # our metadata user_id.  Previous runs may have created one without
+            # saving it to the DB (due to the now-fixed payment_method bug).
+            # Re-using it avoids duplicate accounts for the same email, which is
+            # what triggers Stripe's 429 on their hosted onboarding page.
             try:
-                account = stripe.Account.create(
-                    type="express",
-                    country="US",
-                    email=user_email,
-                    capabilities={
-                        "card_payments": {"requested": True},
-                        "transfers": {"requested": True},
-                    },
-                    business_type="individual",
-                    metadata={
-                        "user_id": str(user_id),
-                        "platform": "Lavoo Business Decision Engine",
-                    },
-                    api_key=os.getenv("STRIPE_SECRET_KEY"),
+                existing_accounts = stripe.Account.list(
+                    limit=20, api_key=os.getenv("STRIPE_SECRET_KEY")
                 )
-            except stripe.error.StripeError as e:
-                logger.error(
-                    f"[Stripe Connect /onboard] stripe.Account.create failed for "
-                    f"user_id={user_id}: {e}\n{traceback.format_exc()}"
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to create Stripe account: {e.user_message or str(e)}",
+                for acc in existing_accounts.auto_paging_iter():
+                    meta = (acc.metadata or {})
+                    if str(meta.get("user_id")) == str(user_id):
+                        stripe_account_id = acc.id
+                        logger.info(
+                            f"[Stripe Connect /onboard] found orphaned Stripe account "
+                            f"{stripe_account_id} for user_id={user_id} — reusing it"
+                        )
+                        # Persist the recovered account to prevent future orphaning
+                        if not payout_account:
+                            payout_account = PayoutAccount(
+                                user_id=user_id,
+                                payment_method="stripe",
+                            )
+                            db.add(payout_account)
+                        else:
+                            payout_account.payment_method = "stripe"
+                        payout_account.stripe_account_id = stripe_account_id
+                        payout_account.stripe_account_status = "pending"
+                        payout_account.updated_at = datetime.utcnow()
+                        try:
+                            db.commit()
+                            db.refresh(payout_account)
+                            logger.info(
+                                f"[Stripe Connect /onboard] orphaned account "
+                                f"{stripe_account_id} saved to DB"
+                            )
+                        except Exception as db_err:
+                            db.rollback()
+                            logger.error(
+                                f"[Stripe Connect /onboard] DB save for recovered account "
+                                f"failed: {db_err}\n{traceback.format_exc()}"
+                            )
+                        break
+            except stripe.error.StripeError as search_err:
+                logger.warning(
+                    f"[Stripe Connect /onboard] account search failed (will create new): "
+                    f"{search_err}"
                 )
 
-            stripe_account_id = account.id
-            logger.info(
-                f"[Stripe Connect /onboard] new account created: {stripe_account_id} "
-                f"for user_id={user_id}"
-            )
-
-            # Persist to payout_accounts table.
-            # IMPORTANT: the Python attribute is `payment_method`; SQLAlchemy maps
-            # it to the DB column named `default_payout_method` (nullable=False).
-            if not payout_account:
-                payout_account = PayoutAccount(
-                    user_id=user_id,
-                    payment_method="stripe",
-                )
-                db.add(payout_account)
+            if not stripe_account_id:
+                # No orphaned account found — create a fresh one
                 logger.info(
-                    f"[Stripe Connect /onboard] new PayoutAccount row created for user_id={user_id}"
+                    f"[Stripe Connect /onboard] no existing account found — creating new "
+                    f"Express account for user_id={user_id} email={user_email}"
                 )
-            else:
-                payout_account.payment_method = "stripe"
+                try:
+                    new_account = stripe.Account.create(
+                        type="express",
+                        country="US",
+                        email=user_email,
+                        capabilities={
+                            "card_payments": {"requested": True},
+                            "transfers": {"requested": True},
+                        },
+                        business_type="individual",
+                        metadata={
+                            "user_id": str(user_id),
+                            "platform": "Lavoo Business Decision Engine",
+                        },
+                        api_key=os.getenv("STRIPE_SECRET_KEY"),
+                    )
+                except stripe.error.StripeError as e:
+                    logger.error(
+                        f"[Stripe Connect /onboard] stripe.Account.create failed for "
+                        f"user_id={user_id}: {e}\n{traceback.format_exc()}"
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to create Stripe account: {e.user_message or str(e)}",
+                    )
 
-            payout_account.stripe_account_id = stripe_account_id
-            payout_account.stripe_account_status = "pending"
-            payout_account.updated_at = datetime.utcnow()
-
-            try:
-                db.commit()
-                db.refresh(payout_account)
+                stripe_account_id = new_account.id
                 logger.info(
-                    f"[Stripe Connect /onboard] PayoutAccount saved id={payout_account.id}"
-                )
-            except Exception as db_err:
-                db.rollback()
-                logger.error(
-                    f"[Stripe Connect /onboard] DB commit failed for user_id={user_id}: "
-                    f"{db_err}\n{traceback.format_exc()}"
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Database error saving payout account: {db_err}",
+                    f"[Stripe Connect /onboard] new account created: {stripe_account_id} "
+                    f"for user_id={user_id}"
                 )
 
-        # ── Step 3: generate the hosted onboarding link ───────────────────────
+                # Persist to payout_accounts table.
+                # IMPORTANT: Python attribute is `payment_method`; SQLAlchemy maps it to
+                # the DB column `default_payout_method` (nullable=False).
+                if not payout_account:
+                    payout_account = PayoutAccount(
+                        user_id=user_id,
+                        payment_method="stripe",
+                    )
+                    db.add(payout_account)
+                    logger.info(
+                        f"[Stripe Connect /onboard] new PayoutAccount row added for user_id={user_id}"
+                    )
+                else:
+                    payout_account.payment_method = "stripe"
+
+                payout_account.stripe_account_id = stripe_account_id
+                payout_account.stripe_account_status = "pending"
+                payout_account.updated_at = datetime.utcnow()
+
+                try:
+                    db.commit()
+                    db.refresh(payout_account)
+                    logger.info(
+                        f"[Stripe Connect /onboard] PayoutAccount saved id={payout_account.id}"
+                    )
+                except Exception as db_err:
+                    db.rollback()
+                    logger.error(
+                        f"[Stripe Connect /onboard] DB commit failed for user_id={user_id}: "
+                        f"{db_err}\n{traceback.format_exc()}"
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Database error saving payout account: {db_err}",
+                    )
+
+        # Step 3: generate the hosted onboarding link 
         return_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=success"
         refresh_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=refresh"
         logger.info(
