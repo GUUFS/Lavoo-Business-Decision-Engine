@@ -606,5 +606,8 @@ from api.routes.community import community as community_routes
 app.include_router(community_routes.router)  # internally prefixed /api/community
 from api.routes.marketplace import marketplace as marketplace_routes
 app.include_router(marketplace_routes.router)  # internally prefixed /api/marketplace
+from api.routes.admin.mvp_features import admin_router as mvp_admin_router, public_router as mvp_public_router
+app.include_router(mvp_admin_router)  # /api/admin/mvp-features
+app.include_router(mvp_public_router)  # /api/mvp-features + /api/mvp-features/stream
 
 # Note: Index/catch-all router removed as we're using Next.js frontend

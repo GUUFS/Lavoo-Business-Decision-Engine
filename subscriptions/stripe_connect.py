@@ -113,7 +113,7 @@ async def create_stripe_connect_account(
                     limit=20, api_key=os.getenv("STRIPE_SECRET_KEY")
                 )
                 for acc in existing_accounts.auto_paging_iter():
-                    meta = (acc.metadata or {})
+                    meta = dict(acc.metadata) if acc.metadata else {}
                     if str(meta.get("user_id")) == str(user_id):
                         stripe_account_id = acc.id
                         logger.info(
@@ -408,6 +408,52 @@ async def refresh_stripe_onboarding(
     except Exception as e:
         logger.error(
             f"[Stripe Connect /refresh-onboarding] unexpected error for user_id={user_id}: "
+            f"{e}\n{traceback.format_exc()}"
+        )
+        raise HTTPException(status_code=500, detail=f"Server error: {e}")
+
+
+@router.get("/dashboard-link")
+async def get_stripe_dashboard_link(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return a Stripe Express Dashboard login link so the user can view their account."""
+    user_data = extract_user_from_token(current_user)
+    user_id = user_data.get("id")
+    logger.info(f"[Stripe Connect /dashboard-link] user_id={user_id}")
+
+    try:
+        payout_account = db.query(PayoutAccount).filter(
+            PayoutAccount.user_id == user_id
+        ).first()
+
+        if not payout_account or not payout_account.stripe_account_id:
+            raise HTTPException(status_code=404, detail="No Stripe account connected")
+
+        account_id = payout_account.stripe_account_id
+        try:
+            login_link = stripe.Account.create_login_link(
+                account_id, api_key=os.getenv("STRIPE_SECRET_KEY")
+            )
+        except stripe.error.StripeError as e:
+            logger.error(
+                f"[Stripe Connect /dashboard-link] create_login_link failed for "
+                f"{account_id}: {e}\n{traceback.format_exc()}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not generate dashboard link: {e.user_message or str(e)}",
+            )
+
+        logger.info(f"[Stripe Connect /dashboard-link] link generated for {account_id}")
+        return {"status": "success", "url": login_link.url}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"[Stripe Connect /dashboard-link] unexpected error for user_id={user_id}: "
             f"{e}\n{traceback.format_exc()}"
         )
         raise HTTPException(status_code=500, detail=f"Server error: {e}")

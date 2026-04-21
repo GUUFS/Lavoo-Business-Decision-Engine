@@ -1744,3 +1744,19 @@ class MarketplaceRequest(Base):
     status = Column(String(50), nullable=False, default="open")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user = relationship("User")
+
+
+class MvpFeature(Base):
+    """Feature flag controlling which pages/features are visible in the customer app."""
+    __tablename__ = "mvp_features"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, unique=True)
+    directory = Column(String(500), nullable=False, unique=True)
+    is_in_mvp = Column(Boolean, nullable=False, default=False)
+    has_sub_pages = Column(Boolean, nullable=False, default=False)
+    launch_date = Column(String(100), nullable=True)
+    is_in_next_feature_launch = Column(Boolean, nullable=False, default=False)
+    # JSON array of sub-pages: [{name, directory, is_in_mvp, ...}]
+    sub_pages = Column(JSON, nullable=True, default=list)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
