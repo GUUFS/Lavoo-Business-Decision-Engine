@@ -17,8 +17,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database.pg_connections import get_db
-from database.pg_models import MvpFeature, User
-from api.routes.auth.login import get_current_user
+from database.pg_models import MvpFeature
+from api.routes.dependencies import admin_required
 
 logger = logging.getLogger(__name__)
 
@@ -109,21 +109,10 @@ class ToggleFeatureRequest(BaseModel):
     sub_page_directory: str | None = None  # if set, toggle a specific sub-page
 
 
-# ── Admin: require admin role ─────────────────────────────────────────────────
-def require_admin(current_user=Depends(get_current_user)):
-    if isinstance(current_user, dict):
-        role = current_user.get("role") or (current_user.get("user") or {}).get("role")
-    else:
-        role = getattr(current_user, "role", None)
-    if role not in ("admin", "superadmin"):
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
-
-
 # ── Admin endpoints ───────────────────────────────────────────────────────────
 @admin_router.get("")
 async def list_mvp_features(
-    _=Depends(require_admin),
+    _=Depends(admin_required),
     db: Session = Depends(get_db),
 ):
     seed_features_if_empty(db)
@@ -135,7 +124,7 @@ async def list_mvp_features(
 async def toggle_mvp_feature(
     feature_id: int,
     body: ToggleFeatureRequest,
-    _=Depends(require_admin),
+    _=Depends(admin_required),
     db: Session = Depends(get_db),
 ):
     feature = db.query(MvpFeature).filter(MvpFeature.id == feature_id).first()

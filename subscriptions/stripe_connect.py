@@ -113,7 +113,18 @@ async def create_stripe_connect_account(
                     limit=20, api_key=os.getenv("STRIPE_SECRET_KEY")
                 )
                 for acc in existing_accounts.auto_paging_iter():
-                    meta = dict(acc.metadata) if acc.metadata else {}
+                    # StripeObject.__getitem__ does not support dict() coercion;
+                    # iterate keys explicitly to build a plain Python dict.
+                    meta: dict = {}
+                    try:
+                        if acc.metadata:
+                            for k in acc.metadata.keys():
+                                try:
+                                    meta[k] = acc.metadata[k]
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
                     if str(meta.get("user_id")) == str(user_id):
                         stripe_account_id = acc.id
                         logger.info(
