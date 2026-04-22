@@ -319,14 +319,16 @@ async def get_stripe_account_status(
             )
             raise HTTPException(status_code=400, detail=f"Stripe error: {e.user_message or str(e)}")
 
-        if account.details_submitted:
+        if account.details_submitted and account.charges_enabled and account.payouts_enabled:
             payout_account.stripe_account_status = "verified"
             payout_account.is_verified = True
             payout_account.verified_at = datetime.utcnow()
         elif account.charges_enabled:
             payout_account.stripe_account_status = "active"
+            payout_account.is_verified = False
         else:
             payout_account.stripe_account_status = "pending"
+            payout_account.is_verified = False
 
         try:
             db.commit()
@@ -583,11 +585,22 @@ async def stripe_connect_webhook(
                 )
                 payout_account.updated_at = datetime.utcnow()
 
-                if account.charges_enabled and account.payouts_enabled:
+                # Require details_submitted as the definitive signal — Stripe can send
+                # charges_enabled=True for new Express accounts in test mode before
+                # the user has actually completed any onboarding steps.
+                if account.charges_enabled and account.payouts_enabled and account.details_submitted:
                     payout_account.is_verified = True
                     payout_account.verified_at = datetime.utcnow()
                     logger.info(
                         f"[Stripe Connect /webhook] account {account_id} marked ACTIVE+VERIFIED"
+                    )
+                elif payout_account.is_verified and not account.details_submitted:
+                    # Guard: if somehow is_verified was set True but details are gone, roll back
+                    payout_account.is_verified = False
+                    payout_account.verified_at = None
+                    logger.warning(
+                        f"[Stripe Connect /webhook] account {account_id} — details_submitted=False, "
+                        f"rolling back is_verified to False"
                     )
 
                 try:
