@@ -186,10 +186,11 @@ async def mvp_features_stream(db: Session = Depends(get_db)):
         try:
             while True:
                 try:
-                    payload = await asyncio.wait_for(queue.get(), timeout=30)
+                    # 15-second timeout keeps the stream alive under Railway's
+                    # HTTP/2 proxy idle-reset threshold (~60 s).
+                    payload = await asyncio.wait_for(queue.get(), timeout=15)
                     yield f"data: {json.dumps(payload)}\n\n"
                 except asyncio.TimeoutError:
-                    # Keep-alive heartbeat so the connection doesn't drop
                     yield ": heartbeat\n\n"
         except asyncio.CancelledError:
             pass
