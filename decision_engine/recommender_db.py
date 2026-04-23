@@ -5,11 +5,14 @@ This replaces the CSV-based recommender with database queries.
 """
 
 import hashlib
+import json
 import logging
 import os
 import pickle
+import re
 import sys
 from datetime import datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -328,6 +331,276 @@ def recommend_tools(user_query: str, top_k: int = 5, db_session: Session = None)
 
     recommender = get_recommender(db_session)
     return recommender.recommend(user_query, top_k)
+
+
+def _safe_parse_text_list(value: Any) -> list[str]:
+    """Parse semi-structured text/json fields into a normalized string list."""
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    if isinstance(value, str):
+        text_value = value.strip()
+        if not text_value:
+            return []
+
+        # Try JSON list first
+        if text_value.startswith("[") and text_value.endswith("]"):
+            try:
+                parsed = json.loads(text_value)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+        # Split by common separators
+        parts = re.split(r"\||,|;", text_value)
+        return [part.strip() for part in parts if part.strip()]
+
+    return []
+
+
+def _normalize_tokens(values: list[str]) -> set[str]:
+    """Normalize tokens for lightweight overlap-based compatibility scoring."""
+    tokens: set[str] = set()
+    for value in values:
+        for token in re.findall(r"[a-zA-Z0-9\-\+]+", value.lower()):
+            if len(token) >= 3:
+                tokens.add(token)
+    return tokens
+
+
+def _compute_pair_compatibility(left_tool: dict, right_tool: dict) -> float:
+    """Heuristic compatibility score between two tools in range [0, 1]."""
+    left_name = str(left_tool.get("name", "")).lower()
+    right_name = str(right_tool.get("name", "")).lower()
+    if not left_name or not right_name:
+        return 0.0
+
+    left_integrations = _safe_parse_text_list(left_tool.get("compatibility_integration"))
+    right_integrations = _safe_parse_text_list(right_tool.get("compatibility_integration"))
+    left_integration_tokens = _normalize_tokens(left_integrations)
+    right_integration_tokens = _normalize_tokens(right_integrations)
+
+    left_use_cases = _normalize_tokens(_safe_parse_text_list(left_tool.get("who_should_use")))
+    right_use_cases = _normalize_tokens(_safe_parse_text_list(right_tool.get("who_should_use")))
+
+    score = 0.0
+
+    # Explicit integration mention by name is a strong signal.
+    if any(right_name in integration.lower() for integration in left_integrations):
+        score += 0.35
+    if any(left_name in integration.lower() for integration in right_integrations):
+        score += 0.35
+
+    # Shared integration ecosystem and use-case overlap are medium signals.
+    if left_integration_tokens and right_integration_tokens:
+        overlap = len(left_integration_tokens.intersection(right_integration_tokens))
+        score += min(0.2, overlap * 0.05)
+
+    if left_use_cases and right_use_cases:
+        overlap = len(left_use_cases.intersection(right_use_cases))
+        score += min(0.2, overlap * 0.05)
+
+    # Similar category usually indicates easier workflow fit.
+    if left_tool.get("main_category") and left_tool.get("main_category") == right_tool.get("main_category"):
+        score += 0.1
+
+    return max(0.0, min(score, 1.0))
+
+
+def recommend_automation_stacks(
+    user_query: str,
+    action_plans: list[dict],
+    top_k_stacks: int = 3,
+    max_tools_per_stack: int = 4,
+    db_session: Session = None,
+) -> list[dict]:
+    """
+    Build ranked automation stacks (1-4 tools) from DB tools using semantic similarity + compatibility.
+
+    Each stack is generated dynamically from the tool catalog currently stored in the database.
+    """
+    if db_session is None:
+        raise ValueError("Database session is required")
+
+    if not user_query.strip():
+        return []
+
+    recommender = get_recommender(db_session)
+    if recommender.tools_df is None or recommender.tools_df.empty:
+        return []
+
+    max_tools_per_stack = max(1, min(max_tools_per_stack, 4))
+    top_k_stacks = max(1, min(top_k_stacks, 3))
+
+    tools_df = recommender.tools_df.reset_index(drop=True)
+    if recommender.embeddings is None or len(recommender.embeddings) == 0:
+        return []
+
+    query_embedding = model.encode([user_query], convert_to_tensor=False)[0]
+    global_similarities = cosine_similarity([query_embedding], recommender.embeddings)[0]
+
+    action_queries: list[tuple[int, str]] = []
+    for plan in action_plans or []:
+        title = str(plan.get("title", "")).strip()
+        what_to_do = plan.get("what_to_do", [])
+        steps_text = " ".join(what_to_do) if isinstance(what_to_do, list) else str(what_to_do)
+        query = f"{title} {steps_text}".strip()
+        if query:
+            action_queries.append((int(plan.get("id", len(action_queries) + 1)), query))
+
+    # Gather candidate indices from global query + each action query to preserve semantic relevance.
+    candidate_indices: set[int] = set(np.argsort(global_similarities)[::-1][:20].tolist())
+
+    action_similarity_maps: dict[int, np.ndarray] = {}
+    for action_id, query in action_queries:
+        action_embedding = model.encode([query], convert_to_tensor=False)[0]
+        action_sims = cosine_similarity([action_embedding], recommender.embeddings)[0]
+        action_similarity_maps[action_id] = action_sims
+        candidate_indices.update(np.argsort(action_sims)[::-1][:8].tolist())
+
+    if not candidate_indices:
+        return []
+
+    candidate_tools: list[dict] = []
+    for index in sorted(candidate_indices):
+        tool_row = tools_df.iloc[index]
+        candidate_tools.append(
+            {
+                "index": index,
+                "id": int(tool_row["id"]),
+                "name": str(tool_row["name"]),
+                "description": str(tool_row.get("description", "") or ""),
+                "main_category": tool_row.get("main_category"),
+                "sub_category": tool_row.get("sub_category"),
+                "pricing": tool_row.get("pricing"),
+                "ratings": float(tool_row.get("ratings") or 0.0),
+                "compatibility_integration": tool_row.get("compatibility_integration"),
+                "who_should_use": tool_row.get("who_should_use"),
+                "query_similarity": float(global_similarities[index]),
+            }
+        )
+
+    candidate_tools.sort(key=lambda item: item["query_similarity"], reverse=True)
+    if not candidate_tools:
+        return []
+
+    stack_candidates: list[dict] = []
+    seen_signatures: set[tuple[int, ...]] = set()
+
+    seed_count = min(8, len(candidate_tools))
+    for seed in candidate_tools[:seed_count]:
+        chosen: list[dict] = [seed]
+        remaining = [tool for tool in candidate_tools if tool["id"] != seed["id"]]
+
+        while len(chosen) < max_tools_per_stack and remaining:
+            best_tool = None
+            best_score = 0.0
+
+            for tool in remaining:
+                pair_scores = [_compute_pair_compatibility(tool, selected) for selected in chosen]
+                compatibility_score = sum(pair_scores) / len(pair_scores) if pair_scores else 0.0
+                combined_score = (0.7 * tool["query_similarity"]) + (0.3 * compatibility_score)
+                if combined_score > best_score:
+                    best_score = combined_score
+                    best_tool = tool
+
+            if best_tool is None or best_score < 0.45:
+                break
+
+            chosen.append(best_tool)
+            remaining = [tool for tool in remaining if tool["id"] != best_tool["id"]]
+
+        signature = tuple(sorted(tool["id"] for tool in chosen))
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        action_coverage: list[dict] = []
+        for action_id, action_query in action_queries:
+            sims = action_similarity_maps.get(action_id)
+            if sims is None:
+                continue
+            match = max(float(sims[tool["index"]]) for tool in chosen)
+            if match >= 0.45:
+                action_coverage.append(
+                    {
+                        "action_id": action_id,
+                        "action": action_query[:160],
+                        "match_score": round(match, 3),
+                    }
+                )
+
+        pairwise_scores: list[float] = []
+        for i in range(len(chosen)):
+            for j in range(i + 1, len(chosen)):
+                pairwise_scores.append(_compute_pair_compatibility(chosen[i], chosen[j]))
+
+        compatibility_avg = sum(pairwise_scores) / len(pairwise_scores) if pairwise_scores else 0.0
+        relevance_avg = sum(tool["query_similarity"] for tool in chosen) / len(chosen)
+        coverage_bonus = min(0.25, 0.1 * len(action_coverage))
+        complexity_penalty = 0.03 * max(0, len(chosen) - 3)
+
+        stack_score = (0.65 * relevance_avg) + (0.25 * compatibility_avg) + coverage_bonus - complexity_penalty
+        confidence = round(max(0.0, min(stack_score, 1.0)) * 100, 1)
+
+        stack_name = f"Automation Stack: {chosen[0]['name']}"
+        summary = (
+            f"Uses {', '.join(tool['name'] for tool in chosen)} to automate high-impact parts of the user's goal."
+        )
+        effort = "Low" if len(chosen) == 1 else "Medium" if len(chosen) <= 3 else "High"
+
+        stack_candidates.append(
+            {
+                "stack_name": stack_name,
+                "summary": summary,
+                "score": round(stack_score, 4),
+                "confidence": confidence,
+                "estimated_effort": effort,
+                "coverage_actions": action_coverage,
+                "automation_logic": (
+                    "Set up tools in sequence so data/events flow between them, then automate repeated manual tasks."
+                ),
+                "tools": [
+                    {
+                        "tool_id": tool["id"],
+                        "tool_name": tool["name"],
+                        "description": tool["description"],
+                        "main_category": tool.get("main_category"),
+                        "sub_category": tool.get("sub_category"),
+                        "pricing": tool.get("pricing"),
+                        "ratings": tool.get("ratings"),
+                        "similarity_score": round(tool["query_similarity"], 4),
+                        "position": position + 1,
+                    }
+                    for position, tool in enumerate(chosen)
+                ],
+                "setup_order": [
+                    {
+                        "position": position + 1,
+                        "tool_name": tool["name"],
+                        "why": (
+                            "Primary execution tool"
+                            if position == 0
+                            else "Connects and automates subsequent workflow steps"
+                        ),
+                    }
+                    for position, tool in enumerate(chosen)
+                ],
+            }
+        )
+
+    stack_candidates.sort(key=lambda item: item["score"], reverse=True)
+    top_stacks = stack_candidates[:top_k_stacks]
+
+    for idx, stack in enumerate(top_stacks, start=1):
+        stack["stack_id"] = idx
+        stack.pop("score", None)
+
+    return top_stacks
 
 
 # Example usage

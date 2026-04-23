@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 # Import semantic search for AI tools
-from decision_engine.recommender_db import recommend_tools
+from decision_engine.recommender_db import recommend_tools, recommend_automation_stacks
 
 # Load environment variables
 load_dotenv('.env.local')
@@ -139,6 +139,15 @@ class AgenticAnalyzer:
                 secondary_result
             )
 
+            # STAGE 3B: Multi-tool automation stacks
+            logger.info("⚙️  Stage 3B: Composing automation tool stacks...")
+            automation_stack_result = await self._stage3_automation_stacks(
+                user_query=user_query,
+                action_plans_result=action_plans_result,
+                primary_result=primary_result,
+                secondary_result=secondary_result,
+            )
+
             # STAGE 4: Roadmap & Execution Agent
             logger.info("🗺️  Stage 4: Creating execution roadmap...")
             roadmap_result = await self._stage4_roadmap_and_motivation(
@@ -153,7 +162,8 @@ class AgenticAnalyzer:
             confidence_score = self._calculate_confidence_score(
                 primary_result=primary_result,
                 action_plans_result=action_plans_result,
-                roadmap_result=roadmap_result
+                roadmap_result=roadmap_result,
+                automation_stack_result=automation_stack_result,
             )
 
             # Save to database
@@ -163,6 +173,7 @@ class AgenticAnalyzer:
                 primary_result=primary_result,
                 secondary_result=secondary_result,
                 action_plans_result=action_plans_result,
+                automation_stack_result=automation_stack_result,
                 roadmap_result=roadmap_result,
                 duration=duration_seconds,
                 confidence_score=confidence_score
@@ -175,6 +186,7 @@ class AgenticAnalyzer:
                 primary_result=primary_result,
                 secondary_result=secondary_result,
                 action_plans_result=action_plans_result,
+                automation_stack_result=automation_stack_result,
                 roadmap_result=roadmap_result
             )
 
@@ -597,6 +609,58 @@ Only recommend if it genuinely adds value."""
             "exclusions_note": "This plan specifically excludes paid advertising and complex technical builds that would exceed your current 10-hour weekly capacity. We're focusing on high-leverage organic strategies first."
         }
 
+    async def _stage3_automation_stacks(
+        self,
+        user_query: str,
+        action_plans_result: Dict[str, Any],
+        primary_result: Dict[str, Any],
+        secondary_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Stage 3B: Compose up to 3 automation stacks (1-4 tools each) from DB tools.
+
+        Returns:
+            {
+                "recommended_tool_stacks": [...]
+            }
+        """
+        try:
+            action_plans = action_plans_result.get("action_plans", []) or []
+            stacks = recommend_automation_stacks(
+                user_query=user_query,
+                action_plans=action_plans,
+                top_k_stacks=3,
+                max_tools_per_stack=4,
+                db_session=self.db,
+            )
+
+            bottleneck = primary_result.get("primary_bottleneck", {})
+            bottleneck_title = bottleneck.get("title", "core bottleneck")
+            constraints = secondary_result.get("secondary_constraints", []) or []
+            constraint_titles = [str(item.get("title", "")).strip() for item in constraints if item.get("title")]
+
+            enriched_stacks = []
+            for stack in stacks:
+                tools = stack.get("tools", [])
+                if not tools:
+                    continue
+
+                tool_names = [tool.get("tool_name", "") for tool in tools if tool.get("tool_name")]
+                stack["automation_logic"] = (
+                    f"This stack targets '{bottleneck_title}' by chaining {', '.join(tool_names)} "
+                    "into one workflow so manual steps become automated handoffs."
+                )
+                if constraint_titles:
+                    stack["solves"] = f"Helps reduce secondary constraints: {', '.join(constraint_titles[:3])}."
+                enriched_stacks.append(stack)
+
+            logger.info(f"Generated {len(enriched_stacks)} automation stacks")
+            return {"recommended_tool_stacks": enriched_stacks}
+
+        except Exception as e:
+            logger.error(f"Failed to generate automation stacks: {e}", exc_info=True)
+            return {"recommended_tool_stacks": []}
+
     # =========================================================================
     # STAGE 4: ROADMAP & MOTIVATION AGENT
     # =========================================================================
@@ -743,7 +807,8 @@ Be practical and encouraging."""
         self,
         primary_result: Dict,
         action_plans_result: Dict,
-        roadmap_result: Dict
+        roadmap_result: Dict,
+        automation_stack_result: Optional[Dict] = None,
     ) -> int:
         """
         Calculate dynamic confidence score based on analysis quality.
@@ -783,6 +848,11 @@ Be practical and encouraging."""
         if tools_count > 0:
             score += min(tools_count * 2, 5)  # Up to 5 points
 
+        # Automation stacks quality (+5 points)
+        stack_count = len((automation_stack_result or {}).get("recommended_tool_stacks", []))
+        if stack_count > 0:
+            score += min(stack_count * 2, 5)
+
         # Roadmap completeness (+5 points)
         roadmap = roadmap_result.get("execution_roadmap", [])
         if len(roadmap) >= 2:
@@ -800,6 +870,7 @@ Be practical and encouraging."""
         primary_result: Dict,
         secondary_result: Dict,
         action_plans_result: Dict,
+        automation_stack_result: Dict,
         roadmap_result: Dict,
         duration: float,
         confidence_score: int
@@ -817,6 +888,7 @@ Be practical and encouraging."""
                 what_to_stop=primary_result["what_to_stop"],
                 strategic_priority=primary_result["strategic_priority"],
                 action_plans=json.dumps(action_plans_result["action_plans"]),
+                recommended_tool_stacks=json.dumps(automation_stack_result.get("recommended_tool_stacks", [])),
                 total_phases=roadmap_result["total_phases"],
                 estimated_days=roadmap_result["estimated_days"],
                 execution_roadmap=json.dumps(roadmap_result["execution_roadmap"]),
@@ -852,6 +924,7 @@ Be practical and encouraging."""
         primary_result: Dict,
         secondary_result: Dict,
         action_plans_result: Dict,
+        automation_stack_result: Dict,
         roadmap_result: Dict
     ) -> Dict[str, Any]:
         """Format analysis results for Clinton's result page."""
@@ -870,6 +943,8 @@ Be practical and encouraging."""
                 "strategic_priority": primary_result["strategic_priority"],
                 # Action plans (ranked by leverage)
                 "action_plans": action_plans_result["action_plans"],
+                # Multi-tool automation recommendations
+                "recommended_tool_stacks": automation_stack_result.get("recommended_tool_stacks", []),
                 "total_phases": roadmap_result["total_phases"],
                 # Execution roadmap
                 "estimated_days": roadmap_result["estimated_days"],

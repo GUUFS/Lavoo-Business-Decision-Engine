@@ -173,6 +173,7 @@ class BusinessAnalysis(Base):
     what_to_stop = Column(Text, nullable=True)  # Critical action to discontinue
     strategic_priority = Column(Text, nullable=True)  # Main strategic focus
     action_plans = Column(JSON, nullable=True)  # [{id, title, what_to_do, why_it_matters, effort_level, toolkit}]
+    recommended_tool_stacks = Column(JSON, nullable=True)  # [{stack_id, stack_name, tools, setup_order, automation_logic, ...}]
     total_phases = Column(Integer, nullable=True)  # Number of delivery phases
     estimated_days = Column(Integer, nullable=True)  # Total days for execution
     execution_roadmap = Column(JSON, nullable=True)  # [{phase, days, title, tasks}]

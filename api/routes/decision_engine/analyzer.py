@@ -124,6 +124,7 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
     primary_bottleneck = parse_json_field(analysis.primary_bottleneck, {})
     secondary_constraints = parse_json_field(analysis.secondary_constraints, [])
     action_plans = parse_json_field(analysis.action_plans, [])
+    recommended_tool_stacks = parse_json_field(analysis.recommended_tool_stacks, [])
     execution_roadmap = parse_json_field(analysis.execution_roadmap, [])
 
     return {
@@ -138,6 +139,8 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
         "strategic_priority": analysis.strategic_priority,
         # Action plans (with toolkits)
         "action_plans": action_plans,
+        # Multi-tool automation stacks
+        "recommended_tool_stacks": recommended_tool_stacks,
         "total_phases": analysis.total_phases,
         # Execution roadmap
         "estimated_days": analysis.estimated_days,
