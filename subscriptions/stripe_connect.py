@@ -9,7 +9,8 @@ import json
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Body
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import stripe
 
@@ -33,6 +34,10 @@ BASE_URL = (
 )
 
 logger.info(f"[Stripe Connect] BASE_URL resolved to: {BASE_URL}")
+
+
+class OnboardRequest(BaseModel):
+    country: str = "US"
 
 
 def extract_user_from_token(current_user):
@@ -74,6 +79,7 @@ def _search_stripe_account_by_user(user_id) -> str | None:
 
 @router.post("/onboard")
 async def create_stripe_connect_account(
+    body: OnboardRequest = Body(default_factory=OnboardRequest),
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -88,8 +94,9 @@ async def create_stripe_connect_account(
     user_data = extract_user_from_token(current_user)
     user_id = user_data.get("id")
     user_email = user_data.get("email")
+    country = (body.country or "US").upper().strip()
 
-    logger.info(f"[Stripe Connect /onboard] user_id={user_id} email={user_email}")
+    logger.info(f"[Stripe Connect /onboard] user_id={user_id} email={user_email} country={country}")
 
     try:
         payout_account = db.query(PayoutAccount).filter(
@@ -157,7 +164,7 @@ async def create_stripe_connect_account(
                 try:
                     new_account = stripe.Account.create(
                         type="express",
-                        country="US",
+                        country=country,
                         email=user_email,
                         capabilities={
                             "card_payments": {"requested": True},
