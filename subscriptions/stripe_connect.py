@@ -47,14 +47,43 @@ def extract_user_from_token(current_user):
     return {"id": current_user.id, "email": current_user.email, "name": current_user.name}
 
 
+def _search_stripe_account_by_user(user_id) -> str | None:
+    """
+    Search Stripe for an Express account whose metadata.user_id matches.
+    Returns the account ID string, or None if not found.
+    StripeObject does not support dict() coercion — iterate keys explicitly.
+    """
+    try:
+        for acc in stripe.Account.list(limit=100, api_key=os.getenv("STRIPE_SECRET_KEY")).auto_paging_iter():
+            meta: dict = {}
+            try:
+                if acc.metadata:
+                    for k in acc.metadata.keys():
+                        try:
+                            meta[k] = acc.metadata[k]
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if str(meta.get("user_id")) == str(user_id):
+                return acc.id
+    except stripe.error.StripeError as e:
+        logger.warning(f"[Stripe Connect] account search by user_id failed: {e}")
+    return None
+
+
 @router.post("/onboard")
 async def create_stripe_connect_account(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Create or resume a Stripe Connect Express account for the user, then return
-    a hosted onboarding URL.  The frontend should redirect to that URL.
+    Generate a Stripe Connect hosted onboarding URL.
+
+    The PayoutAccount DB row is NOT created here.  It is created (or updated)
+    only when the webhook confirms that the user has fully completed onboarding
+    (details_submitted=True AND charges_enabled=True AND payouts_enabled=True).
+    This prevents a partially-completed flow from appearing as active to the user.
     """
     user_data = extract_user_from_token(current_user)
     user_id = user_data.get("id")
@@ -69,13 +98,20 @@ async def create_stripe_connect_account(
 
         stripe_account_id = None
 
-        # ── Step 1: check for an existing Stripe account 
+        # ── Already fully verified ────────────────────────────────────────────
+        if payout_account and payout_account.stripe_account_id and payout_account.is_verified:
+            logger.info(
+                f"[Stripe Connect /onboard] account already verified for user_id={user_id}"
+            )
+            return {
+                "status": "already_connected",
+                "message": "Stripe account already connected",
+                "account_id": payout_account.stripe_account_id,
+            }
+
+        # ── DB row exists with a stripe_account_id (incomplete from old flow) ─
         if payout_account and payout_account.stripe_account_id:
             stripe_account_id = payout_account.stripe_account_id
-            logger.info(
-                f"[Stripe Connect /onboard] existing stripe_account_id={stripe_account_id} "
-                f"for user_id={user_id}"
-            )
             try:
                 account = stripe.Account.retrieve(
                     stripe_account_id, api_key=os.getenv("STRIPE_SECRET_KEY")
@@ -83,7 +119,7 @@ async def create_stripe_connect_account(
                 if account.details_submitted:
                     logger.info(
                         f"[Stripe Connect /onboard] account {stripe_account_id} already "
-                        f"fully onboarded (details_submitted=True) — returning already_connected"
+                        f"fully onboarded (details_submitted=True)"
                     )
                     return {
                         "status": "already_connected",
@@ -91,83 +127,32 @@ async def create_stripe_connect_account(
                         "account_id": stripe_account_id,
                     }
                 logger.info(
-                    f"[Stripe Connect /onboard] account {stripe_account_id} exists but "
-                    f"onboarding not complete — generating new AccountLink"
+                    f"[Stripe Connect /onboard] resuming incomplete onboarding "
+                    f"for existing account {stripe_account_id}"
                 )
             except stripe.error.InvalidRequestError as e:
                 logger.warning(
-                    f"[Stripe Connect /onboard] existing account {stripe_account_id} is "
-                    f"invalid in Stripe (will create new): {e}"
+                    f"[Stripe Connect /onboard] stored account {stripe_account_id} is "
+                    f"invalid in Stripe — will search/create: {e}"
                 )
                 stripe_account_id = None
 
-        # ── Step 2: create a new Express account if needed ────────────────────
+        # ── No usable account yet — search Stripe by metadata then create ─────
         if not stripe_account_id:
-            # Before creating, search Stripe for an existing Express account with
-            # our metadata user_id.  Previous runs may have created one without
-            # saving it to the DB (due to the now-fixed payment_method bug).
-            # Re-using it avoids duplicate accounts for the same email, which is
-            # what triggers Stripe's 429 on their hosted onboarding page.
-            try:
-                existing_accounts = stripe.Account.list(
-                    limit=20, api_key=os.getenv("STRIPE_SECRET_KEY")
-                )
-                for acc in existing_accounts.auto_paging_iter():
-                    # StripeObject.__getitem__ does not support dict() coercion;
-                    # iterate keys explicitly to build a plain Python dict.
-                    meta: dict = {}
-                    try:
-                        if acc.metadata:
-                            for k in acc.metadata.keys():
-                                try:
-                                    meta[k] = acc.metadata[k]
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-                    if str(meta.get("user_id")) == str(user_id):
-                        stripe_account_id = acc.id
-                        logger.info(
-                            f"[Stripe Connect /onboard] found orphaned Stripe account "
-                            f"{stripe_account_id} for user_id={user_id} — reusing it"
-                        )
-                        # Persist the recovered account to prevent future orphaning
-                        if not payout_account:
-                            payout_account = PayoutAccount(
-                                user_id=user_id,
-                                payment_method="stripe",
-                            )
-                            db.add(payout_account)
-                        else:
-                            payout_account.payment_method = "stripe"
-                        payout_account.stripe_account_id = stripe_account_id
-                        payout_account.stripe_account_status = "pending"
-                        payout_account.updated_at = datetime.utcnow()
-                        try:
-                            db.commit()
-                            db.refresh(payout_account)
-                            logger.info(
-                                f"[Stripe Connect /onboard] orphaned account "
-                                f"{stripe_account_id} saved to DB"
-                            )
-                        except Exception as db_err:
-                            db.rollback()
-                            logger.error(
-                                f"[Stripe Connect /onboard] DB save for recovered account "
-                                f"failed: {db_err}\n{traceback.format_exc()}"
-                            )
-                        break
-            except stripe.error.StripeError as search_err:
-                logger.warning(
-                    f"[Stripe Connect /onboard] account search failed (will create new): "
-                    f"{search_err}"
-                )
-
-            if not stripe_account_id:
-                # No orphaned account found — create a fresh one
+            found_id = _search_stripe_account_by_user(user_id)
+            if found_id:
+                stripe_account_id = found_id
                 logger.info(
-                    f"[Stripe Connect /onboard] no existing account found — creating new "
-                    f"Express account for user_id={user_id} email={user_email}"
+                    f"[Stripe Connect /onboard] found existing Stripe account "
+                    f"{stripe_account_id} for user_id={user_id} — resuming"
+                )
+            else:
+                # Create a brand-new Express account.
+                # NOTE: we do NOT write to the DB here.  The webhook is the
+                # single source of truth for DB registration.
+                logger.info(
+                    f"[Stripe Connect /onboard] creating new Stripe Express account "
+                    f"for user_id={user_id} email={user_email}"
                 )
                 try:
                     new_account = stripe.Account.create(
@@ -197,52 +182,16 @@ async def create_stripe_connect_account(
 
                 stripe_account_id = new_account.id
                 logger.info(
-                    f"[Stripe Connect /onboard] new account created: {stripe_account_id} "
-                    f"for user_id={user_id}"
+                    f"[Stripe Connect /onboard] new Stripe account {stripe_account_id} "
+                    f"created for user_id={user_id} — DB row will be created by webhook "
+                    f"upon successful completion"
                 )
 
-                # Persist to payout_accounts table.
-                # IMPORTANT: Python attribute is `payment_method`; SQLAlchemy maps it to
-                # the DB column `default_payout_method` (nullable=False).
-                if not payout_account:
-                    payout_account = PayoutAccount(
-                        user_id=user_id,
-                        payment_method="stripe",
-                    )
-                    db.add(payout_account)
-                    logger.info(
-                        f"[Stripe Connect /onboard] new PayoutAccount row added for user_id={user_id}"
-                    )
-                else:
-                    payout_account.payment_method = "stripe"
-
-                payout_account.stripe_account_id = stripe_account_id
-                payout_account.stripe_account_status = "pending"
-                payout_account.updated_at = datetime.utcnow()
-
-                try:
-                    db.commit()
-                    db.refresh(payout_account)
-                    logger.info(
-                        f"[Stripe Connect /onboard] PayoutAccount saved id={payout_account.id}"
-                    )
-                except Exception as db_err:
-                    db.rollback()
-                    logger.error(
-                        f"[Stripe Connect /onboard] DB commit failed for user_id={user_id}: "
-                        f"{db_err}\n{traceback.format_exc()}"
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Database error saving payout account: {db_err}",
-                    )
-
-        # Step 3: generate the hosted onboarding link 
+        # ── Generate the hosted onboarding link ───────────────────────────────
         return_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=success"
         refresh_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=refresh"
         logger.info(
-            f"[Stripe Connect /onboard] creating AccountLink for {stripe_account_id} "
-            f"return_url={return_url} refresh_url={refresh_url}"
+            f"[Stripe Connect /onboard] creating AccountLink for {stripe_account_id}"
         )
 
         try:
@@ -275,7 +224,6 @@ async def create_stripe_connect_account(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logger.error(
             f"[Stripe Connect /onboard] unexpected error for user_id={user_id}: "
             f"{e}\n{traceback.format_exc()}"
@@ -376,19 +324,34 @@ async def refresh_stripe_onboarding(
             PayoutAccount.user_id == user_id
         ).first()
 
-        if not payout_account or not payout_account.stripe_account_id:
+        # Resolve stripe_account_id from DB row or by searching Stripe metadata.
+        # A user may have started onboarding but not yet completed it, so there
+        # may be no DB row — the Stripe account exists but is awaiting webhook confirmation.
+        account_id = None
+        if payout_account and payout_account.stripe_account_id:
+            account_id = payout_account.stripe_account_id
+            logger.info(
+                f"[Stripe Connect /refresh-onboarding] using account_id={account_id} from DB"
+            )
+        else:
+            logger.info(
+                f"[Stripe Connect /refresh-onboarding] no DB row — searching Stripe "
+                f"for user_id={user_id}"
+            )
+            account_id = _search_stripe_account_by_user(user_id)
+
+        if not account_id:
             logger.warning(
-                f"[Stripe Connect /refresh-onboarding] no account found for user_id={user_id}"
+                f"[Stripe Connect /refresh-onboarding] no Stripe account found for "
+                f"user_id={user_id}"
             )
             raise HTTPException(
                 status_code=404,
                 detail="No Stripe account found. Please start onboarding first.",
             )
 
-        account_id = payout_account.stripe_account_id
         return_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=success"
         refresh_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=refresh"
-
         logger.info(
             f"[Stripe Connect /refresh-onboarding] creating AccountLink for {account_id}"
         )
@@ -568,41 +531,116 @@ async def stripe_connect_webhook(
         if event.type == "account.updated":
             account = event.data.object
             account_id = account.id
+            all_complete = (
+                account.details_submitted
+                and account.charges_enabled
+                and account.payouts_enabled
+            )
             logger.info(
                 f"[Stripe Connect /webhook] account.updated for {account_id} "
                 f"charges_enabled={account.charges_enabled} "
                 f"payouts_enabled={account.payouts_enabled} "
-                f"details_submitted={account.details_submitted}"
+                f"details_submitted={account.details_submitted} "
+                f"all_complete={all_complete}"
             )
 
             payout_account = db.query(PayoutAccount).filter(
                 PayoutAccount.stripe_account_id == account_id
             ).first()
 
-            if payout_account:
+            if all_complete:
+                if not payout_account:
+                    # Onboarding completed but no DB row exists yet — this is the
+                    # expected path for new signups.  Resolve user_id from Stripe
+                    # account metadata and create the row now.
+                    meta: dict = {}
+                    try:
+                        if account.metadata:
+                            for k in account.metadata.keys():
+                                try:
+                                    meta[k] = account.metadata[k]
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                    user_id_str = meta.get("user_id")
+                    if not user_id_str:
+                        logger.error(
+                            f"[Stripe Connect /webhook] account {account_id} has no "
+                            f"user_id in metadata — cannot create PayoutAccount row"
+                        )
+                    else:
+                        try:
+                            uid = int(user_id_str)
+                        except (ValueError, TypeError):
+                            logger.error(
+                                f"[Stripe Connect /webhook] invalid user_id in metadata: "
+                                f"{user_id_str!r}"
+                            )
+                            uid = None
+
+                        if uid is not None:
+                            # Check for an existing row by user_id (e.g. bank-only account)
+                            existing = db.query(PayoutAccount).filter(
+                                PayoutAccount.user_id == uid
+                            ).first()
+                            if existing:
+                                existing.stripe_account_id = account_id
+                                existing.payment_method = "stripe"
+                                existing.stripe_account_status = "verified"
+                                existing.is_verified = True
+                                existing.verified_at = datetime.utcnow()
+                                existing.updated_at = datetime.utcnow()
+                                payout_account = existing
+                                logger.info(
+                                    f"[Stripe Connect /webhook] updated existing PayoutAccount "
+                                    f"for user_id={uid} with stripe_account_id={account_id}"
+                                )
+                            else:
+                                payout_account = PayoutAccount(
+                                    user_id=uid,
+                                    payment_method="stripe",
+                                    stripe_account_id=account_id,
+                                    stripe_account_status="verified",
+                                    is_verified=True,
+                                    verified_at=datetime.utcnow(),
+                                )
+                                db.add(payout_account)
+                                logger.info(
+                                    f"[Stripe Connect /webhook] created PayoutAccount for "
+                                    f"user_id={uid} account={account_id}"
+                                )
+                else:
+                    # Row already exists — mark verified
+                    payout_account.stripe_account_status = "verified"
+                    payout_account.is_verified = True
+                    payout_account.verified_at = datetime.utcnow()
+                    payout_account.updated_at = datetime.utcnow()
+                    logger.info(
+                        f"[Stripe Connect /webhook] account {account_id} marked VERIFIED"
+                    )
+            elif payout_account:
+                # Partial update — keep row in sync but do not mark verified
                 payout_account.stripe_account_status = (
                     "active" if account.charges_enabled else "pending"
                 )
                 payout_account.updated_at = datetime.utcnow()
-
-                # Require details_submitted as the definitive signal — Stripe can send
-                # charges_enabled=True for new Express accounts in test mode before
-                # the user has actually completed any onboarding steps.
-                if account.charges_enabled and account.payouts_enabled and account.details_submitted:
-                    payout_account.is_verified = True
-                    payout_account.verified_at = datetime.utcnow()
-                    logger.info(
-                        f"[Stripe Connect /webhook] account {account_id} marked ACTIVE+VERIFIED"
-                    )
-                elif payout_account.is_verified and not account.details_submitted:
-                    # Guard: if somehow is_verified was set True but details are gone, roll back
+                if payout_account.is_verified and not account.details_submitted:
                     payout_account.is_verified = False
                     payout_account.verified_at = None
                     logger.warning(
-                        f"[Stripe Connect /webhook] account {account_id} — details_submitted=False, "
-                        f"rolling back is_verified to False"
+                        f"[Stripe Connect /webhook] account {account_id} — "
+                        f"details_submitted=False, rolling back is_verified"
                     )
+            else:
+                # Incomplete webhook for an account with no DB row — nothing to do yet
+                logger.info(
+                    f"[Stripe Connect /webhook] account {account_id} not yet complete "
+                    f"and no DB row — skipping"
+                )
 
+            if payout_account and (payout_account in db.new or payout_account in db.dirty):
                 try:
                     db.commit()
                     logger.info(
@@ -614,11 +652,6 @@ async def stripe_connect_webhook(
                         f"[Stripe Connect /webhook] DB commit failed for {account_id}: "
                         f"{db_err}\n{traceback.format_exc()}"
                     )
-            else:
-                logger.warning(
-                    f"[Stripe Connect /webhook] no PayoutAccount row found for "
-                    f"stripe_account_id={account_id}"
-                )
 
         return {"status": "success", "event": event.type}
 
