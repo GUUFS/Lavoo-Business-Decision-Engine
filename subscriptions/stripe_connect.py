@@ -647,11 +647,11 @@ async def stripe_connect_webhook(
                     f"and no DB row — skipping"
                 )
 
-            if payout_account and (payout_account in db.new or payout_account in db.dirty):
+            if payout_account:
                 try:
                     db.commit()
                     logger.info(
-                        f"[Stripe Connect /webhook] DB updated for account {account_id}"
+                        f"[Stripe Connect /webhook] DB committed for account {account_id}"
                     )
                 except Exception as db_err:
                     db.rollback()

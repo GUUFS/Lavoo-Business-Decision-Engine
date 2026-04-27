@@ -284,6 +284,40 @@ def get_subscription_dates_from_stripe(subscription_result: dict, plan_type: str
     return start, start + timedelta(days=delta_map.get(plan_type, 30))
 
 
+def _get_invoice_amount_and_currency(sub_result):
+    """
+    Read the actual charged amount and currency from the subscription's latest
+    invoice.  Falls back to (None, None) so callers can use their own default.
+    Stripe stores amounts in smallest unit (pence/cents); we return human units.
+    """
+    try:
+        li = None
+        if hasattr(sub_result, 'latest_invoice'):
+            li = sub_result.latest_invoice
+        elif isinstance(sub_result, dict):
+            li = sub_result.get('latest_invoice')
+
+        if not li:
+            return None, None
+
+        if isinstance(li, str):
+            import os as _os
+            invoice = stripe.Invoice.retrieve(li, api_key=_os.getenv("STRIPE_SECRET_KEY"))
+        else:
+            invoice = li
+
+        paid = getattr(invoice, 'amount_paid', None)
+        if paid is None and isinstance(invoice, dict):
+            paid = invoice.get('amount_paid')
+        currency = getattr(invoice, 'currency', None) or (invoice.get('currency') if isinstance(invoice, dict) else None)
+
+        if paid is not None and currency:
+            return round(paid / 100, 2), currency.upper()
+    except Exception:
+        pass
+    return None, None
+
+
 def _create_active_subscription_record(db, user, sub_result, plan_type, amount, tx_ref_prefix="SUB"):
     """
     Upsert a Subscriptions DB record and update user fields for an active sub.
@@ -301,6 +335,11 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
     sub_id = sub_result.get("subscription_id") or sub_result.get("id")
     start_date, end_date = get_subscription_dates_from_stripe(sub_result, plan_type)
 
+    # Use the actual invoiced amount/currency so history reflects what was charged.
+    actual_amount, actual_currency = _get_invoice_amount_and_currency(sub_result)
+    record_amount = Decimal(str(actual_amount if actual_amount is not None else amount))
+    record_currency = actual_currency or "USD"
+
     # Check for any existing row with this transaction_id (any status)
     existing = db.query(Subscriptions).filter(
         Subscriptions.transaction_id == sub_id
@@ -311,7 +350,8 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
         existing.subscription_plan = plan_type
         existing.status = "completed"
         existing.subscription_status = "active"
-        existing.amount = Decimal(str(amount))
+        existing.amount = record_amount
+        existing.currency = record_currency
         existing.start_date = start_date
         existing.end_date = end_date
         subscription = existing
@@ -322,8 +362,8 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
             subscription_plan=plan_type,
             transaction_id=sub_id,
             tx_ref=generate_tx_ref(tx_ref_prefix),
-            amount=Decimal(str(amount)),
-            currency="USD",
+            amount=record_amount,
+            currency=record_currency,
             status="completed",
             subscription_status="active",
             payment_provider="stripe",

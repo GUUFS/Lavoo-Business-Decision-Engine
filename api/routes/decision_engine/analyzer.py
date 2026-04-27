@@ -7,6 +7,7 @@ action plans, toolkits, and execution roadmaps.
 
 import json
 import logging
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -172,6 +173,34 @@ async def analyze_business_goal(
         logger.info(f"🚀 Starting agentic analysis for user {user_id}")
 
         content_type = request.headers.get("content-type", "")
+
+        # ── Idempotency guard ────────────────────────────────────────────────
+        # Railway's HTTP/2 proxy can drop long-running connections. The browser
+        # sees "Failed to fetch" and the user retries, creating duplicate records.
+        # If this user submitted an analysis within the last 60 seconds that has
+        # already completed (id is present), return it immediately.
+        from datetime import timedelta
+        from sqlalchemy import desc as _desc
+        recent_cutoff = datetime.utcnow() - timedelta(seconds=60)
+        recent = (
+            db.query(BusinessAnalysis)
+            .filter(
+                BusinessAnalysis.user_id == user_id,
+                BusinessAnalysis.created_at >= recent_cutoff,
+            )
+            .order_by(_desc(BusinessAnalysis.created_at))
+            .first()
+        )
+        if recent:
+            logger.info(
+                f"⚡ Returning recent analysis {recent.id} for user {user_id} "
+                f"(submitted within 60 s — duplicate request prevented)"
+            )
+            return {
+                "success": True,
+                "message": "Analysis completed successfully",
+                "data": format_analysis_for_frontend(recent),
+            }
         business_goal = ""
         files = []
         
