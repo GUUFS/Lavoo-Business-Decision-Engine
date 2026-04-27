@@ -1247,12 +1247,23 @@ async def stripe_webhook(
             if hasattr(user, 'stripe_subscription_id') and user.stripe_subscription_id != subscription_id:
                 user.stripe_subscription_id = subscription_id
 
-            # Idempotency — skip if already recorded
+            # Idempotency — skip if this payment event was already recorded.
+            # The direct API path stores transaction_id = subscription_id.
+            # The webhook path falls back to the invoice_id when no
+            # payment_intent exists. Check all three identifiers so that
+            # a subscription created by the API and then confirmed by the
+            # webhook does not produce a second row.
+            ident_checks = [payment_intent_id]
+            if subscription_id:
+                ident_checks.append(subscription_id)
             existing = db.query(Subscriptions).filter(
-                Subscriptions.transaction_id == payment_intent_id
+                Subscriptions.transaction_id.in_([i for i in ident_checks if i])
             ).first()
             if existing:
-                logger.info(f"ℹ️ Invoice {payment_intent_id} already recorded — skipping")
+                logger.info(
+                    f"ℹ️ Subscription already recorded (matched on "
+                    f"{existing.transaction_id}) — skipping"
+                )
                 return {"status": "success"}
 
             sub_meta_obj = getattr(stripe_sub, 'metadata', None)
