@@ -270,6 +270,12 @@ async def startup_event():
                 """))
 
 
+                # Add recommended_tool_stacks to business_analyses if it doesn't exist
+                try:
+                    db.execute(text("ALTER TABLE business_analyses ADD COLUMN IF NOT EXISTS recommended_tool_stacks JSON"))
+                except Exception as e:
+                    logger.warning(f"Failed to add recommended_tool_stacks to business_analyses: {e}")
+
                 # Security table fixes
                 try:
                     # Rename attempt_time to created_at if it exists
