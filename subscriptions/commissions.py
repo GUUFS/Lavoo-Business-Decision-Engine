@@ -256,6 +256,45 @@ async def get_payout_account(
         )
 
 
+@router.delete("/payout-account/bank")
+async def remove_bank_payout_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove bank/Flutterwave payout account details."""
+    try:
+        user_id = extract_user_id(current_user)
+        payout_account = db.query(PayoutAccount).filter(
+            PayoutAccount.user_id == user_id
+        ).first()
+
+        if not payout_account or not (payout_account.bank_name or payout_account.account_number):
+            raise HTTPException(status_code=404, detail="No bank account configured")
+
+        payout_account.bank_name = None
+        payout_account.account_number = None
+        payout_account.account_name = None
+        payout_account.bank_code = None
+
+        if payout_account.payment_method in ("flutterwave", None) and not payout_account.stripe_account_id:
+            payout_account.payment_method = None
+            payout_account.is_verified = False
+
+        payout_account.updated_at = datetime.utcnow()
+        db.commit()
+
+        return {"status": "success", "message": "Bank account removed successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to remove bank account: {str(e)}",
+        )
+
+
 @router.post("/request-payout")
 async def request_payout(
     payout_data: PayoutRequest,

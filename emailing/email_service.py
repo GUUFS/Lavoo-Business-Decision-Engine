@@ -77,12 +77,16 @@ class MailerLiteEmailService:
                     "status": "sent"
                 }
             else:
-                logger.error(f"❌ MailerLite error: {response.status_code} - {response.text}")
-                raise Exception(f"MailerLite API error: {response.status_code}")
+                # Non-fatal: email delivery failures must never break payment or subscription flows.
+                # 404 = sender/resource not configured in MailerLite account.
+                # Fix: verify the FROM_EMAIL address in your MailerLite account and enable
+                # transactional emails under Settings → Transactional emails.
+                logger.warning(f"⚠️ MailerLite delivery skipped ({response.status_code}): {response.text[:200]}")
+                return {"success": False, "status": "skipped", "reason": response.text[:200]}
 
         except Exception as e:
-            logger.error(f"❌ Email send failed: {str(e)}")
-            raise e
+            logger.warning(f"⚠️ Email send failed (non-fatal): {str(e)}")
+            return {"success": False, "status": "error", "reason": str(e)}
 
     def send_welcome_email(self, user_email: str, name: str):
         """Send welcome email on signup"""

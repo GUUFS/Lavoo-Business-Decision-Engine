@@ -8,7 +8,7 @@ import os
 import secrets
 import stripe
 
-from database.pg_connections import get_db
+from database.pg_connections import get_db, SessionLocal
 from database.pg_models import (
     PaymentIntentCreate, PaymentIntentResponse, PaymentVerify,
     SubscriptionResponse, CreateSubscriptionRequest,
@@ -31,6 +31,12 @@ from database.pg_models import NotificationType
 from .beta_service import BetaService
 
 router = APIRouter(prefix="/api/stripe", tags=["stripe"])
+
+# Log the Stripe mode at startup so Railway logs immediately show whether the
+# backend is using a live or test key — helps catch test/live mismatches fast.
+_startup_key = os.getenv("STRIPE_SECRET_KEY", "")
+_stripe_mode = "LIVE" if _startup_key.startswith("sk_live_") else ("TEST" if _startup_key.startswith("sk_test_") else "UNKNOWN/MISSING")
+logger.info(f"[Stripe] Initialised in {_stripe_mode} mode (key prefix: {_startup_key[:14]}...)")
 
 
 # =============================================================================
@@ -186,7 +192,28 @@ def resolve_stripe_subscription_state(user: User, db: Session) -> dict:
         No live Stripe subscription → safe to call Subscription.create().
         Caller must cancel any stale incomplete sub first.
     """
-    sub_id = str(getattr(user, 'stripe_subscription_id', '') or '').strip()
+    # IMPORTANT: User model does not have stripe_subscription_id column.
+    # The subscription ID lives in the Subscriptions table. We look up the
+    # most recent active DB record first, then fall back to user attribute
+    # (for legacy rows that may have it). Using getattr blindly returns ''
+    # which causes needs_new_sub every time → double-billing for active users.
+    sub_id = None
+
+    # Primary: look up from Subscriptions table (authoritative source)
+    active_db_sub = db.query(Subscriptions).filter(
+        Subscriptions.user_id == user.id,
+        Subscriptions.subscription_status == "active",
+        Subscriptions.end_date > datetime.utcnow(),
+    ).order_by(Subscriptions.created_at.desc()).first()
+
+    if active_db_sub:
+        sub_id = getattr(active_db_sub, 'stripe_subscription_id', None) or \
+                 getattr(active_db_sub, 'transaction_id', None)
+        sub_id = str(sub_id or '').strip() or None
+
+    # Fallback: user model attribute (may exist on some schema versions)
+    if not sub_id:
+        sub_id = str(getattr(user, 'stripe_subscription_id', '') or '').strip() or None
 
     if not sub_id:
         return {"case": "needs_new_sub", "stripe_sub": None, "stripe_sub_id": None}
@@ -257,6 +284,40 @@ def get_subscription_dates_from_stripe(subscription_result: dict, plan_type: str
     return start, start + timedelta(days=delta_map.get(plan_type, 30))
 
 
+def _get_invoice_amount_and_currency(sub_result):
+    """
+    Read the actual charged amount and currency from the subscription's latest
+    invoice.  Falls back to (None, None) so callers can use their own default.
+    Stripe stores amounts in smallest unit (pence/cents); we return human units.
+    """
+    try:
+        li = None
+        if hasattr(sub_result, 'latest_invoice'):
+            li = sub_result.latest_invoice
+        elif isinstance(sub_result, dict):
+            li = sub_result.get('latest_invoice')
+
+        if not li:
+            return None, None
+
+        if isinstance(li, str):
+            import os as _os
+            invoice = stripe.Invoice.retrieve(li, api_key=_os.getenv("STRIPE_SECRET_KEY"))
+        else:
+            invoice = li
+
+        paid = getattr(invoice, 'amount_paid', None)
+        if paid is None and isinstance(invoice, dict):
+            paid = invoice.get('amount_paid')
+        currency = getattr(invoice, 'currency', None) or (invoice.get('currency') if isinstance(invoice, dict) else None)
+
+        if paid is not None and currency:
+            return round(paid / 100, 2), currency.upper()
+    except Exception:
+        pass
+    return None, None
+
+
 def _create_active_subscription_record(db, user, sub_result, plan_type, amount, tx_ref_prefix="SUB"):
     """
     Upsert a Subscriptions DB record and update user fields for an active sub.
@@ -274,6 +335,11 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
     sub_id = sub_result.get("subscription_id") or sub_result.get("id")
     start_date, end_date = get_subscription_dates_from_stripe(sub_result, plan_type)
 
+    # Use the actual invoiced amount/currency so history reflects what was charged.
+    actual_amount, actual_currency = _get_invoice_amount_and_currency(sub_result)
+    record_amount = Decimal(str(actual_amount if actual_amount is not None else amount))
+    record_currency = actual_currency or "USD"
+
     # Check for any existing row with this transaction_id (any status)
     existing = db.query(Subscriptions).filter(
         Subscriptions.transaction_id == sub_id
@@ -284,7 +350,8 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
         existing.subscription_plan = plan_type
         existing.status = "completed"
         existing.subscription_status = "active"
-        existing.amount = Decimal(str(amount))
+        existing.amount = record_amount
+        existing.currency = record_currency
         existing.start_date = start_date
         existing.end_date = end_date
         subscription = existing
@@ -295,8 +362,8 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
             subscription_plan=plan_type,
             transaction_id=sub_id,
             tx_ref=generate_tx_ref(tx_ref_prefix),
-            amount=Decimal(str(amount)),
-            currency="USD",
+            amount=record_amount,
+            currency=record_currency,
             status="completed",
             subscription_status="active",
             payment_provider="stripe",
@@ -328,10 +395,65 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
 
 @router.get("/config")
 async def get_stripe_config():
-    publishable_key = os.getenv("STRIPE_PUBLISHABLE_KEY")
-    if not publishable_key:
-        raise HTTPException(status_code=500, detail="Stripe configuration not found")
-    return {"publishableKey": publishable_key}
+    # Accept both env var names so Railway config is flexible
+    publishable_key = (
+        os.getenv("STRIPE_PUBLISHABLE_KEY") or
+        os.getenv("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY")
+    )
+    if not publishable_key or not publishable_key.strip().startswith("pk_"):
+        raise HTTPException(status_code=500, detail="Stripe publishable key not configured on backend")
+    return {"publishableKey": publishable_key.strip()}
+
+
+@router.get("/prices")
+async def get_subscription_prices(current_user: User = Depends(get_current_user)):
+    """
+    Fetch live subscription prices from Stripe using the Price IDs stored in
+    environment variables. Returns the actual amount for each plan/currency
+    so the frontend never needs hardcoded values.
+
+    Env var naming: STRIPE_{PLAN}_PRICE_ID_{CURRENCY}
+    e.g. STRIPE_MONTHLY_PRICE_ID_USD, STRIPE_YEARLY_PRICE_ID_NGN
+    """
+    # Ensure the API key is set for this call
+    api_key = os.getenv("STRIPE_SECRET_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not configured")
+
+    plans = ["monthly", "quarterly", "yearly"]
+    currencies = ["USD", "GBP", "NGN"]
+    errors = {}
+    result: dict = {}
+
+    for currency in currencies:
+        result[currency] = {}
+        for plan in plans:
+            env_key = f"STRIPE_{plan.upper()}_PRICE_ID_{currency}"
+            price_id = os.getenv(env_key, "").strip()
+            if not price_id:
+                logger.warning(f"[prices] {env_key} not set")
+                result[currency][plan] = None
+                errors[env_key] = "not set"
+                continue
+            try:
+                price_obj = stripe.Price.retrieve(price_id, api_key=api_key)
+                # Use attribute access (works across all Stripe library versions)
+                # unit_amount is in smallest currency unit: cents, pence, kobo
+                unit_amount = getattr(price_obj, "unit_amount", None)
+                if unit_amount is None:
+                    # Fallback for dict-style objects
+                    unit_amount = price_obj["unit_amount"] if "unit_amount" in price_obj else 0
+                result[currency][plan] = (unit_amount or 0) / 100
+                logger.info(f"[prices] {env_key} ({price_id}) = {result[currency][plan]}")
+            except Exception as e:
+                logger.error(f"[prices] {env_key} ({price_id}): {e}")
+                result[currency][plan] = None
+                errors[env_key] = str(e)
+
+    if errors:
+        logger.warning(f"[prices] Some prices could not be fetched: {errors}")
+
+    return result
 
 
 # =============================================================================
@@ -457,6 +579,84 @@ async def verify_payment(
 # SAVE CARD / CHECKOUT
 # =============================================================================
 
+class SetupIntentRequest(BaseModel):
+    currency: Optional[str] = "USD"
+
+
+@router.post("/setup-intent")
+async def create_setup_intent(
+    request: SetupIntentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Step 1 of the SetupIntent card-save flow.
+
+    Creates a Stripe SetupIntent for the authenticated user's customer record
+    and returns the client_secret the frontend needs to call
+    stripe.confirmCardSetup().  That call opens the bank's OTP popup, satisfies
+    3DS, and attaches the payment method to the customer — all without a charge.
+
+    Why this exists:
+    - PaymentMethod.attach() does a silent card verification that Nigerian banks
+      block because no OTP was presented to the cardholder.
+    - confirmCardSetup() triggers the bank's OTP/3DS popup so the cardholder
+      authenticates before any money moves, which most Nigerian banks require.
+    """
+    user_id = None
+    try:
+        user_id = extract_user_id(current_user)
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Get or create Stripe customer (same logic as save-card-beta)
+        customer_id = StripeService.get_or_create_customer(
+            user_id=user_id, email=user.email, name=user.name,
+            stripe_customer_id=getattr(user, 'stripe_customer_id', None)
+        )
+
+        # Persist customer_id in its own session so it survives any rollback
+        if getattr(user, 'stripe_customer_id', None) != customer_id:
+            try:
+                with SessionLocal() as _s:
+                    _s.query(User).filter(User.id == user_id).update(
+                        {"stripe_customer_id": customer_id}
+                    )
+                    _s.commit()
+                user.stripe_customer_id = customer_id
+                logger.info(f"💾 Persisted stripe_customer_id for user {user_id}: {customer_id}")
+            except Exception as _e:
+                logger.warning(f"⚠️ Could not persist stripe_customer_id: {_e}")
+
+        # Create the SetupIntent
+        # usage='off_session' tells Stripe this card will be charged automatically
+        # in the future (subscriptions), so the bank must authenticate it now.
+        setup_intent = stripe.SetupIntent.create(
+            customer=customer_id,
+            usage="off_session",
+            payment_method_types=["card"],
+            api_key=os.getenv("STRIPE_SECRET_KEY"),
+        )
+
+        logger.info(
+            f"🔐 SetupIntent {setup_intent.id} created for user {user_id} "
+            f"(customer {customer_id})"
+        )
+
+        return {
+            "client_secret": setup_intent.client_secret,
+            "setup_intent_id": setup_intent.id,
+            "customer_id": customer_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ SetupIntent creation failed for user {user_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/save-card-beta")
 async def save_card_for_beta(
     request: SaveCardRequest,
@@ -493,17 +693,39 @@ async def save_card_for_beta(
             user_id=user_id, email=user.email, name=user.name,
             stripe_customer_id=getattr(user, 'stripe_customer_id', None)
         )
-        if not getattr(user, 'stripe_customer_id', None):
-            user.stripe_customer_id = customer_id
+        # Always persist the customer_id in its own independent session so it
+        # survives any rollback on the main request session (card decline,
+        # pool recycle, etc.).  Using a separate SessionLocal guarantees a
+        # separate DB connection and transaction that nothing in this request
+        # can accidentally roll back.
+        if getattr(user, 'stripe_customer_id', None) != customer_id:
+            try:
+                with SessionLocal() as _s:
+                    _s.query(User).filter(User.id == user_id).update(
+                        {"stripe_customer_id": customer_id}
+                    )
+                    _s.commit()
+                # Also update the in-memory object so the rest of this request
+                # sees the correct value without a DB round-trip.
+                user.stripe_customer_id = customer_id
+                logger.info(f"💾 Persisted stripe_customer_id for user {user_id}: {customer_id}")
+            except Exception as _e:
+                logger.warning(f"⚠️ Could not persist stripe_customer_id: {_e}")
 
-        StripeService.attach_payment_method(
-            payment_method_id=request.payment_method_id,
-            customer_id=customer_id,
-            set_as_default=True
-        )
+        # NOTE: We deliberately do NOT call PaymentMethod.attach() here.
+        # attach() sends a silent $0 card verification to the bank with no OTP —
+        # CBN regulations require every Nigerian card transaction to have explicit
+        # cardholder authentication, so banks decline silent verifications.
+        # The card will be authenticated and attached by Stripe automatically when
+        # the frontend calls stripe.confirmCardPayment() with the card element
+        # inline (the path that banks accept). For off_session cron billing the
+        # PM is already attached from a previous successful confirmation.
 
         # ── Save card metadata ────────────────────────────────────────────────
-        payment_method = stripe.PaymentMethod.retrieve(request.payment_method_id)
+        _stripe_key = os.getenv("STRIPE_SECRET_KEY")
+        payment_method = stripe.PaymentMethod.retrieve(
+            request.payment_method_id, api_key=_stripe_key
+        )
         user.stripe_payment_method_id = request.payment_method_id
         user.card_last4 = payment_method.card.last4
         user.card_brand = payment_method.card.brand
@@ -648,7 +870,7 @@ async def save_card_for_beta(
         sub_result = StripeService.create_subscription_with_saved_card(
             customer_id=customer_id,
             price_id=price_id,
-            payment_method_id=request.payment_method_id,
+            payment_method_id=None,  # No pre-attach — frontend confirms inline
             metadata={
                 "user_id": str(user.id),
                 "plan_type": plan_type,
@@ -656,7 +878,7 @@ async def save_card_for_beta(
                 "source": "save_card_launch",
                 "is_beta_user": str(getattr(user, 'is_beta_user', False))
             },
-            off_session=False  # User is present — allows 3DS modal
+            off_session=False  # User is present — frontend confirms via OTP
         )
 
         sub_status = sub_result.get("status")
@@ -729,8 +951,27 @@ async def save_card_for_beta(
         raise
     except stripe.error.CardError as e:
         db.rollback()
-        error_msg = str(e.user_message) if hasattr(e, 'user_message') else str(e)
-        raise HTTPException(status_code=400, detail=error_msg)
+        decline_code = getattr(e, 'code', None) or 'unknown'
+        user_message = str(e.user_message) if hasattr(e, 'user_message') and e.user_message else str(e)
+        logger.error(
+            f"💳 Card declined for user {user_id} — "
+            f"code={decline_code!r} message={user_message!r}"
+        )
+        # Create the failure notification in a clean state after rollback
+        try:
+            NotificationService.create_notification(
+                db=db,
+                user_id=user_id,
+                type="payment_failed",
+                title="❌ Payment Failed",
+                message=f"Your payment was declined: {user_message}. Please check your card details and try again.",
+                link="/dashboard/upgrade",
+            )
+            db.commit()
+        except Exception as notif_err:
+            logger.warning(f"⚠️ Could not save payment-failed notification: {notif_err}")
+            db.rollback()
+        raise HTTPException(status_code=400, detail=user_message)
     except Exception as e:
         db.rollback()
         traceback.print_exc()
@@ -933,9 +1174,19 @@ async def stripe_webhook(
             # Find user — 5 strategies, log which one succeeds.
             # The basil API puts user_id in line item metadata, so check there too.
             # ----------------------------------------------------------------
-            user = db.query(User).filter(User.stripe_subscription_id == subscription_id).first()
-            if user:
-                logger.info(f"👤 User found via stripe_subscription_id: {user.email}")
+            # Strategy 1: look up via Subscriptions table (stripe_subscription_id
+            # lives there, not on User — querying User.stripe_subscription_id
+            # raises AttributeError if that column doesn't exist on the model)
+            user = None
+            # Subscriptions.transaction_id stores the Stripe subscription ID (sub_xxx).
+            # There is no stripe_subscription_id column on this model.
+            sub_record = db.query(Subscriptions).filter(
+                Subscriptions.transaction_id == subscription_id
+            ).first()
+            if sub_record:
+                user = db.query(User).filter(User.id == sub_record.user_id).first()
+                if user:
+                    logger.info(f"👤 User found via Subscriptions table: {user.email}")
 
             if not user:
                 inv_meta = getattr(invoice, 'metadata', None)
@@ -996,12 +1247,23 @@ async def stripe_webhook(
             if hasattr(user, 'stripe_subscription_id') and user.stripe_subscription_id != subscription_id:
                 user.stripe_subscription_id = subscription_id
 
-            # Idempotency — skip if already recorded
+            # Idempotency — skip if this payment event was already recorded.
+            # The direct API path stores transaction_id = subscription_id.
+            # The webhook path falls back to the invoice_id when no
+            # payment_intent exists. Check all three identifiers so that
+            # a subscription created by the API and then confirmed by the
+            # webhook does not produce a second row.
+            ident_checks = [payment_intent_id]
+            if subscription_id:
+                ident_checks.append(subscription_id)
             existing = db.query(Subscriptions).filter(
-                Subscriptions.transaction_id == payment_intent_id
+                Subscriptions.transaction_id.in_([i for i in ident_checks if i])
             ).first()
             if existing:
-                logger.info(f"ℹ️ Invoice {payment_intent_id} already recorded — skipping")
+                logger.info(
+                    f"ℹ️ Subscription already recorded (matched on "
+                    f"{existing.transaction_id}) — skipping"
+                )
                 return {"status": "success"}
 
             sub_meta_obj = getattr(stripe_sub, 'metadata', None)
@@ -1066,10 +1328,14 @@ async def stripe_webhook(
                             if sub_id:
                                 break
 
-            # Find user — try subscription ID first, then customer ID
+            # Find user — try Subscriptions table first, then customer ID
             user = None
             if sub_id:
-                user = db.query(User).filter(User.stripe_subscription_id == sub_id).first()
+                sub_record = db.query(Subscriptions).filter(
+                    Subscriptions.stripe_subscription_id == sub_id
+                ).first()
+                if sub_record:
+                    user = db.query(User).filter(User.id == sub_record.user_id).first()
 
             if not user:
                 cid = getattr(invoice, 'customer', None)
@@ -1094,15 +1360,26 @@ async def stripe_webhook(
 
         elif event.type == "customer.subscription.deleted":
             stripe_sub = event.data.object
-            user = db.query(User).filter(User.stripe_subscription_id == stripe_sub.id).first()
+            # User model has no stripe_subscription_id column — look up via Subscriptions table
+            sub_record = db.query(Subscriptions).filter(
+                Subscriptions.stripe_subscription_id == stripe_sub.id
+            ).first()
+            user = db.query(User).filter(User.id == sub_record.user_id).first() if sub_record else None
+            if not user:
+                cid = getattr(stripe_sub, 'customer', None)
+                if cid:
+                    user = db.query(User).filter(User.stripe_customer_id == cid).first()
+            
             if user:
                 user.subscription_status = "cancelled"
                 if hasattr(user, 'stripe_subscription_id'):
                     user.stripe_subscription_id = None
+
                 sub_record = db.query(Subscriptions).filter(
                     Subscriptions.user_id == user.id,
                     Subscriptions.subscription_status == "active"
                 ).first()
+
                 if sub_record:
                     sub_record.subscription_status = "cancelled"
                     sub_record.status = "cancelled"
@@ -1125,21 +1402,19 @@ async def stripe_webhook(
             if uid:
                 user = db.query(User).filter(User.id == int(uid)).first()
 
-            # Strategy 2: match on stripe_subscription_id (exact match only)
+            # Strategy 2: match via Subscriptions table (User has no stripe_subscription_id column)
             if not user:
-                user = db.query(User).filter(
-                    User.stripe_subscription_id == stripe_sub.id
+                sub_rec = db.query(Subscriptions).filter(
+                    Subscriptions.stripe_subscription_id == stripe_sub.id
                 ).first()
+                if sub_rec:
+                    user = db.query(User).filter(User.id == sub_rec.user_id).first()
 
-            # Strategy 3: customer_id — only use if this sub matches what we
-            # have recorded for the user. Avoids overwriting status when a
-            # test/secondary sub fires an update for the same customer.
+            # Strategy 3: customer_id fallback
             if not user and stripe_sub.customer:
-                candidate = db.query(User).filter(
+                user = db.query(User).filter(
                     User.stripe_customer_id == stripe_sub.customer
                 ).first()
-                if candidate and getattr(candidate, 'stripe_subscription_id', None) == stripe_sub.id:
-                    user = candidate
 
             if user:
                 status_map = {
@@ -1324,7 +1599,8 @@ async def create_subscription_with_saved_card(
                 plan_type=request.plan_type, amount=amount, tx_ref_prefix="ADOPT"
             )
             try:
-                pm = stripe.PaymentMethod.retrieve(request.payment_method_id)
+                _sk = os.getenv("STRIPE_SECRET_KEY")
+                pm = stripe.PaymentMethod.retrieve(request.payment_method_id, api_key=_sk)
                 user.stripe_payment_method_id = request.payment_method_id
                 user.card_last4 = pm.card.last4
                 user.card_brand = pm.card.brand
@@ -1378,7 +1654,8 @@ async def create_subscription_with_saved_card(
                 plan_type=request.plan_type, amount=amount, tx_ref_prefix="STRIPE-SUB"
             )
             try:
-                pm = stripe.PaymentMethod.retrieve(request.payment_method_id)
+                _sk = os.getenv("STRIPE_SECRET_KEY")
+                pm = stripe.PaymentMethod.retrieve(request.payment_method_id, api_key=_sk)
                 user.stripe_payment_method_id = request.payment_method_id
                 user.card_last4 = pm.card.last4
                 user.card_brand = pm.card.brand
@@ -1516,8 +1793,8 @@ async def confirm_subscription(
 
         try:
             pm_id = verification.get("payment_method")
-            if pm_id and not getattr(user, 'stripe_payment_method_id', None):
-                pm = stripe.PaymentMethod.retrieve(pm_id)
+            if pm_id:
+                pm = stripe.PaymentMethod.retrieve(pm_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
                 user.stripe_payment_method_id = pm_id
                 user.card_last4 = pm.card.last4
                 user.card_brand = pm.card.brand

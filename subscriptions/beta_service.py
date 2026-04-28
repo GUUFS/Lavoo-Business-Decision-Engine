@@ -194,6 +194,23 @@ class BetaService:
                 "is_beta_user": getattr(user, 'is_beta_user', False)
             }
 
+        # ── INDIVIDUAL BETA USER GRACE EXPIRY (PRIORITY OVER GLOBAL BETA MODE) ──
+        # A beta user whose personal grace period has ended must be restricted
+        # even if APP_MODE=beta is still set globally. Check this before the
+        # global is_beta_mode() guard so expired users are never bypassed.
+        if getattr(user, 'is_beta_user', False) and user.grace_period_ends_at and not has_card:
+            grace_naive = user.grace_period_ends_at.replace(tzinfo=None) if user.grace_period_ends_at.tzinfo else user.grace_period_ends_at
+            if now >= grace_naive:
+                return {
+                    "status": "grace_expired_no_card",
+                    "message": "Your grace period has ended. Subscribe to restore full access.",
+                    "action_required": True,
+                    "countdown_ends_at": None,
+                    "days_remaining": None,
+                    "show_card_info": False,
+                    "is_beta_user": True
+                }
+
         # BETA PERIOD (Before Launch)
         if BetaService.is_beta_mode():
             if has_card:
