@@ -177,7 +177,7 @@ async def analyze_business_goal(
         content_type = request.headers.get("content-type", "")
         business_goal = ""
         files = []
-        
+
         if "application/json" in content_type:
             body = await request.json()
             business_goal = body.get("business_goal")
@@ -197,16 +197,16 @@ async def analyze_business_goal(
         if files:
             image_bytes_list = []
             document_bytes_list = []
-            
+
             for file in files:
                 file_bytes = await file.read()
                 filename = getattr(file, "filename", "").lower()
-                
+
                 if filename.endswith(('.png', '.jpg', '.jpeg', '.gif')):
                     image_bytes_list.append((file_bytes, filename))
                 elif filename.endswith(('.pdf', '.docx', '.doc', '.xlsx', '.csv', '.txt')):
                     document_bytes_list.append((file_bytes, filename))
-            
+
             if image_bytes_list or document_bytes_list:
                 logger.info(f"Processing {len(image_bytes_list)} images and {len(document_bytes_list)} documents for user {user_id}")
                 mm_handler = MultimodalHandler(use_vision_for_images=True)

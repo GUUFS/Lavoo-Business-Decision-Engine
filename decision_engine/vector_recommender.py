@@ -30,9 +30,7 @@ class VectorToolRecommender:
     - No need for caching or API calls - everything is local/database
     """
 
-    # Embedding settings
     EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384-dimensional, runs locally
-    XAI_BASE_URL = "https://api.x.ai/v1"
 
     def __init__(self, db_session: Session):
         """

@@ -478,6 +478,7 @@ def recommend_automation_stacks(
                 "sub_category": tool_row.get("sub_category"),
                 "pricing": tool_row.get("pricing"),
                 "ratings": float(tool_row.get("ratings") or 0.0),
+                "key_features": tool_row.get("key_features"),
                 "compatibility_integration": tool_row.get("compatibility_integration"),
                 "who_should_use": tool_row.get("who_should_use"),
                 "query_similarity": float(global_similarities[index]),
@@ -569,6 +570,8 @@ def recommend_automation_stacks(
                         "tool_id": tool["id"],
                         "tool_name": tool["name"],
                         "description": tool["description"],
+                        "key_features": tool.get("key_features"),
+                        "compatibility_integration": tool.get("compatibility_integration"),
                         "main_category": tool.get("main_category"),
                         "sub_category": tool.get("sub_category"),
                         "pricing": tool.get("pricing"),
@@ -603,24 +606,3 @@ def recommend_automation_stacks(
     return top_stacks
 
 
-# Example usage
-if __name__ == "__main__":
-    from database.pg_connections import SessionLocal
-
-    print("Testing AI Tool Recommender with PostgreSQL...")
-
-    session = SessionLocal()
-    try:
-        # Test recommendation
-        query = "I need a travel planning tool"
-        recs = recommend_tools(query, top_k=3, db_session=session)
-
-        print(f"\nRecommendations for: '{query}'")
-        print("-" * 70)
-        for rec in recs:
-            print(f"\n🔹 {rec['tool_name']}")
-            print(f"   Score: {rec['similarity_score']:.4f}")
-            print(f"   {rec['description'][:100]}...")
-
-    finally:
-        session.close()
