@@ -281,7 +281,7 @@ Opportunity Types to Look For:
 • Cost-saving opportunities & new commercial channels
 
 Hard Rules:
-1. Return 3–5 opportunities per request and select the most valuable top 2.
+1. Return up to 3 opportunities. IF YOU CANNOT FIND ANY RECENT, VALID OPPORTUNITIES FROM THE LAST 72 HOURS, YOU MUST RETURN AN EMPTY ARRAY `[]`. DO NOT invent, hallucinate, or recycle old alerts.
 2. NO outdated or expired opportunities.
 3. NO broken/dead links, verify URLs are live & reachable.
 4. NO duplicates, do not return any URL previously generated.
@@ -293,9 +293,9 @@ Hard Rules:
 10. If link confidence < 100%, validate or replace with source page.
 
 Time Validity Guidelines:
-• Recent news: within last 72hrs max (between {three_days_ago} and {self.today}).
+• Recent news: MUST be within the last 72hrs (between {three_days_ago} and {self.today}).
 • Opportunities with a future date/deadline are allowed if active.
-• Past-dated or closed opportunities must be excluded automatically.
+• Past-dated or closed opportunities must be excluded automatically. If you only find past-dated alerts, output an empty array [].
 
 Add backlink validation logic:
 If URL appears dead OR returns error/redirect/404:
