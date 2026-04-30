@@ -286,35 +286,72 @@ def get_subscription_dates_from_stripe(subscription_result: dict, plan_type: str
 
 def _get_invoice_amount_and_currency(sub_result):
     """
-    Read the actual charged amount and currency from the subscription's latest
-    invoice.  Falls back to (None, None) so callers can use their own default.
-    Stripe stores amounts in smallest unit (pence/cents); we return human units.
+    Read the actual charged amount and currency from the subscription's latest invoice.
+    Falls back to (None, None) so callers can use their own default.
+
+    Handles three cases:
+    1. sub_result is a Stripe object with latest_invoice expanded
+    2. sub_result is a dict with 'latest_invoice' key
+    3. sub_result is a dict with only 'subscription_id'/'id' — fetches invoice from Stripe API
     """
+    import os as _os
+    api_key = _os.getenv("STRIPE_SECRET_KEY")
     try:
         li = None
+
+        # Case 1 & 2: invoice already attached to the sub_result
         if hasattr(sub_result, 'latest_invoice'):
             li = sub_result.latest_invoice
         elif isinstance(sub_result, dict):
             li = sub_result.get('latest_invoice')
 
+        # Case 3: sub_result is a dict with only the subscription ID — fetch from Stripe
+        if not li:
+            sub_id = None
+            if isinstance(sub_result, dict):
+                sub_id = sub_result.get('subscription_id') or sub_result.get('id')
+            elif hasattr(sub_result, 'id'):
+                sub_id = sub_result.id
+
+            if sub_id:
+                full_sub = stripe.Subscription.retrieve(
+                    sub_id,
+                    expand=['latest_invoice'],
+                    api_key=api_key,
+                )
+                li = getattr(full_sub, 'latest_invoice', None)
+
         if not li:
             return None, None
 
+        # li may be an invoice ID string — fetch the full object
         if isinstance(li, str):
-            import os as _os
-            invoice = stripe.Invoice.retrieve(li, api_key=_os.getenv("STRIPE_SECRET_KEY"))
+            invoice = stripe.Invoice.retrieve(li, api_key=api_key)
         else:
             invoice = li
 
-        paid = getattr(invoice, 'amount_paid', None)
-        if paid is None and isinstance(invoice, dict):
-            paid = invoice.get('amount_paid')
+        # Try amount_paid first (basil API 2025-03-31 still supports it),
+        # fall back to amount_due and total for edge cases where amount_paid = 0
+        # on the initial creation webhook but the actual charge is non-zero.
+        def _get(obj, *keys):
+            for k in keys:
+                v = getattr(obj, k, None) if not isinstance(obj, dict) else obj.get(k)
+                if v is not None and v != 0:
+                    return v
+            # If all fields are 0, return 0 explicitly (free/trial invoice)
+            for k in keys:
+                v = getattr(obj, k, None) if not isinstance(obj, dict) else obj.get(k)
+                if v is not None:
+                    return v
+            return None
+
+        paid = _get(invoice, 'amount_paid', 'total', 'amount_due')
         currency = getattr(invoice, 'currency', None) or (invoice.get('currency') if isinstance(invoice, dict) else None)
 
         if paid is not None and currency:
             return round(paid / 100, 2), currency.upper()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[_get_invoice_amount_and_currency] could not read invoice: {e}")
     return None, None
 
 
@@ -1275,8 +1312,17 @@ async def stripe_webhook(
             if hasattr(user, 'subscription_plan'):
                 user.subscription_plan = plan_type
 
-            amount_paid = getattr(invoice, 'amount_paid', 0) or 0
-            currency = getattr(invoice, 'currency', 'usd') or 'usd'
+            # amount_paid can be 0 on the initial webhook before Stripe confirms
+            # the charge.  Fall back to total/amount_due so the history record
+            # always shows the real charged amount.
+            def _invoice_val(obj, *keys):
+                for k in keys:
+                    v = getattr(obj, k, None) if not isinstance(obj, dict) else obj.get(k)
+                    if v:
+                        return v
+                return 0
+            amount_paid = _invoice_val(invoice, 'amount_paid', 'total', 'amount_due')
+            currency = getattr(invoice, 'currency', None) or 'usd'
 
             new_sub = Subscriptions(
                 user_id=user.id, subscription_plan=plan_type,
