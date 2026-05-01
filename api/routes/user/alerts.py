@@ -502,6 +502,42 @@ def pin_alert(
 
     return {"message": "Alert pinned", "is_pinned": True}
 
+@router.post("/api/alerts/mark-all-read")
+async def mark_all_alerts_read(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Mark every alert as viewed for the current user.
+    Called when the user opens the Opportunity Alerts page so the
+    sidebar badge counter resets immediately and stays reset across sessions.
+    """
+    user = current_user
+    alerts = db.query(Alert).all()
+
+    for alert in alerts:
+        existing = db.query(UserAlert).filter(
+            UserAlert.user_id == user.id,
+            UserAlert.alert_id == alert.id
+        ).first()
+        if not existing:
+            db.add(UserAlert(
+                user_id=user.id,
+                alert_id=alert.id,
+                has_viewed=True,
+                is_attended=True,
+                viewed_at=datetime.utcnow(),
+                chops_earned_from_view=0,
+            ))
+        elif not existing.has_viewed:
+            existing.has_viewed = True
+            existing.viewed_at = datetime.utcnow()
+
+    db.commit()
+    await delete_cached(f"alerts:list:{user.id}:all:all:0:100")
+    return {"status": "ok", "message": "All alerts marked as read"}
+
+
 # Health check
 @router.get("/")
 def health_check():
