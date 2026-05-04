@@ -181,6 +181,82 @@ async def get_alerts(
     return result
 
 
+@router.get("/alerts/paginated")
+async def get_alerts_paginated(
+    page: int = 1,
+    limit: int = 7,
+    category: Optional[str] = None,
+    priority: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Paginated alerts endpoint.
+    Returns { data, total, page, pages } so the frontend can drive
+    pagination from the backend instead of fetching all records.
+    """
+    user_id = current_user.id
+    page = max(1, page)
+    limit = max(1, min(limit, 50))
+    skip = (page - 1) * limit
+
+    base_query = db.query(Alert).filter(Alert.is_active == True)
+    if category:
+        base_query = base_query.filter(Alert.category == category)
+    if priority:
+        base_query = base_query.filter(Alert.priority == priority)
+
+    total = base_query.count()
+    pages = max(1, -(-total // limit))  # ceiling division
+
+    alerts = base_query.order_by(Alert.created_at.desc()).offset(skip).limit(limit).all()
+
+    pinned_ids = {
+        pid[0]
+        for pid in db.query(UserPinnedAlert.alert_id)
+        .filter(UserPinnedAlert.user_id == user_id)
+        .all()
+    }
+
+    result = []
+    for alert in alerts:
+        ua = db.query(UserAlert).filter(
+            UserAlert.user_id == user_id,
+            UserAlert.alert_id == alert.id,
+        ).first()
+        has_viewed = ua.has_viewed if ua else False
+        has_shared = ua.has_shared if ua else False
+        result.append(AlertResponse(**{
+            "id": alert.id,
+            "title": alert.title,
+            "category": alert.category,
+            "priority": alert.priority,
+            "score": alert.score,
+            "time_remaining": alert.time_remaining,
+            "why_act_now": alert.why_act_now,
+            "potential_reward": alert.potential_reward,
+            "action_required": alert.action_required,
+            "source": alert.source,
+            "url": alert.url or "",
+            "date": alert.date,
+            "posted_date": alert.created_at.strftime("%Y-%m-%d") if alert.created_at else alert.date,
+            "total_views": alert.total_views,
+            "total_shares": alert.total_shares,
+            "has_viewed": has_viewed,
+            "has_shared": has_shared,
+            "is_attended": ua.is_attended if ua else False,
+            "is_pinned": alert.id in pinned_ids,
+        }))
+
+    return {
+        "data": [r.model_dump() for r in result],
+        "total": total,
+        "page": page,
+        "pages": pages,
+        "limit": limit,
+    }
+
+
 @router.get("/alerts/{alert_id}", response_model=AlertResponse)
 def get_alert(alert_id: int, user_id: Optional[int] = None, db: Session = Depends(get_db)):
     """Get a specific alert"""
