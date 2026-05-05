@@ -121,24 +121,29 @@ async def get_alerts(
 
     alerts = query.order_by(Alert.created_at.desc()).offset(skip).limit(limit).all()
 
-    # Get all pinned alerts for this user
-    pinned_alert_ids = set(
-        db.query(UserPinnedAlert.alert_id)
-        .filter(UserPinnedAlert.user_id == user_id)
+    alert_ids = [a.id for a in alerts]
+
+    # Single bulk query for pinned status — replaces per-alert lookup
+    pinned_alert_ids = {
+        pid[0]
+        for pid in db.query(UserPinnedAlert.alert_id)
+        .filter(UserPinnedAlert.user_id == user_id, UserPinnedAlert.alert_id.in_(alert_ids))
         .all()
-    )
+    }
 
-    pinned_alert_ids = {pid[0] for pid in pinned_alert_ids}
+    # Single bulk query for user-alert interactions — eliminates N+1
+    user_alerts_map = {
+        ua.alert_id: ua
+        for ua in db.query(UserAlert).filter(
+            UserAlert.user_id == user_id,
+            UserAlert.alert_id.in_(alert_ids),
+        ).all()
+    }
 
-    # Always include user interaction data when authenticated
     result = []
     for alert in alerts:
-        user_alert = db.query(UserAlert).filter(
-            UserAlert.user_id == user_id,
-            UserAlert.alert_id == alert.id
-        ).first()
+        user_alert = user_alerts_map.get(alert.id)
 
-        # Mark as attended if the is_attended flag is True OR if user has viewed/shared
         is_attended = False
         has_viewed = False
         has_shared = False
@@ -211,19 +216,28 @@ async def get_alerts_paginated(
 
     alerts = base_query.order_by(Alert.created_at.desc()).offset(skip).limit(limit).all()
 
+    alert_ids_page = [a.id for a in alerts]
+
+    # Single bulk query for pinned status
     pinned_ids = {
         pid[0]
         for pid in db.query(UserPinnedAlert.alert_id)
-        .filter(UserPinnedAlert.user_id == user_id)
+        .filter(UserPinnedAlert.user_id == user_id, UserPinnedAlert.alert_id.in_(alert_ids_page))
         .all()
+    }
+
+    # Single bulk query for user interactions — eliminates N+1
+    ua_map = {
+        ua.alert_id: ua
+        for ua in db.query(UserAlert).filter(
+            UserAlert.user_id == user_id,
+            UserAlert.alert_id.in_(alert_ids_page),
+        ).all()
     }
 
     result = []
     for alert in alerts:
-        ua = db.query(UserAlert).filter(
-            UserAlert.user_id == user_id,
-            UserAlert.alert_id == alert.id,
-        ).first()
+        ua = ua_map.get(alert.id)
         has_viewed = ua.has_viewed if ua else False
         has_shared = ua.has_shared if ua else False
         result.append(AlertResponse(**{
@@ -589,27 +603,35 @@ async def mark_all_alerts_read(
     sidebar badge counter resets immediately and stays reset across sessions.
     """
     user = current_user
-    alerts = db.query(Alert).all()
+    all_alert_ids = [a.id for a in db.query(Alert.id).filter(Alert.is_active == True).all()]
 
-    for alert in alerts:
-        existing = db.query(UserAlert).filter(
+    # Bulk fetch existing UserAlert rows — eliminates N+1
+    existing_map = {
+        ua.alert_id: ua
+        for ua in db.query(UserAlert).filter(
             UserAlert.user_id == user.id,
-            UserAlert.alert_id == alert.id
-        ).first()
+            UserAlert.alert_id.in_(all_alert_ids),
+        ).all()
+    }
+
+    now = datetime.utcnow()
+    for alert_id in all_alert_ids:
+        existing = existing_map.get(alert_id)
         if not existing:
             db.add(UserAlert(
                 user_id=user.id,
-                alert_id=alert.id,
+                alert_id=alert_id,
                 has_viewed=True,
                 is_attended=True,
-                viewed_at=datetime.utcnow(),
+                viewed_at=now,
                 chops_earned_from_view=0,
             ))
         elif not existing.has_viewed:
             existing.has_viewed = True
-            existing.viewed_at = datetime.utcnow()
+            existing.viewed_at = now
 
     db.commit()
+    # Clear all alert cache variants for this user
     await delete_cached(f"alerts:list:{user.id}:all:all:0:100")
     return {"status": "ok", "message": "All alerts marked as read"}
 
