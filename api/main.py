@@ -8,6 +8,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from passlib.context import CryptContext
 from sqlalchemy import inspect, text
@@ -107,6 +108,9 @@ if _extra_origins:
 
 origins = _origins_base
 
+
+# GZip compression — reduces JSON payload size by ~70% for typical API responses
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Initialize and Register Firewall Middleware
 app.add_middleware(FirewallMiddleware)
