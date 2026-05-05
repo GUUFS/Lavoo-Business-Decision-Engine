@@ -442,17 +442,31 @@ async def get_stripe_config():
     return {"publishableKey": publishable_key.strip()}
 
 
+# Module-level price cache — prices change rarely; 10-minute TTL avoids
+# 9 Stripe API round-trips on every page load.
+_price_cache: dict = {}
+_price_cache_at: float = 0.0
+_PRICE_CACHE_TTL = 600  # 10 minutes
+
+
 @router.get("/prices")
 async def get_subscription_prices(current_user: User = Depends(get_current_user)):
     """
     Fetch live subscription prices from Stripe using the Price IDs stored in
-    environment variables. Returns the actual amount for each plan/currency
-    so the frontend never needs hardcoded values.
+    environment variables. Results are cached for 10 minutes so the 9 Stripe
+    API calls only happen once per cache window instead of on every page load.
 
     Env var naming: STRIPE_{PLAN}_PRICE_ID_{CURRENCY}
     e.g. STRIPE_MONTHLY_PRICE_ID_USD, STRIPE_YEARLY_PRICE_ID_NGN
     """
-    # Ensure the API key is set for this call
+    import time
+    global _price_cache, _price_cache_at
+
+    # Serve from cache if warm
+    if _price_cache and time.time() - _price_cache_at < _PRICE_CACHE_TTL:
+        logger.info("[prices] cache hit")
+        return _price_cache
+
     api_key = os.getenv("STRIPE_SECRET_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not configured")
@@ -474,11 +488,8 @@ async def get_subscription_prices(current_user: User = Depends(get_current_user)
                 continue
             try:
                 price_obj = stripe.Price.retrieve(price_id, api_key=api_key)
-                # Use attribute access (works across all Stripe library versions)
-                # unit_amount is in smallest currency unit: cents, pence, kobo
                 unit_amount = getattr(price_obj, "unit_amount", None)
                 if unit_amount is None:
-                    # Fallback for dict-style objects
                     unit_amount = price_obj["unit_amount"] if "unit_amount" in price_obj else 0
                 result[currency][plan] = (unit_amount or 0) / 100
                 logger.info(f"[prices] {env_key} ({price_id}) = {result[currency][plan]}")
@@ -489,6 +500,11 @@ async def get_subscription_prices(current_user: User = Depends(get_current_user)
 
     if errors:
         logger.warning(f"[prices] Some prices could not be fetched: {errors}")
+
+    # Store in module cache only if we got at least some prices
+    if any(v for curr in result.values() for v in curr.values()):
+        _price_cache = result
+        _price_cache_at = time.time()
 
     return result
 
