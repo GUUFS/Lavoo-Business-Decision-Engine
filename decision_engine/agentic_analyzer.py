@@ -120,17 +120,17 @@ class AgenticAnalyzer:
                 user_query, primary_result, secondary_result
             )
 
-            logger.info("Stage 3B: Composing automation tool stacks...")
-            automation_stack_result = await self._stage3_automation_stacks(
-                user_query=user_query,
-                action_plans_result=action_plans_result,
-                primary_result=primary_result,
-                secondary_result=secondary_result,
-            )
-
-            logger.info("Stage 4: Creating execution roadmap...")
-            roadmap_result = await self._stage4_roadmap_and_motivation(
-                user_query, action_plans_result
+            # Stages 3B and 4 are independent of each other — run in parallel
+            # to cut total analysis time by whichever stage is slower.
+            logger.info("Stages 3B + 4: running automation stacks and roadmap in parallel...")
+            automation_stack_result, roadmap_result = await asyncio.gather(
+                self._stage3_automation_stacks(
+                    user_query=user_query,
+                    action_plans_result=action_plans_result,
+                    primary_result=primary_result,
+                    secondary_result=secondary_result,
+                ),
+                self._stage4_roadmap_and_motivation(user_query, action_plans_result),
             )
 
             duration_seconds = (datetime.now() - start_time).total_seconds()
@@ -695,8 +695,8 @@ Be practical and encouraging."""
             response = self.client.chat.completions.create(
                 model=self.reasoning_model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.8,
-                max_tokens=800,
+                temperature=0.7,   # slightly lower = fewer hallucinations, faster
+                max_tokens=600,    # 800→600: roadmap JSON is typically ~400 tokens
             )
             result_text = response.choices[0].message.content.strip()
 
@@ -706,6 +706,19 @@ Be practical and encouraging."""
                 result_text = result_text.split("```")[1].split("```")[0].strip()
 
             result = json.loads(result_text)
+
+            # Deduplicate tasks within each phase at the source so the frontend
+            # doesn't have to deal with LLM repetitions.
+            for phase in result.get("execution_roadmap", []):
+                seen: set = set()
+                deduped = []
+                for t in phase.get("tasks", []):
+                    key = str(t).lower().strip()[:60]
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(t)
+                phase["tasks"] = deduped
+
             logger.info(
                 f"Created {result['total_phases']}-phase roadmap ({result['estimated_days']} days)"
             )
