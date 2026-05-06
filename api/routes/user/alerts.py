@@ -192,6 +192,7 @@ async def get_alerts_paginated(
     limit: int = 7,
     category: Optional[str] = None,
     priority: Optional[str] = None,
+    today_only: bool = False,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -199,6 +200,8 @@ async def get_alerts_paginated(
     Paginated alerts endpoint.
     Returns { data, total, page, pages } so the frontend can drive
     pagination from the backend instead of fetching all records.
+    When today_only=true only alerts created since midnight UTC today
+    are returned — used by the home-feed dashboard preview.
     """
     user_id = current_user.id
     page = max(1, page)
@@ -210,6 +213,9 @@ async def get_alerts_paginated(
         base_query = base_query.filter(Alert.category == category)
     if priority:
         base_query = base_query.filter(Alert.priority == priority)
+    if today_only:
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        base_query = base_query.filter(Alert.created_at >= today_start)
 
     total = base_query.count()
     pages = max(1, -(-total // limit))  # ceiling division
