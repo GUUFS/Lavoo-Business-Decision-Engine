@@ -192,10 +192,10 @@ async def get_unread_alerts_count(
     current_user=Depends(get_current_user),
 ):
     """
-    Returns the count of active alerts the current user has not yet viewed,
-    scoped to alerts published after the user's account was created.
-    Pre-existing alerts are never "unread" for a new account.
+    Returns the count of active alerts the current user has not yet viewed.
     Polled by the frontend every 2 minutes to drive the sidebar badge.
+    The counter reflects ALL alerts in the database the user hasn't opened —
+    it drops to 0 after the user visits the alerts page (mark-all-read).
     """
     user_id = current_user.id
     viewed_ids = (
@@ -204,11 +204,7 @@ async def get_unread_alerts_count(
     )
     count = (
         db.query(func.count(Alert.id))
-        .filter(
-            Alert.is_active == True,
-            Alert.created_at >= current_user.created_at,
-            ~Alert.id.in_(viewed_ids),
-        )
+        .filter(Alert.is_active == True, ~Alert.id.in_(viewed_ids))
         .scalar()
     ) or 0
     return {"count": count}
