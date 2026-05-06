@@ -11,7 +11,7 @@ from api.utils.subscription_sync import sync_user_subscription
 
 from typing import Optional, List
 
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 router = APIRouter(tags=["alerts"])
 
@@ -184,6 +184,28 @@ async def get_alerts(
     await set_cached(cache_key, result_data, CacheTTL.MEDIUM)
 
     return result
+
+
+@router.get("/alerts/unread-count")
+async def get_unread_alerts_count(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Returns the count of active alerts the current user has not yet viewed.
+    Polled by the frontend every 2 minutes to drive the sidebar badge.
+    """
+    user_id = current_user.id
+    viewed_ids = (
+        db.query(UserAlert.alert_id)
+        .filter(UserAlert.user_id == user_id, UserAlert.has_viewed == True)
+    )
+    count = (
+        db.query(func.count(Alert.id))
+        .filter(Alert.is_active == True, ~Alert.id.in_(viewed_ids))
+        .scalar()
+    ) or 0
+    return {"count": count}
 
 
 @router.get("/alerts/paginated")
