@@ -5,7 +5,7 @@ from datetime import datetime
 from database.pg_connections import get_db
 from database.pg_models import (User, Alert, Referral, UserAlert, UserResponse, UserCreate, AlertResponse, AlertCreate,
                             ViewAlertRequest, ShareAlertRequest, ChopsBreakdown, PinAlertRequest, UserPinnedAlert)
-from api.routes.auth.login import get_current_user
+from api.routes.auth.login import get_current_user, get_admin_user
 from api.cache import get_cached, set_cached, delete_cached, CacheTTL
 from api.utils.subscription_sync import sync_user_subscription
 
@@ -664,6 +664,62 @@ async def mark_all_alerts_read(
     # Clear all alert cache variants for this user
     await delete_cached(f"alerts:list:{user.id}:all:all:0:100")
     return {"status": "ok", "message": "All alerts marked as read"}
+
+
+@router.post("/alerts/admin/backfill-viewed")
+async def backfill_viewed_alerts(
+    db: Session = Depends(get_db),
+    _admin=Depends(get_admin_user),
+):
+    """
+    One-time migration: for every user who has zero UserAlert rows, create
+    has_viewed=True records for all currently active alerts.
+
+    These are legacy accounts whose mark-all-read calls never reached the
+    backend (double /api prefix bug). They appear to have 229 unread alerts
+    but have interacted with the platform normally — they just lack the DB
+    records to prove it. After this runs, their unread count becomes 0 and
+    the badge behaves correctly going forward.
+
+    Safe to run multiple times: only targets users with NO UserAlert rows.
+    """
+    # Users who already have at least one UserAlert record — skip them.
+    users_with_records = {
+        row[0]
+        for row in db.query(UserAlert.user_id).distinct().all()
+    }
+
+    all_user_ids = [row[0] for row in db.query(User.id).all()]
+    legacy_ids = [uid for uid in all_user_ids if uid not in users_with_records]
+
+    if not legacy_ids:
+        return {"status": "ok", "seeded_users": 0, "seeded_rows": 0}
+
+    all_alert_ids = [
+        row[0]
+        for row in db.query(Alert.id).filter(Alert.is_active == True).all()
+    ]
+
+    now = datetime.utcnow()
+    rows = 0
+    for user_id in legacy_ids:
+        for alert_id in all_alert_ids:
+            db.add(UserAlert(
+                user_id=user_id,
+                alert_id=alert_id,
+                has_viewed=True,
+                is_attended=True,
+                viewed_at=now,
+                chops_earned_from_view=0,
+            ))
+            rows += 1
+
+    db.commit()
+    return {
+        "status": "ok",
+        "seeded_users": len(legacy_ids),
+        "seeded_rows": rows,
+    }
 
 
 # Health check
