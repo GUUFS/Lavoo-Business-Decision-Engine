@@ -620,7 +620,7 @@ def pin_alert(
 
     return {"message": "Alert pinned", "is_pinned": True}
 
-@router.post("/api/alerts/mark-all-read")
+@router.post("/alerts/mark-all-read")
 async def mark_all_alerts_read(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
