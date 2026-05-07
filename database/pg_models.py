@@ -1747,6 +1747,30 @@ class MarketplaceRequest(Base):
     user = relationship("User")
 
 
+class CreatorListing(Base):
+    __tablename__ = "creator_listings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    full_description = Column(Text, nullable=True)
+    listing_type = Column(String(50), nullable=False)  # Template|Playbook|Service|Tool|Course|Automation|Consulting|Strategy
+    category = Column(String(100), nullable=False)
+    price = Column(Float, default=0.0)
+    tags = Column(JSON, nullable=True)
+    features = Column(JSON, nullable=True)
+    icon_name = Column(String(50), nullable=False, default="Cpu")
+    color_theme = Column(String(30), nullable=False, default="orange")
+    purchase_url = Column(String(500), nullable=True)
+    sales_count = Column(Integer, default=0)
+    rating = Column(Float, default=0.0)
+    review_count = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user = relationship("User")
+
+
 class MvpFeature(Base):
     """Feature flag controlling which pages/features are visible in the customer app."""
     __tablename__ = "mvp_features"

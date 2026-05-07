@@ -8,8 +8,9 @@ action plans, toolkits, and execution roadmaps.
 import json
 import logging
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 
@@ -157,11 +158,52 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
 
 
 # =========================================================================
+# BACKGROUND TASKS
+# =========================================================================
+
+async def _enrich_stacks_background(
+    analysis_id: int,
+    raw_stacks: list,
+    user_query: str,
+    bottleneck_title: str,
+) -> None:
+    """
+    BackgroundTask: LLM-enrich automation stacks after response is sent,
+    then persist enriched stacks back to the analysis row.
+    """
+    from database.pg_connections import SessionLocal
+    from decision_engine.agentic_analyzer import create_analyzer
+
+    db = SessionLocal()
+    try:
+        analyzer = create_analyzer(db)
+        enriched = await analyzer._enrich_stacks_with_llm(
+            stacks=raw_stacks,
+            user_query=user_query,
+            primary_bottleneck=bottleneck_title,
+        )
+        db.execute(
+            text("UPDATE business_analyses SET recommended_tool_stacks = :stacks WHERE id = :id"),
+            {"stacks": json.dumps(enriched), "id": analysis_id},
+        )
+        db.commit()
+        logger.info(f"Background stack enrichment saved for analysis {analysis_id}")
+    except Exception as exc:
+        logger.error(
+            f"Background stack enrichment failed for analysis {analysis_id}: {exc}",
+            exc_info=True,
+        )
+    finally:
+        db.close()
+
+
+# =========================================================================
 # API ENDPOINTS
 # =========================================================================
 @router.post("/analyze", response_model=dict)
 async def analyze_business_goal(
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -260,6 +302,18 @@ async def analyze_business_goal(
         )
 
         logger.info(f"✅ Analysis completed: ID {result['data']['analysis_id']}")
+
+        # Schedule background enrichment of automation stacks
+        _raw_stacks = result["data"].get("recommended_tool_stacks", [])
+        _bottleneck_title = result["data"].get("primary_bottleneck", {}).get("title", "")
+        if _raw_stacks:
+            background_tasks.add_task(
+                _enrich_stacks_background,
+                analysis_id=result["data"]["analysis_id"],
+                raw_stacks=_raw_stacks,
+                user_query=business_goal,
+                bottleneck_title=_bottleneck_title,
+            )
 
         return {
             "success": True,
