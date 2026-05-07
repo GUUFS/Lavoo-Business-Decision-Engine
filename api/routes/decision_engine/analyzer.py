@@ -9,9 +9,10 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 
@@ -159,11 +160,52 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
 
 
 # =========================================================================
+# BACKGROUND TASKS
+# =========================================================================
+
+async def _enrich_stacks_background(
+    analysis_id: int,
+    raw_stacks: list,
+    user_query: str,
+    bottleneck_title: str,
+) -> None:
+    """
+    BackgroundTask: LLM-enrich automation stacks after response is sent,
+    then persist enriched stacks back to the analysis row.
+    """
+    from database.pg_connections import SessionLocal
+    from decision_engine.agentic_analyzer import create_analyzer
+
+    db = SessionLocal()
+    try:
+        analyzer = create_analyzer(db)
+        enriched = await analyzer._enrich_stacks_with_llm(
+            stacks=raw_stacks,
+            user_query=user_query,
+            primary_bottleneck=bottleneck_title,
+        )
+        db.execute(
+            text("UPDATE business_analyses SET recommended_tool_stacks = :stacks WHERE id = :id"),
+            {"stacks": json.dumps(enriched), "id": analysis_id},
+        )
+        db.commit()
+        logger.info(f"Background stack enrichment saved for analysis {analysis_id}")
+    except Exception as exc:
+        logger.error(
+            f"Background stack enrichment failed for analysis {analysis_id}: {exc}",
+            exc_info=True,
+        )
+    finally:
+        db.close()
+
+
+# =========================================================================
 # API ENDPOINTS
 # =========================================================================
 @router.post("/analyze", response_model=dict)
 async def analyze_business_goal(
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -262,6 +304,18 @@ async def analyze_business_goal(
         )
 
         logger.info(f"✅ Analysis completed: ID {result['data']['analysis_id']}")
+
+        # Schedule background enrichment of automation stacks
+        _raw_stacks = result["data"].get("recommended_tool_stacks", [])
+        _bottleneck_title = result["data"].get("primary_bottleneck", {}).get("title", "")
+        if _raw_stacks:
+            background_tasks.add_task(
+                _enrich_stacks_background,
+                analysis_id=result["data"]["analysis_id"],
+                raw_stacks=_raw_stacks,
+                user_query=business_goal,
+                bottleneck_title=_bottleneck_title,
+            )
 
         return {
             "success": True,
@@ -505,6 +559,152 @@ async def get_analysis_detail(
             status_code=500,
             detail=f"Failed to fetch analysis: {str(e)}"
         )
+
+
+@router.post("/analyze/stream")
+async def analyze_business_goal_stream(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    SSE streaming analysis endpoint.
+    Emits progress events during analysis, then the final result.
+
+    Event types: progress {pct, msg} | result {data} | error {message}
+    """
+    from decision_engine.agentic_analyzer import create_analyzer
+    from decision_engine.multimodal.handler import MultimodalHandler
+
+    try:
+        user_id = get_user_id(current_user)
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    # Parse request body (identical logic to /analyze)
+    content_type = request.headers.get("content-type", "")
+    business_goal = ""
+    files = []
+
+    try:
+        if "application/json" in content_type:
+            body = await request.json()
+            business_goal = body.get("business_goal", "")
+        elif "multipart/form-data" in content_type:
+            form_data = await request.form()
+            business_goal = form_data.get("business_goal", "")
+            files = form_data.getlist("files")
+        else:
+            raise HTTPException(status_code=400, detail="Invalid Content-Type")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse request: {e}")
+
+    if not business_goal and not files:
+        raise HTTPException(status_code=400, detail="Business goal or file upload required")
+
+    # Process multimodal files if present
+    if files:
+        image_bytes_list = []
+        document_bytes_list = []
+        for file in files:
+            file_bytes = await file.read()
+            filename = getattr(file, "filename", "").lower()
+            if filename.endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                image_bytes_list.append((file_bytes, filename))
+            elif filename.endswith(('.pdf', '.docx', '.doc', '.xlsx', '.csv', '.txt')):
+                document_bytes_list.append((file_bytes, filename))
+        if image_bytes_list or document_bytes_list:
+            mm_handler = MultimodalHandler(use_vision_for_images=True)
+            mm_result = mm_handler.process_multimodal_query(
+                user_query=business_goal,
+                image_bytes_list=image_bytes_list,
+                document_bytes_list=document_bytes_list,
+                enhance_with_llm=False,
+            )
+            combined = mm_result.get("combined_context", "")
+            if combined:
+                business_goal = f"{business_goal}\n\n[Additional Context from Uploaded Files]:\n{combined}".strip()
+
+    if not business_goal:
+        raise HTTPException(status_code=400, detail="Could not extract content from uploaded files")
+
+    # Idempotency guard (same 60s window as /analyze)
+    from datetime import timedelta
+    from sqlalchemy import desc as _desc
+    recent_cutoff = datetime.utcnow() - timedelta(seconds=60)
+    recent = (
+        db.query(BusinessAnalysis)
+        .filter(
+            BusinessAnalysis.user_id == user_id,
+            BusinessAnalysis.created_at >= recent_cutoff,
+        )
+        .order_by(_desc(BusinessAnalysis.created_at))
+        .first()
+    )
+
+    if recent:
+        async def _cached_stream():
+            data = format_analysis_for_frontend(recent)
+            yield f"event: progress\ndata: {json.dumps({'pct': 100, 'msg': 'Returning recent analysis'})}\n\n"
+            yield f"event: result\ndata: {json.dumps({'data': data})}\n\n"
+
+        return StreamingResponse(
+            _cached_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _progress_callback(pct: int, msg: str):
+        await queue.put({"type": "progress", "pct": pct, "msg": msg})
+
+    async def _run_analysis():
+        try:
+            analyzer = create_analyzer(db)
+            result = await analyzer.analyze(
+                user_query=business_goal,
+                user_id=user_id,
+                progress_callback=_progress_callback,
+            )
+            # Schedule background enrichment
+            _raw_stacks = result["data"].get("recommended_tool_stacks", [])
+            _bottleneck_title = result["data"].get("primary_bottleneck", {}).get("title", "")
+            if _raw_stacks:
+                background_tasks.add_task(
+                    _enrich_stacks_background,
+                    analysis_id=result["data"]["analysis_id"],
+                    raw_stacks=_raw_stacks,
+                    user_query=business_goal,
+                    bottleneck_title=_bottleneck_title,
+                )
+            await queue.put({"type": "result", "data": result["data"]})
+        except Exception as exc:
+            logger.error(f"SSE analysis failed: {exc}", exc_info=True)
+            await queue.put({"type": "error", "message": str(exc)})
+        finally:
+            await queue.put(None)
+
+    async def _generate():
+        task = asyncio.create_task(_run_analysis())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event_type = item.pop("type")
+                yield f"event: {event_type}\ndata: {json.dumps(item)}\n\n"
+        finally:
+            task.cancel()
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.delete("/analyses/{analysis_id}")

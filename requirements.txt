@@ -24,4 +24,5 @@ fastapi-cache2>=0.2.1
 redis>=5.0.0
 cohere>=5.0.0
 pip-audit
-websockets>=13.0
+websockets>=13.0
+uvloop>=0.22.1

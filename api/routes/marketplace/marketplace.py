@@ -6,11 +6,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 
 from database.pg_connections import get_db
-from database.pg_models import User, MarketplaceTool, MarketplacePurchase, MarketplaceRequest
+from database.pg_models import User, MarketplaceTool, MarketplacePurchase, MarketplaceRequest, CreatorListing
 from api.routes.auth.login import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,38 @@ class CustomRequest(BaseModel):
     timeline: Optional[str] = None
 
 
+LISTING_TYPES = {"Template", "Playbook", "Service", "Tool", "Course", "Automation", "Consulting", "Strategy"}
+
+
+class ListingCreate(BaseModel):
+    title: str
+    description: str
+    full_description: Optional[str] = None
+    listing_type: str
+    category: str
+    price: float = 0.0
+    tags: Optional[list] = None
+    features: Optional[list] = None
+    icon_name: str = "Cpu"
+    color_theme: str = "orange"
+    purchase_url: Optional[str] = None
+
+
+class ListingUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    full_description: Optional[str] = None
+    listing_type: Optional[str] = None
+    category: Optional[str] = None
+    price: Optional[float] = None
+    tags: Optional[list] = None
+    features: Optional[list] = None
+    icon_name: Optional[str] = None
+    color_theme: Optional[str] = None
+    purchase_url: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 def _tool_dict(tool: MarketplaceTool) -> dict:
@@ -81,6 +113,31 @@ def _tool_dict(tool: MarketplaceTool) -> dict:
         "is_active": tool.is_active,
         "purchase_url": tool.purchase_url,
         "created_at": tool.created_at.isoformat() if tool.created_at else None,
+    }
+
+
+def _listing_dict(listing: CreatorListing) -> dict:
+    return {
+        "id": listing.id,
+        "name": listing.title,
+        "title": listing.title,
+        "author": "",
+        "description": listing.description,
+        "full_description": listing.full_description,
+        "listing_type": listing.listing_type,
+        "category": listing.category,
+        "price": listing.price,
+        "tags": listing.tags or [],
+        "features": listing.features or [],
+        "icon_name": listing.icon_name,
+        "color_theme": listing.color_theme,
+        "purchase_url": listing.purchase_url,
+        "sales_count": listing.sales_count,
+        "rating": listing.rating,
+        "review_count": listing.review_count,
+        "is_active": listing.is_active,
+        "created_at": listing.created_at.isoformat() if listing.created_at else None,
+        "source": "user_listing",
     }
 
 
@@ -191,6 +248,133 @@ async def submit_custom_request(
     return {"status": "submitted", "id": req.id, "message": "Your request has been submitted. We'll get back to you within 48 hours."}
 
 
+# ─── Creator Listing endpoints ────────────────────────────────────────────────
+
+@router.post("/listings")
+async def create_listing(
+    body: ListingCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a new creator listing owned by the current user."""
+    if body.listing_type not in LISTING_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"listing_type must be one of: {', '.join(sorted(LISTING_TYPES))}",
+        )
+    listing = CreatorListing(
+        user_id=current_user.id,
+        title=body.title,
+        description=body.description,
+        full_description=body.full_description,
+        listing_type=body.listing_type,
+        category=body.category,
+        price=body.price,
+        tags=body.tags or [],
+        features=body.features or [],
+        icon_name=body.icon_name,
+        color_theme=body.color_theme,
+        purchase_url=body.purchase_url,
+    )
+    db.add(listing)
+    db.commit()
+    db.refresh(listing)
+    logger.info(f"User {current_user.id} created listing {listing.id}: {listing.title}")
+    return _listing_dict(listing)
+
+
+@router.get("/listings")
+async def list_listings(
+    category: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    limit: int = Query(50, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all active creator listings."""
+    q = db.query(CreatorListing).filter(CreatorListing.is_active == True)
+    if category and category != "All":
+        q = q.filter(CreatorListing.category == category)
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            CreatorListing.title.ilike(like) | CreatorListing.description.ilike(like)
+        )
+    listings = q.order_by(CreatorListing.created_at.desc()).limit(limit).all()
+    return {"listings": [_listing_dict(l) for l in listings]}
+
+
+@router.get("/listings/{listing_id}")
+async def get_listing(
+    listing_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    listing = db.query(CreatorListing).filter(
+        CreatorListing.id == listing_id, CreatorListing.is_active == True
+    ).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    return _listing_dict(listing)
+
+
+@router.put("/listings/{listing_id}")
+async def update_listing(
+    listing_id: int,
+    body: ListingUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    listing = db.query(CreatorListing).filter(CreatorListing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your listing")
+    if body.listing_type and body.listing_type not in LISTING_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"listing_type must be one of: {', '.join(sorted(LISTING_TYPES))}",
+        )
+    for field, value in body.dict(exclude_unset=True).items():
+        setattr(listing, field, value)
+    db.commit()
+    db.refresh(listing)
+    return _listing_dict(listing)
+
+
+@router.post("/listings/{listing_id}/visit")
+async def record_listing_visit(
+    listing_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Increment sales_count when a user clicks through to a listing's purchase URL."""
+    listing = db.query(CreatorListing).filter(
+        CreatorListing.id == listing_id, CreatorListing.is_active == True
+    ).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    listing.sales_count = (listing.sales_count or 0) + 1
+    db.commit()
+    return {"sales_count": listing.sales_count}
+
+
+@router.delete("/listings/{listing_id}")
+async def delete_listing(
+    listing_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    listing = db.query(CreatorListing).filter(CreatorListing.id == listing_id).first()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your listing")
+    listing.is_active = False
+    db.commit()
+    return {"status": "deleted"}
+
+
 # ─── Admin endpoints ──────────────────────────────────────────────────────────
 
 @router.get("/admin/tools")
@@ -278,17 +462,21 @@ async def admin_list_requests(
     q = db.query(MarketplaceRequest)
     if status:
         q = q.filter(MarketplaceRequest.status == status)
-    requests = q.order_by(MarketplaceRequest.created_at.desc()).all()
-    result = []
-    for r in requests:
-        user = db.query(User).filter(User.id == r.user_id).first()
-        result.append({
+    requests = (
+        q.options(joinedload(MarketplaceRequest.user))
+        .order_by(MarketplaceRequest.created_at.desc())
+        .all()
+    )
+    result = [
+        {
             "id": r.id, "title": r.title, "description": r.description,
             "budget": r.budget, "timeline": r.timeline, "status": r.status,
-            "user_name": user.name if user else "Unknown",
-            "user_email": user.email if user else "",
+            "user_name": r.user.name if r.user else "Unknown",
+            "user_email": r.user.email if r.user else "",
             "created_at": r.created_at.isoformat() if r.created_at else None,
-        })
+        }
+        for r in requests
+    ]
     return {"requests": result, "total": len(result)}
 
 

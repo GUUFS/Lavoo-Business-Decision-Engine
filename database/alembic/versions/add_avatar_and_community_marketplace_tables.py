@@ -21,8 +21,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Add avatar_url to users table
-    op.add_column('users', sa.Column('avatar_url', sa.Text(), nullable=True))
+    # Add avatar_url to users table (IF NOT EXISTS to handle re-runs)
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
 
     # Create community_channels table
     op.create_table(

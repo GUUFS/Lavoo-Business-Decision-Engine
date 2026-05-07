@@ -22,6 +22,7 @@ OUTPUT FORMAT:
 - LLM-generated motivational quote
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -55,6 +56,7 @@ class AgenticAnalyzer:
         self.db = db_session
         self.model = "grok-4-1-fast-reasoning"
         self.reasoning_model = "grok-4-1-fast-reasoning"
+        self.fast_model = "grok-4-1-fast-non-reasoning"
 
         api_key = os.getenv("XAI_API_KEY")
         if not api_key:
@@ -68,6 +70,11 @@ class AgenticAnalyzer:
             timeout=120.0,
         )
         logger.info("xAI Grok client initialized for agentic analysis")
+
+    async def _llm(self, **kwargs):
+        """Run a blocking OpenAI chat completion in a thread so the event loop stays free."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.client.chat.completions.create(**kwargs))
 
     # =========================================================================
     # SEMANTIC TOOL SEARCH (used by Stage 3)
@@ -92,37 +99,53 @@ class AgenticAnalyzer:
     # MAIN PIPELINE
     # =========================================================================
 
-    async def analyze(self, user_query: str, user_id: int) -> Dict[str, Any]:
+    async def analyze(self, user_query: str, user_id: int, progress_callback=None) -> Dict[str, Any]:
         """
         Main analysis pipeline — orchestrates all agents.
 
         Args:
             user_query: User's business challenge/goal
             user_id: Current user ID
+            progress_callback: Optional async callable(pct: int, msg: str) for SSE progress events
 
         Returns:
             Complete analysis dict matching the frontend result page format
         """
+        async def _emit(pct: int, msg: str):
+            if progress_callback:
+                try:
+                    await progress_callback(pct, msg)
+                except Exception:
+                    pass
+
         logger.info(f"Starting agentic analysis for user {user_id}")
         start_time = datetime.now()
 
         try:
+            await _emit(5, "Starting analysis...")
+
             logger.info("Stage 1: Identifying primary bottleneck...")
+            await _emit(10, "Identifying your primary bottleneck...")
             primary_result = await self._stage1_primary_bottleneck(user_query)
+            await _emit(25, f"Found: {primary_result.get('primary_bottleneck', {}).get('title', 'bottleneck identified')}")
 
             logger.info("Stage 2: Finding secondary constraints...")
+            await _emit(30, "Mapping secondary constraints...")
             secondary_result = await self._stage2_secondary_constraints(
                 user_query, primary_result
             )
+            await _emit(45, "Constraints mapped")
 
             logger.info("Stage 3: Generating ranked action plans...")
+            await _emit(50, "Building ranked action plans...")
             action_plans_result = await self._stage3_action_plans(
                 user_query, primary_result, secondary_result
             )
+            await _emit(65, "Action plans ready")
 
-            # Stages 3B and 4 are independent of each other — run in parallel
-            # to cut total analysis time by whichever stage is slower.
+            # Stages 3B and 4 are independent — run in parallel to cut latency
             logger.info("Stages 3B + 4: running automation stacks and roadmap in parallel...")
+            await _emit(70, "Selecting tool stacks and generating roadmap...")
             automation_stack_result, roadmap_result = await asyncio.gather(
                 self._stage3_automation_stacks(
                     user_query=user_query,
@@ -132,6 +155,7 @@ class AgenticAnalyzer:
                 ),
                 self._stage4_roadmap_and_motivation(user_query, action_plans_result),
             )
+            await _emit(92, "Roadmap complete")
 
             duration_seconds = (datetime.now() - start_time).total_seconds()
 
@@ -142,6 +166,7 @@ class AgenticAnalyzer:
                 automation_stack_result=automation_stack_result,
             )
 
+            await _emit(95, "Saving your analysis...")
             analysis_id = await self._save_to_database(
                 user_id=user_id,
                 user_query=user_query,
@@ -164,6 +189,7 @@ class AgenticAnalyzer:
                 roadmap_result=roadmap_result,
             )
 
+            await _emit(100, "Analysis complete!")
             logger.info(f"Analysis complete in {duration_seconds:.1f}s")
             return response
 
@@ -214,7 +240,7 @@ OUTPUT FORMAT (JSON):
 Think like a consultant who charges $500/hour. Be brutally honest, specific, and actionable."""
 
         try:
-            response = self.client.chat.completions.create(
+            response = await self._llm(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
@@ -284,8 +310,8 @@ OUTPUT FORMAT (JSON):
 Be specific and practical."""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.reasoning_model,
+            response = await self._llm(
+                model=self.fast_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.6,
                 max_tokens=600,
@@ -304,6 +330,68 @@ Be specific and practical."""
         except Exception as e:
             logger.error(f"Stage 2 failed: {e}")
             raise
+
+    async def _attach_toolkit(self, plan: dict, user_query: str) -> dict:
+        """Fetch and attach the best AI tool for a single action plan (runs in parallel)."""
+        if not plan.get("needs_ai_tool", False):
+            plan["toolkit"] = None
+            plan.pop("needs_ai_tool", None)
+            return plan
+
+        tools = await self._search_ai_tools(
+            user_query=user_query,
+            action_description=f"{plan['title']} - {plan.get('what_to_do', '')}",
+            top_k=3,
+        )
+
+        if not tools:
+            plan["toolkit"] = None
+            plan.pop("needs_ai_tool", None)
+            return plan
+
+        tool_names = [f"{t['tool_name']}: {t['description'][:100]}" for t in tools]
+        prompt_tool_selection = f"""You are selecting the best AI tool for a specific action.
+
+ACTION: {plan['title']}
+WHAT TO DO: {plan.get('what_to_do', '')}
+
+AVAILABLE TOOLS (from semantic search):
+{chr(10).join([f"{i+1}. {t}" for i, t in enumerate(tool_names)])}
+
+Your task: Pick the BEST tool for this action, or return null if none are good fits.
+
+OUTPUT FORMAT (JSON):
+{{
+    "selected_tool_index": 0 or null,
+    "toolkit": {{
+        "tool_name": "Selected tool name",
+        "what_it_helps": "What it specifically helps with for this action (1 sentence)",
+        "why_this_tool": "Why this tool is best for this action (1 sentence)"
+    }} or null
+}}
+
+Only recommend if it genuinely adds value."""
+
+        try:
+            tool_response = await self._llm(
+                model=self.fast_model,
+                messages=[{"role": "user", "content": prompt_tool_selection}],
+                temperature=0.6,
+                max_tokens=300,
+            )
+            tool_text = tool_response.choices[0].message.content.strip()
+            if "```json" in tool_text:
+                tool_text = tool_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in tool_text:
+                tool_text = tool_text.split("```")[1].split("```")[0].strip()
+            tool_selection = json.loads(tool_text)
+            plan["toolkit"] = tool_selection.get("toolkit")
+        except Exception as e:
+            logger.warning(f"Toolkit selection failed for plan '{plan['title']}': {e}")
+            plan["toolkit"] = None
+
+        plan.pop("needs_ai_tool", None)
+        return plan
 
     # =========================================================================
     # STAGE 3: ACTION PLANS AGENT
@@ -373,7 +461,7 @@ OUTPUT FORMAT (JSON):
 Be practical and specific."""
 
         try:
-            response = self.client.chat.completions.create(
+            response = await self._llm(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt_actions}],
                 temperature=0.7,
@@ -389,64 +477,13 @@ Be practical and specific."""
             result = json.loads(result_text)
             action_plans = result["action_plans"]
 
-            for plan in action_plans:
-                if plan.get("needs_ai_tool", False):
-                    tools = await self._search_ai_tools(
-                        user_query=user_query,
-                        action_description=f"{plan['title']} - {plan['what_to_do']}",
-                        top_k=3,
-                    )
+            # Attach toolkits to all plans in parallel
+            action_plans_with_toolkits = await asyncio.gather(*[
+                self._attach_toolkit(plan, user_query) for plan in action_plans
+            ])
+            result["action_plans"] = list(action_plans_with_toolkits)
 
-                    if tools:
-                        tool_names = [
-                            f"{t['tool_name']}: {t['description'][:100]}" for t in tools
-                        ]
-
-                        prompt_tool_selection = f"""You are selecting the best AI tool for a specific action.
-
-ACTION: {plan['title']}
-WHAT TO DO: {plan['what_to_do']}
-
-AVAILABLE TOOLS (from semantic search):
-{chr(10).join([f"{i+1}. {t}" for i, t in enumerate(tool_names)])}
-
-Your task: Pick the BEST tool for this action, or return null if none are good fits.
-
-OUTPUT FORMAT (JSON):
-{{
-    "selected_tool_index": 0 or null,
-    "toolkit": {{
-        "tool_name": "Selected tool name",
-        "what_it_helps": "What it specifically helps with for this action (1 sentence)",
-        "why_this_tool": "Why this tool is best for this action (1 sentence)"
-    }} or null
-}}
-
-Only recommend if it genuinely adds value."""
-
-                        tool_response = self.client.chat.completions.create(
-                            model=self.reasoning_model,
-                            messages=[{"role": "user", "content": prompt_tool_selection}],
-                            temperature=0.6,
-                            max_tokens=300,
-                        )
-                        tool_text = tool_response.choices[0].message.content.strip()
-
-                        if "```json" in tool_text:
-                            tool_text = tool_text.split("```json")[1].split("```")[0].strip()
-                        elif "```" in tool_text:
-                            tool_text = tool_text.split("```")[1].split("```")[0].strip()
-
-                        tool_selection = json.loads(tool_text)
-                        plan["toolkit"] = tool_selection.get("toolkit")
-                    else:
-                        plan["toolkit"] = None
-                else:
-                    plan["toolkit"] = None
-
-                plan.pop("needs_ai_tool", None)
-
-            logger.info(f"Generated {len(action_plans)} action plans with semantic tool matching")
+            logger.info(f"Generated {len(result['action_plans'])} action plans with semantic tool matching")
             return result
 
         except Exception as e:
@@ -457,49 +494,34 @@ Only recommend if it genuinely adds value."""
     # STAGE 3B: AUTOMATION STACK AGENT
     # =========================================================================
 
-    async def _enrich_stacks_with_llm(
-        self,
-        stacks: List[Dict],
-        user_query: str,
-        primary_bottleneck: str,
-    ) -> List[Dict]:
-        """
-        LLM agent pass: reason about HOW the already-selected DB tools work together.
+    async def _enrich_single_stack(
+        self, stack: dict, user_query: str, primary_bottleneck: str
+    ) -> dict:
+        """LLM-enrich a single stack. Returns the stack (modified in place)."""
+        tools = stack.get("tools", [])
+        if not tools:
+            return stack
 
-        Strict constraint: the LLM only sees tool names/data passed to it — it cannot
-        invent or suggest tools outside the stack. All tool_names in the response are
-        validated against the allowed list before being merged.
-        """
-        if not stacks:
-            return stacks
+        allowed_tool_names = [t.get("tool_name", "") for t in tools if t.get("tool_name")]
 
-        enriched = []
-        for stack in stacks:
-            tools = stack.get("tools", [])
-            if not tools:
-                enriched.append(stack)
-                continue
+        tool_context_parts = []
+        for tool in tools:
+            name = tool.get("tool_name", "")
+            desc = (tool.get("description") or "")[:200]
+            features_raw = tool.get("key_features") or ""
+            integrations_raw = tool.get("compatibility_integration") or ""
+            features = features_raw[:200].replace('["', "").replace('"]', "").replace('",', ",")
+            integrations = integrations_raw[:200].replace('["', "").replace('"]', "").replace('",', ",")
+            tool_context_parts.append(
+                f"- {name}: {desc}\n"
+                f"  Key Features: {features}\n"
+                f"  Integrations: {integrations}"
+            )
 
-            allowed_tool_names = [t.get("tool_name", "") for t in tools if t.get("tool_name")]
+        tool_context = "\n".join(tool_context_parts)
+        allowed_names_str = ", ".join(f'"{n}"' for n in allowed_tool_names)
 
-            tool_context_parts = []
-            for tool in tools:
-                name = tool.get("tool_name", "")
-                desc = (tool.get("description") or "")[:200]
-                features_raw = tool.get("key_features") or ""
-                integrations_raw = tool.get("compatibility_integration") or ""
-                features = features_raw[:200].replace('["', "").replace('"]', "").replace('",', ",")
-                integrations = integrations_raw[:200].replace('["', "").replace('"]', "").replace('",', ",")
-                tool_context_parts.append(
-                    f"- {name}: {desc}\n"
-                    f"  Key Features: {features}\n"
-                    f"  Integrations: {integrations}"
-                )
-
-            tool_context = "\n".join(tool_context_parts)
-            allowed_names_str = ", ".join(f'"{n}"' for n in allowed_tool_names)
-
-            prompt = f"""You are an automation workflow expert. A semantic search engine selected these tools from a live database to match a user's business problem. Explain HOW they work together as a workflow.
+        prompt = f"""You are an automation workflow expert. A semantic search engine selected these tools from a live database to match a user's business problem. Explain HOW they work together as a workflow.
 
 STRICT RULE: You MUST ONLY reference these exact tool names from the database: {allowed_names_str}
 Do NOT mention, suggest, or invent any other tools.
@@ -533,47 +555,58 @@ OUTPUT FORMAT (JSON only, no markdown fences):
   ]
 }}"""
 
-            try:
-                response = self.client.chat.completions.create(
-                    model=self.reasoning_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.4,
-                    max_tokens=700,
-                )
-                result_text = response.choices[0].message.content.strip()
+        try:
+            response = await self._llm(
+                model=self.fast_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.4,
+                max_tokens=700,
+            )
+            result_text = response.choices[0].message.content.strip()
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0].strip()
 
-                if "```json" in result_text:
-                    result_text = result_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in result_text:
-                    result_text = result_text.split("```")[1].split("```")[0].strip()
+            llm_data = json.loads(result_text)
 
-                llm_data = json.loads(result_text)
+            validated_tool_roles = [
+                tr for tr in llm_data.get("tool_roles", [])
+                if tr.get("tool_name") in allowed_tool_names
+            ]
+            validated_setup_order = [
+                so for so in llm_data.get("setup_order", [])
+                if so.get("tool_name") in allowed_tool_names
+            ]
 
-                validated_tool_roles = [
-                    tr for tr in llm_data.get("tool_roles", [])
-                    if tr.get("tool_name") in allowed_tool_names
-                ]
-                validated_setup_order = [
-                    so for so in llm_data.get("setup_order", [])
-                    if so.get("tool_name") in allowed_tool_names
-                ]
+            stack["stack_name"] = llm_data.get("stack_name", stack.get("stack_name", ""))
+            stack["workflow_summary"] = llm_data.get("workflow_summary", stack.get("summary", ""))
+            stack["automation_logic"] = llm_data.get("automation_logic", stack.get("automation_logic", ""))
+            if validated_tool_roles:
+                stack["tool_roles"] = validated_tool_roles
+            if validated_setup_order:
+                stack["setup_order"] = validated_setup_order
 
-                stack["stack_name"] = llm_data.get("stack_name", stack["stack_name"])
-                stack["workflow_summary"] = llm_data.get("workflow_summary", stack.get("summary", ""))
-                stack["automation_logic"] = llm_data.get("automation_logic", stack.get("automation_logic", ""))
-                if validated_tool_roles:
-                    stack["tool_roles"] = validated_tool_roles
-                if validated_setup_order:
-                    stack["setup_order"] = validated_setup_order
+            logger.info(f"LLM enriched stack: {stack.get('stack_name', '?')}")
+        except Exception as e:
+            logger.warning(f"LLM enrichment failed for stack, keeping base values: {e}")
 
-                logger.info(f"LLM enriched stack: {stack['stack_name']}")
+        return stack
 
-            except Exception as e:
-                logger.warning(f"LLM enrichment failed for stack, keeping base values: {e}")
-
-            enriched.append(stack)
-
-        return enriched
+    async def _enrich_stacks_with_llm(
+        self,
+        stacks: List[Dict],
+        user_query: str,
+        primary_bottleneck: str,
+    ) -> List[Dict]:
+        """LLM agent pass: reason about HOW selected DB tools work together. Runs all stacks in parallel."""
+        if not stacks:
+            return stacks
+        results = await asyncio.gather(*[
+            self._enrich_single_stack(stack, user_query, primary_bottleneck)
+            for stack in stacks
+        ])
+        return list(results)
 
     async def _stage3_automation_stacks(
         self,
@@ -583,11 +616,8 @@ OUTPUT FORMAT (JSON only, no markdown fences):
         secondary_result: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Stage 3B: Compose up to 3 automation stacks (1-4 tools each) from DB tools,
-        then enrich with an LLM agent that reasons about how the tools work together.
-
-        Returns:
-            {"recommended_tool_stacks": [...]}
+        Stage 3B: Compose up to 3 automation stacks (algorithmic only).
+        LLM enrichment is deferred to a BackgroundTask in the route layer.
         """
         try:
             action_plans = action_plans_result.get("action_plans", []) or []
@@ -599,9 +629,6 @@ OUTPUT FORMAT (JSON only, no markdown fences):
                 db_session=self.db,
             )
 
-            bottleneck_title = primary_result.get("primary_bottleneck", {}).get(
-                "title", "core bottleneck"
-            )
             constraints = secondary_result.get("secondary_constraints", []) or []
             constraint_titles = [
                 str(item.get("title", "")).strip()
@@ -617,14 +644,8 @@ OUTPUT FORMAT (JSON only, no markdown fences):
                     stack["solves"] = f"Helps reduce: {', '.join(constraint_titles[:3])}."
                 valid_stacks.append(stack)
 
-            enriched_stacks = await self._enrich_stacks_with_llm(
-                stacks=valid_stacks,
-                user_query=user_query,
-                primary_bottleneck=bottleneck_title,
-            )
-
-            logger.info(f"Generated {len(enriched_stacks)} enriched automation stacks")
-            return {"recommended_tool_stacks": enriched_stacks}
+            logger.info(f"Built {len(valid_stacks)} raw automation stacks (enrichment deferred)")
+            return {"recommended_tool_stacks": valid_stacks}
 
         except Exception as e:
             logger.error(f"Stage 3B failed: {e}", exc_info=True)
@@ -692,8 +713,8 @@ OUTPUT FORMAT (JSON):
 Be practical and encouraging."""
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.reasoning_model,
+            response = await self._llm(
+                model=self.fast_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,   # slightly lower = fewer hallucinations, faster
                 max_tokens=600,    # 800→600: roadmap JSON is typically ~400 tokens

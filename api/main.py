@@ -1,3 +1,13 @@
+# Install uvloop for better async performance (must be before any asyncio usage)
+try:
+    import uvloop
+    uvloop.install()
+except (ImportError, RuntimeError):
+    import logging as _logging
+    _logging.getLogger(__name__).debug(
+        "uvloop not available; using default asyncio event loop"
+    )
+
 # Standard library imports
 import asyncio
 import logging
