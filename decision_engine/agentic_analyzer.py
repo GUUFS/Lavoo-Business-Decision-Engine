@@ -99,46 +99,66 @@ class AgenticAnalyzer:
     # MAIN PIPELINE
     # =========================================================================
 
-    async def analyze(self, user_query: str, user_id: int) -> Dict[str, Any]:
+    async def analyze(self, user_query: str, user_id: int, progress_callback=None) -> Dict[str, Any]:
         """
         Main analysis pipeline — orchestrates all agents.
 
         Args:
             user_query: User's business challenge/goal
             user_id: Current user ID
+            progress_callback: Optional async callable(pct: int, msg: str) for SSE progress events
 
         Returns:
             Complete analysis dict matching the frontend result page format
         """
+        async def _emit(pct: int, msg: str):
+            if progress_callback:
+                try:
+                    await progress_callback(pct, msg)
+                except Exception:
+                    pass
+
         logger.info(f"Starting agentic analysis for user {user_id}")
         start_time = datetime.now()
 
         try:
+            await _emit(5, "Starting analysis...")
+
             logger.info("Stage 1: Identifying primary bottleneck...")
+            await _emit(10, "Identifying your primary bottleneck...")
             primary_result = await self._stage1_primary_bottleneck(user_query)
+            await _emit(25, f"Found: {primary_result.get('primary_bottleneck', {}).get('title', 'bottleneck identified')}")
 
             logger.info("Stage 2: Finding secondary constraints...")
+            await _emit(30, "Mapping secondary constraints...")
             secondary_result = await self._stage2_secondary_constraints(
                 user_query, primary_result
             )
+            await _emit(45, "Constraints mapped")
 
             logger.info("Stage 3: Generating ranked action plans...")
+            await _emit(50, "Building ranked action plans...")
             action_plans_result = await self._stage3_action_plans(
                 user_query, primary_result, secondary_result
             )
+            await _emit(65, "Action plans ready")
 
             logger.info("Stage 3B: Composing automation tool stacks...")
+            await _emit(70, "Selecting automation tool stacks...")
             automation_stack_result = await self._stage3_automation_stacks(
                 user_query=user_query,
                 action_plans_result=action_plans_result,
                 primary_result=primary_result,
                 secondary_result=secondary_result,
             )
+            await _emit(80, "Tool stacks selected")
 
             logger.info("Stage 4: Creating execution roadmap...")
+            await _emit(85, "Generating execution roadmap...")
             roadmap_result = await self._stage4_roadmap_and_motivation(
                 user_query, action_plans_result
             )
+            await _emit(92, "Roadmap complete")
 
             duration_seconds = (datetime.now() - start_time).total_seconds()
 
@@ -149,6 +169,7 @@ class AgenticAnalyzer:
                 automation_stack_result=automation_stack_result,
             )
 
+            await _emit(95, "Saving your analysis...")
             analysis_id = await self._save_to_database(
                 user_id=user_id,
                 user_query=user_query,
@@ -171,6 +192,7 @@ class AgenticAnalyzer:
                 roadmap_result=roadmap_result,
             )
 
+            await _emit(100, "Analysis complete!")
             logger.info(f"Analysis complete in {duration_seconds:.1f}s")
             return response
 
