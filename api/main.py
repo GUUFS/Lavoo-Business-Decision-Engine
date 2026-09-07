@@ -79,7 +79,7 @@ from api.routes.auth import login, signup, forgot_password, google_oauth
 from api.routes.decision_engine import analyzer as business_analyzer
 from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions, profile as user_profile
 from api.routes.support import customer_service, reviews, contact as support_contact
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact
 
 # Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
@@ -1386,6 +1386,7 @@ app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(permissions.router, prefix="/api")
+app.include_router(admin_contact.router, prefix="/api")
 app.include_router(signals.router, prefix="/api")
 
 app.include_router(dashboard.router, prefix="/api")

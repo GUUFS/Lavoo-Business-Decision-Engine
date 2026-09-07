@@ -1169,8 +1169,140 @@ Message:
             reply_to=email
         )
 
+    def send_contact_reply_via_resend(
+        self,
+        user_email: str,
+        name: str,
+        reply_message: str,
+        original_message: Optional[str] = None,
+        subject: Optional[str] = None,
+        reason: Optional[str] = None,
+        admin_name: Optional[str] = None,
+    ) -> Dict:
+        """
+        Send an admin reply directly to the user's email inbox using Resend API.
+        Sender: Lavoo <hello@lavoo.io>
+        Reply-To: hello@lavoo.io
+        """
+        contact_sender = os.getenv("CONTACT_FROM_EMAIL", "hello@lavoo.io")
+        from_display = f"{self.from_name} <{contact_sender}>"
+        clean_reason = (reason or "general").replace("_", " ").title()
+        email_subject = subject or f"Re: Your Lavoo {clean_reason} Inquiry"
+        if not email_subject.startswith("Re:"):
+            email_subject = f"Re: {email_subject}"
+
+        formatted_reply = reply_message.replace("\n", "<br />")
+        formatted_original = (original_message or "").replace("\n", "<br />")
+        signoff_name = admin_name or "The Lavoo Team"
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1f2937; margin: 0; padding: 0; background-color: #f9fafb; }}
+                .container {{ max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }}
+                .header {{ background: #18181b; color: #ffffff; padding: 24px 30px; border-bottom: 3px solid #e87a02; }}
+                .header h1 {{ margin: 0; font-size: 20px; font-weight: 700; }}
+                .content {{ padding: 32px 30px; }}
+                .reply-body {{ font-size: 15px; color: #111827; line-height: 1.7; margin-bottom: 25px; }}
+                .quote-box {{ background: #f9fafb; border-left: 3px solid #d1d5db; padding: 14px 16px; margin: 25px 0 15px; border-radius: 0 6px 6px 0; }}
+                .quote-title {{ font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }}
+                .quote-text {{ font-size: 13.5px; color: #4b5563; line-height: 1.5; }}
+                .footer {{ background: #f9fafb; padding: 20px 30px; text-align: center; color: #9ca3af; font-size: 12px; border-top: 1px solid #f3f4f6; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Lavoo</h1>
+                </div>
+                <div class="content">
+                    <p style="margin-top: 0; font-size: 16px; font-weight: 600; color: #111827;">Hi {name},</p>
+                    
+                    <div class="reply-body">
+                        {formatted_reply}
+                    </div>
+
+                    <p style="margin: 25px 0 0; font-size: 14px; color: #4b5563;">
+                        Best regards,<br />
+                        <strong>{signoff_name}</strong><br />
+                        <span style="color: #e87a02; font-size: 13px;">Lavoo | The Business Doctor</span>
+                    </p>
+
+                    {f'''
+                    <div class="quote-box">
+                        <div class="quote-title">In reply to your message:</div>
+                        <div class="quote-text">{formatted_original}</div>
+                    </div>
+                    ''' if original_message else ''}
+                </div>
+                <div class="footer">
+                    <p>Have further questions? Simply reply to this email or reach us at <a href="mailto:{contact_sender}" style="color: #e87a02;">{contact_sender}</a>.</p>
+                    <p>&copy; {datetime.now().year} Lavoo | The Business Doctor. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        text_content = f"""Hi {name},
+
+{reply_message}
+
+Best regards,
+{signoff_name}
+Lavoo | The Business Doctor
+{contact_sender}
+
+{"--- Original Message ---" if original_message else ""}
+{original_message if original_message else ""}
+"""
+
+        # Priority 1: Send via Resend API
+        if self.resend_api_key:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {self.resend_api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "from": from_display,
+                    "to": [user_email],
+                    "reply_to": contact_sender,
+                    "subject": email_subject,
+                    "html": html_content,
+                    "text": text_content,
+                }
+                response = requests.post(
+                    f"{self.resend_base_url}/emails",
+                    headers=headers,
+                    json=payload,
+                    timeout=10,
+                )
+                if response.status_code in (200, 201, 202):
+                    res_json = response.json()
+                    logger.info(f"✅ Contact reply sent via Resend to {user_email} (id: {res_json.get('id')})")
+                    return {"success": True, "message_id": res_json.get("id", ""), "status": "sent"}
+                logger.warning(f"⚠️ Resend delivery returned {response.status_code}: {response.text[:200]}")
+            except Exception as e:
+                logger.warning(f"⚠️ Resend send failed for contact reply: {str(e)}")
+
+        # Fallback to general _send_email
+        return self._send_email(
+            to_email=user_email,
+            to_name=name,
+            subject=email_subject,
+            html_content=html_content,
+            text_content=text_content,
+            reply_to=contact_sender
+        )
+
     def send_contact_confirmation_to_user(self, user_email: str, name: str):
         """Send immediate confirmation receipt to the user who submitted the contact form"""
+        contact_sender = os.getenv("CONTACT_FROM_EMAIL", "hello@lavoo.io")
+        from_display = f"{self.from_name} <{contact_sender}>"
         subject = "We've received your message — Lavoo"
 
         html_content = f"""
@@ -1231,12 +1363,39 @@ Best regards,
 The Lavoo Team
 https://lavoo.io
 """
+        if self.resend_api_key:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {self.resend_api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "from": from_display,
+                    "to": [user_email],
+                    "reply_to": contact_sender,
+                    "subject": subject,
+                    "html": html_content,
+                    "text": text_content,
+                }
+                response = requests.post(
+                    f"{self.resend_base_url}/emails",
+                    headers=headers,
+                    json=payload,
+                    timeout=10,
+                )
+                if response.status_code in (200, 201, 202):
+                    logger.info(f"✅ Contact confirmation sent via Resend to {user_email}")
+                    return {"success": True, "message_id": response.json().get("id", ""), "status": "sent"}
+            except Exception as e:
+                logger.warning(f"⚠️ Resend send failed for confirmation: {str(e)}")
+
         return self._send_email(
             to_email=user_email,
             to_name=name,
             subject=subject,
             html_content=html_content,
-            text_content=text_content
+            text_content=text_content,
+            reply_to=contact_sender
         )
 
 
