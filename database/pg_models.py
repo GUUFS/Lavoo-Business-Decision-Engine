@@ -2246,7 +2246,7 @@ class SignalCommentListResponse(BaseModel):
 class ContactMessage(Base):
     """
     Stores contact form inquiries submitted through the public website.
-    Ensures zero message loss and gives admins an audit trail.
+    Ensures zero message loss and gives admins an audit trail and reply history.
     """
     __tablename__ = "contact_messages"
 
@@ -2257,7 +2257,10 @@ class ContactMessage(Base):
     reason = Column(String(100), nullable=False, default="general")
     subject = Column(String(255), nullable=True)
     message = Column(Text, nullable=False)
-    status = Column(String(50), default="unread", server_default="unread")  # unread, in_progress, resolved
+    status = Column(String(50), default="unread", server_default="unread")  # unread, in_progress, replied, resolved, archived
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)
-    notes = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    admin_replies = Column(JSON, nullable=True, default=list)
+    last_replied_at = Column(DateTime(timezone=True), nullable=True)
+    last_replied_by = Column(String(255), nullable=True)
