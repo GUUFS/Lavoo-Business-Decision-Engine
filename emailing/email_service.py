@@ -214,6 +214,7 @@ class MailerLiteEmailService:
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
+
     def send_verification_code(self, user_email: str, name: str, code: str):
         """
         Send the signup email-verification code via Resend. Guards against
@@ -295,6 +296,7 @@ class MailerLiteEmailService:
                 logger.warning(f"⚠️ Resend send failed: {str(e)}")
 
         return self._send_email(user_email, name, subject, html_content, text_content)
+
 
     def send_password_reset_email(self, user_email: str, name: str, reset_token: str):
         """Send password reset email with token link"""
