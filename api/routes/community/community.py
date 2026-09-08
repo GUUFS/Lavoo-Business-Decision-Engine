@@ -77,6 +77,7 @@ def ensure_voo_bot_user(db: Session) -> User:
 def _is_question_discussion(post_type: str = "", title: str = "", content: str = "") -> bool:
     """
     Intelligently identifies if a discussion is an inquiry, question, or advice request.
+    Strictly avoids false-positive matches on ordinary reflections, statements, and updates.
     """
     p_type = (post_type or "").strip().lower()
     if p_type in ("questions", "question", "ask-the-community", "decision-help", "ask", "help", "inquiry", "advice"):
@@ -85,22 +86,39 @@ def _is_question_discussion(post_type: str = "", title: str = "", content: str =
     t = (title or "").strip().lower()
     c = (content or "").strip().lower()
 
+    # 1. Explicit question mark in title or content
     if "?" in t or "?" in c:
         return True
 
-    question_starters = (
-        "how ", "what ", "why ", "where ", "when ", "who ", "which ", "whose ", "whom ",
-        "do ", "does ", "did ", "is ", "are ", "was ", "were ", "am ",
-        "can ", "could ", "should ", "would ", "will ", "shall ", "may ", "might ",
-        "has ", "have ", "had ",
-        "anyone ", "anybody ", "has anyone ", "have you ", "need help",
-        "help me", "any recommendation", "recommendations for", "any advice", "advice on",
-        "any thoughts", "curious to know", "curious to find out", "curious if", "wondering if"
+    # 2. Strict question phrase starters (checked only at the beginning of title or sentence/line starters)
+    explicit_inquiry_phrases = (
+        "how do i", "how can i", "how should", "how to", "how do you", "how would", "how did",
+        "what is", "what are", "what would", "what should", "what do you", "what can i", "what's the best",
+        "why is", "why does", "why did", "why do", "why would",
+        "where can i", "where should", "where do i", "where to find",
+        "when should", "when is the best",
+        "which one", "which tool", "which platform",
+        "who has experience", "who has used",
+        "can anyone", "can somebody", "could someone", "could anyone",
+        "does anyone", "has anyone", "have you ever", "is anyone here",
+        "need help with", "need advice on", "need recommendations", "need input on",
+        "help me with", "help me decide",
+        "any recommendation", "any recommendations", "any advice on", "any thoughts on", "any suggestions for",
+        "wondering if", "curious if anyone", "looking for advice", "seeking advice", "seeking recommendations",
+        "what are your thoughts", "would love your feedback", "would love feedback"
     )
-    if any(t.startswith(s) or f" {s}" in t for s in question_starters):
-        return True
-    if any(c.startswith(s) or f" {s}" in c for s in question_starters):
-        return True
+
+    # Check title prefix
+    for phrase in explicit_inquiry_phrases:
+        if t.startswith(phrase):
+            return True
+
+    # Check beginning of the first 3 lines of content
+    lines = [line.strip() for line in c.split("\n") if line.strip()]
+    for line in lines[:3]:
+        for phrase in explicit_inquiry_phrases:
+            if line.startswith(phrase):
+                return True
 
     return False
 
