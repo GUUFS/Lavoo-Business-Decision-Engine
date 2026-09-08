@@ -97,18 +97,48 @@ async def get_earnings_summary(
         # happened to touch it. It's later flipped to 'paid' once the
         # payout webhook confirms completion; both statuses mean money
         # already moved, so both belong in the paid bucket.
-        commission_stats = db.query(
+        #
+        # GROUPED BY CURRENCY: a referrer can have commissions in more than
+        # one currency (a Stripe/USD referral and a Flutterwave/NGN referral
+        # both crediting the same user) — summing Commission.amount across
+        # currencies with no grouping added raw NGN and raw USD figures
+        # together into one number, then the frontend labelled the result
+        # with a bare "$". Confirmed live: user 16 had ['NGN', 'USD'] with a
+        # blended "total" of 439.91 that was neither a real NGN nor a real
+        # USD amount. Every currency actually present gets its own row here;
+        # the frontend renders one stat-card set per currency as tabs.
+        commission_rows = db.query(
+            Commission.currency,
             func.sum(case((Commission.status.in_(['paid', 'auto_settled']), Commission.amount), else_=0)).label('paid_amount'),
             func.sum(case((Commission.status.in_(['pending', 'processing', 'approved']), Commission.amount), else_=0)).label('pending_amount'),
             func.count(case((Commission.status.in_(['paid', 'auto_settled']), 1), else_=None)).label('paid_count')
-        ).filter(Commission.user_id == user_id).first()
-        
-        print(f"[DEBUG] Raw Commission Stats for User {user_id}: {commission_stats}")
-        
-        paid_commissions = float(commission_stats.paid_amount or 0)
+        ).filter(Commission.user_id == user_id).group_by(Commission.currency).all()
 
-        pending_commissions = float(commission_stats.pending_amount or 0)
-        total_commissions = paid_commissions + pending_commissions
+        print(f"[DEBUG] Raw Commission Stats for User {user_id}: {commission_rows}")
+
+        by_currency = []
+        for row in commission_rows:
+            currency = row.currency or "USD"
+            paid = float(row.paid_amount or 0)
+            pending = float(row.pending_amount or 0)
+            by_currency.append({
+                "currency": currency,
+                "paid": paid,
+                "pending": pending,
+                "total": paid + pending,
+            })
+        # Stable order, largest total first, so the frontend's default tab
+        # is whichever currency this referrer actually earns the most in.
+        by_currency.sort(key=lambda c: c["total"], reverse=True)
+
+        # Legacy top-level fields (still consumed by a couple of older
+        # callers) now report the PRIMARY currency's own figures instead of
+        # a cross-currency blend — never a mix of two units pretending to be
+        # one number. Falls back to 0 for a referrer with no commissions yet.
+        primary = by_currency[0] if by_currency else {"paid": 0.0, "pending": 0.0, "total": 0.0, "currency": "USD"}
+        paid_commissions = primary["paid"]
+        pending_commissions = primary["pending"]
+        total_commissions = primary["total"]
         
         # Count distinct paid referrals from Commission table if possible, or fallback to subscription query
         # Actually, using the previous query for paid_referrals count is fine as it counts users who successfully subscribed
@@ -147,6 +177,13 @@ async def get_earnings_summary(
             "totalCommissions": total_commissions,
             "paidCommissions": paid_commissions,
             "pendingCommissions": pending_commissions,
+            # Authoritative multi-currency breakdown — one entry per
+            # currency this referrer actually has commissions in, each
+            # correctly summed within its own currency. The frontend renders
+            # this as currency tabs instead of trusting the single blended
+            # totalCommissions/paidCommissions/pendingCommissions above,
+            # which only ever reflect the primary (largest) currency.
+            "byCurrency": by_currency,
             "totalPaidReferrals": paid_referrals,
             "referralChops": referral_chops,
             "growthRate": growth_rate,
@@ -274,6 +311,7 @@ async def get_monthly_performance(
             subscription_payments = db.query(
                 Subscriptions.user_id,
                 Subscriptions.amount,
+                Subscriptions.currency,
                 Subscriptions.created_at,
                 Subscriptions.status
             ).filter(
@@ -306,12 +344,27 @@ async def get_monthly_performance(
             # Calculate commissions for this month, at this user's own actual
             # rate (40% subscribed / 15% free / 50% partner) rather than a
             # flat assumption — see CommissionService._get_rate_for_referrer.
-            month_subscription_total = sum(float(p.amount) for p in month_payments)
-            month_commissions = round(month_subscription_total * float(user_commission_rate), 2)
-            
+            #
+            # GROUPED BY CURRENCY, same reasoning as /earnings/summary above:
+            # summing p.amount across a NGN payment and a USD payment in the
+            # same month produced one meaningless blended figure. Each
+            # currency present gets its own commission total.
+            commission_by_currency: dict = {}
+            for p in month_payments:
+                currency = p.currency or "USD"
+                commission_by_currency[currency] = commission_by_currency.get(currency, 0.0) + float(p.amount)
+            commission_by_currency = {
+                currency: round(total * float(user_commission_rate), 2)
+                for currency, total in commission_by_currency.items()
+            }
+            # Legacy single-number fields now report the largest currency's
+            # figure only (never a cross-currency blend) — kept for any
+            # older consumer; the frontend should prefer commission_by_currency.
+            month_commissions = max(commission_by_currency.values(), default=0.0)
+
             # Count paid users this month (users who made payment)
             paid_users_this_month = len(set(p.user_id for p in month_payments))
-            
+
             monthly_data.append({
                 "month": month_start.strftime("%b"),
                 "year": month_start.year,
@@ -322,7 +375,8 @@ async def get_monthly_performance(
                 ).scalar() or 0,
                 "referral_chops": month_chops,
                 "commission": month_commissions,
-                "revenue": month_commissions
+                "revenue": month_commissions,
+                "commission_by_currency": commission_by_currency,
             })
         
         print(f"[/earnings/monthly] ✅ Complete: {len(monthly_data)} months")
@@ -424,21 +478,29 @@ async def get_monthly_metrics_for_period(
             Referral.referrer_id == user_id
         ).subquery()
         
-        # Use explicit select_from to avoid join ambiguity
-        month_payments = db.query(
+        # Use explicit select_from to avoid join ambiguity. GROUPED BY
+        # CURRENCY — same reasoning as /earnings/summary and /earnings/monthly:
+        # a single coalesced sum across currencies blends NGN and USD into
+        # one meaningless figure.
+        month_payments_by_currency = db.query(
+            Subscriptions.currency,
             func.coalesce(func.sum(Subscriptions.amount), 0).label('total_amount')
         ).select_from(Subscriptions).filter(
             Subscriptions.user_id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
             Subscriptions.status == "successful",
             Subscriptions.created_at >= month_start,
             Subscriptions.created_at <= month_end
-        ).first()
-        
-        total_subscription_amount = float(month_payments.total_amount or 0)
+        ).group_by(Subscriptions.currency).all()
+
         user_commission_rate = CommissionService._get_rate_for_referrer(user_id, db)
-        month_commission = round(total_subscription_amount * float(user_commission_rate), 2)
-        
-        print(f"[/earnings/monthly/{year}/{month}] Commission from payments in month: ${month_commission}")
+        commission_by_currency = {
+            (row.currency or "USD"): round(float(row.total_amount or 0) * float(user_commission_rate), 2)
+            for row in month_payments_by_currency
+        }
+        # Legacy single-number field reports the largest currency only.
+        month_commission = max(commission_by_currency.values(), default=0.0)
+
+        print(f"[/earnings/monthly/{year}/{month}] Commission from payments in month: {commission_by_currency}")
         
         # Get month name
         month_name = month_start.strftime("%B")
@@ -451,7 +513,8 @@ async def get_monthly_metrics_for_period(
             "paid_referral_count": paid_referral_count,
             "referral_chops": referral_chops,
             "commission": month_commission,
-            "revenue": month_commission
+            "revenue": month_commission,
+            "commission_by_currency": commission_by_currency,
         }
         
         print(f"[/earnings/monthly/{year}/{month}] ✅ Complete")
