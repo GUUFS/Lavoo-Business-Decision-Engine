@@ -14,7 +14,7 @@ from passlib.context import CryptContext
 
 from database.pg_connections import get_db
 from database.pg_models import User
-from emailing.email_service import MailerLiteEmailService
+from emailing.email_service import email_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,9 +23,6 @@ router = APIRouter(prefix="/auth", tags=["password-reset"])
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Email service
-email_service = MailerLiteEmailService()
 
 
 class ForgotPasswordRequest(BaseModel):
