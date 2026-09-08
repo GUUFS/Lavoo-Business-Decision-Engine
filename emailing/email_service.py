@@ -1,6 +1,6 @@
 """
-MailerLite Email Service
-Transactional email service using MailerLite API
+Lavoo Email Service
+Transactional email service using Resend (primary) with an SMTP/log fallback.
 """
 
 import requests
@@ -21,16 +21,15 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class MailerLiteEmailService:
+class EmailService:
     def __init__(self):
-        self.api_key = os.getenv("MAILERLITE_API_KEY")
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@lavoo.io")
         self.from_email = os.getenv("FROM_EMAIL", self.support_email)
         self.from_name = os.getenv("FROM_NAME", "Lavoo | The Business Doctor")
         self.frontend_url = os.getenv("FRONTEND_URL", "https://lavoo.io")
-        self.base_url = "https://connect.mailerlite.com/api"
 
-        # SMTP configuration (optional fallback or primary transport)
+        # SMTP configuration (fallback transport when Resend isn't configured
+        # or a send fails)
         self.smtp_host = os.getenv("SMTP_HOST")
         self.smtp_port = int(os.getenv("SMTP_PORT", "587")) if os.getenv("SMTP_PORT") else 587
         self.smtp_user = os.getenv("SMTP_USER")
@@ -38,17 +37,15 @@ class MailerLiteEmailService:
         self.smtp_tls = os.getenv("SMTP_TLS", "true").lower() == "true"
         self.smtp_ssl = os.getenv("SMTP_SSL", "false").lower() == "true"
 
-        # Resend — used specifically for the signup email-verification code
-        # (see send_verification_code below), not the general _send_email
-        # fallback chain above, so this doesn't change delivery behaviour
-        # for any of the other already-working transactional emails.
+        # Resend — the primary transport for every email this service sends
+        # (see _send_email and send_verification_code below).
         self.resend_api_key = os.getenv("RESEND_API_KEY")
         self.resend_base_url = "https://api.resend.com"
         if not self.resend_api_key:
-            logger.warning("⚠️ RESEND_API_KEY is not set - signup verification codes will fall back to MailerLite/SMTP/log")
+            logger.warning("⚠️ RESEND_API_KEY is not set - emails will fall back to SMTP/log")
 
-        if not self.api_key and not self.smtp_host:
-            logger.warning("⚠️ Neither MAILERLITE_API_KEY nor SMTP_HOST is set - emails will be logged only")
+        if not self.resend_api_key and not self.smtp_host:
+            logger.warning("⚠️ Neither RESEND_API_KEY nor SMTP_HOST is set - emails will be logged only")
 
     def _send_email(
         self,
@@ -60,58 +57,44 @@ class MailerLiteEmailService:
         reply_to: Optional[str] = None
     ):
         """
-        Send email via MailerLite API or SMTP transport with graceful fallback.
+        Send email via Resend, falling back to SMTP, then a log-only no-op.
         Ensures delivery does not raise unhandled exceptions.
         """
-        # 1. Try MailerLite API if configured
-        if self.api_key:
+        # 1. Try Resend if configured
+        if self.resend_api_key:
             try:
                 headers = {
+                    "Authorization": f"Bearer {self.resend_api_key}",
                     "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "Authorization": f"Bearer {self.api_key}"
                 }
-
                 payload = {
-                    "from": {
-                        "email": self.from_email,
-                        "name": self.from_name
-                    },
-                    "to": [
-                        {
-                            "email": to_email,
-                            "name": to_name
-                        }
-                    ],
+                    "from": f"{self.from_name} <{self.from_email}>",
+                    "to": [to_email],
                     "subject": subject,
                     "html": html_content,
-                    "text": text_content or subject
+                    "text": text_content or subject,
                 }
-
                 if reply_to:
-                    payload["reply_to"] = {
-                        "email": reply_to,
-                        "name": to_name
-                    }
+                    payload["reply_to"] = [reply_to]
 
                 response = requests.post(
-                    f"{self.base_url}/emails",
+                    f"{self.resend_base_url}/emails",
                     headers=headers,
                     json=payload,
-                    timeout=10
+                    timeout=10,
                 )
 
-                if response.status_code in [200, 201, 202]:
-                    logger.info(f"✅ Email sent via MailerLite to {to_email}: {subject}")
+                if response.status_code in (200, 201, 202):
+                    logger.info(f"✅ Email sent via Resend to {to_email}: {subject}")
                     return {
                         "success": True,
-                        "message_id": response.json().get("data", {}).get("id", ""),
+                        "message_id": response.json().get("id", ""),
                         "status": "sent"
                     }
                 else:
-                    logger.warning(f"⚠️ MailerLite delivery returned {response.status_code}: {response.text[:200]}")
+                    logger.warning(f"⚠️ Resend delivery returned {response.status_code}: {response.text[:200]}")
             except Exception as e:
-                logger.warning(f"⚠️ MailerLite send failed: {str(e)}")
+                logger.warning(f"⚠️ Resend send failed: {str(e)}")
 
         # 2. Try SMTP if configured
         if self.smtp_host and self.smtp_user and self.smtp_password:
@@ -217,12 +200,12 @@ class MailerLiteEmailService:
 
     def send_verification_code(self, user_email: str, name: str, code: str):
         """
-        Send the signup email-verification code via Resend. Guards against
-        fake/typo'd signup emails: nothing creates a real account until the
-        code sent here is submitted back (see api/routes/auth/signup.py).
-        Falls back to _send_email's MailerLite/SMTP/log chain if
-        RESEND_API_KEY isn't set, so signup keeps working in an environment
-        without it configured (e.g. local dev).
+        Send the signup email-verification code. Guards against fake/typo'd
+        signup emails: nothing creates a real account until the code sent
+        here is submitted back (see api/routes/auth/signup.py). Delegates to
+        _send_email's Resend/SMTP/log chain, so signup keeps working even in
+        an environment with neither Resend nor SMTP configured (e.g. local
+        dev — the code still reaches the log either way).
         """
         subject = f"{code} is your Lavoo verification code"
 
@@ -268,32 +251,6 @@ class MailerLiteEmailService:
         """
 
         text_content = f"Your Lavoo verification code is {code}. It expires in 15 minutes."
-
-        if self.resend_api_key:
-            try:
-                headers = {
-                    "Authorization": f"Bearer {self.resend_api_key}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "from": f"{self.from_name} <{self.from_email}>",
-                    "to": [user_email],
-                    "subject": subject,
-                    "html": html_content,
-                    "text": text_content,
-                }
-                response = requests.post(
-                    f"{self.resend_base_url}/emails",
-                    headers=headers,
-                    json=payload,
-                    timeout=10,
-                )
-                if response.status_code in (200, 201, 202):
-                    logger.info(f"✅ Verification code sent via Resend to {user_email}")
-                    return {"success": True, "message_id": response.json().get("id", ""), "status": "sent"}
-                logger.warning(f"⚠️ Resend delivery returned {response.status_code}: {response.text[:200]}")
-            except Exception as e:
-                logger.warning(f"⚠️ Resend send failed: {str(e)}")
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
@@ -1401,7 +1358,7 @@ https://lavoo.io
         )
 
 
-email_service = MailerLiteEmailService()
+email_service = EmailService()
 
 router = APIRouter(prefix="/api/email", tags=["email"])
 
@@ -1411,6 +1368,6 @@ async def test_email(background_tasks: BackgroundTasks):
     """Test email endpoint"""
     return {
         "success": True,
-        "message": "MailerLite email service is active" if email_service.api_key else "MailerLite API key not configured - emails will be logged only"
+        "message": "Resend email service is active" if email_service.resend_api_key else "RESEND_API_KEY not configured - emails will fall back to SMTP/log"
     }
 

@@ -6,7 +6,7 @@ Provides user-specific stats like total analyses count.
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, cast, Date
+from sqlalchemy import func, cast, Date, case
 from datetime import datetime, timedelta, timezone
 
 from database.pg_connections import get_db
@@ -90,23 +90,36 @@ async def get_user_stats(
             logger.error(f"Analysis stats partial fail (confidence/duration) for user {user_id}: {e}")
 
         # 2. Commission Stats
+        # GROUPED BY CURRENCY — same reasoning as /api/earnings/summary
+        # (see earnings.py): a referrer can have commissions in more than
+        # one currency, and func.sum(Commission.amount) with no grouping
+        # blends e.g. raw NGN and raw USD into one meaningless figure. This
+        # endpoint's total_commissions/paid_commissions report only the
+        # PRIMARY (largest) currency — this compact home-feed stat card has
+        # no room for per-currency tabs the way the earnings page does.
         total_commissions = 0.0
         paid_commissions = 0.0
+        primary_currency = "USD"
 
         try:
             # 'auto_settled' (Flutterwave subaccount split, or the
             # immediate-payout path) is included in both totals — it's
             # money already moved, same as 'paid', just not yet flipped to
             # 'paid' by the async payout-webhook confirmation.
-            total_commissions = db.query(func.sum(Commission.amount)).filter(
-                Commission.user_id == user_id,
-                Commission.status.in_(['paid', 'auto_settled', 'pending', 'processing', 'approved'])
-            ).scalar() or 0.0
+            rows = db.query(
+                Commission.currency,
+                func.sum(case((Commission.status.in_(['paid', 'auto_settled', 'pending', 'processing', 'approved']), Commission.amount), else_=0)).label('total'),
+                func.sum(case((Commission.status.in_(['paid', 'auto_settled']), Commission.amount), else_=0)).label('paid'),
+            ).filter(Commission.user_id == user_id).group_by(Commission.currency).all()
 
-            paid_commissions = db.query(func.sum(Commission.amount)).filter(
-                Commission.user_id == user_id,
-                Commission.status.in_(['paid', 'auto_settled'])
-            ).scalar() or 0.0
+            by_currency = sorted(
+                ({"currency": r.currency or "USD", "total": float(r.total or 0), "paid": float(r.paid or 0)} for r in rows),
+                key=lambda c: c["total"], reverse=True
+            )
+            if by_currency:
+                total_commissions = by_currency[0]["total"]
+                paid_commissions = by_currency[0]["paid"]
+                primary_currency = by_currency[0]["currency"]
         except Exception as e:
              logger.warning(f"Commission stats partial fail for user {user_id}: {e}")
 
@@ -148,6 +161,7 @@ async def get_user_stats(
             "total_duration_formatted": f"{int(total_seconds / 60)}m {int(total_seconds % 60)}s" if total_seconds > 60 else f"{int(total_seconds)}s",
             "total_commissions": float(total_commissions),
             "paid_commissions": float(paid_commissions),
+            "commission_currency": primary_currency,
             "total_referrals": int(total_referrals),
             "referrals_this_month": int(referrals_this_month),
             "alerts_shared": int(alerts_shared),
