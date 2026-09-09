@@ -21,8 +21,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["password-reset"])
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing — MUST match login.py/signup.py's scheme (argon2), not a
+# different one. This was previously bcrypt, which let a reset succeed on
+# its own but left login's argon2-only CryptContext unable to even parse the
+# new hash, raising an unhandled exception (500) on the very next login
+# attempt for anyone who had reset their password.
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
 class ForgotPasswordRequest(BaseModel):
