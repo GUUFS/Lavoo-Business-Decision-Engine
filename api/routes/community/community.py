@@ -123,6 +123,18 @@ def _is_question_discussion(post_type: str = "", title: str = "", content: str =
     return False
 
 
+def _normalize_paragraph_spacing(text: str) -> str:
+    """
+    Ensures that every paragraph, greeting, numbered point, and closing note
+    is cleanly separated by exactly double newlines (\\n\\n), giving 2 lines of breathing space.
+    """
+    if not text:
+        return ""
+    # Split on newlines, strip each chunk, filter out empty ones
+    chunks = [c.strip() for c in text.split("\n") if c.strip()]
+    return "\n\n".join(chunks)
+
+
 def _generate_voo_answer_message(author_handle: str, question_title: str, question_content: str, contributors: List[str], replies_text: str) -> str:
     """
     Generates an intelligent, high-value, and direct perspective answer from Voo using xAI Grok (or OpenAI client).
@@ -133,8 +145,8 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
     fallback_message = (
         f"Hi {author_handle}! 👋\n\n"
         f"Here is a key perspective on your question **{question_title}**:\n\n"
-        f"1. **Clarify the Core Objective**: Focus on the specific outcome or metric you want to improve before committing heavy resources.\n"
-        f"2. **Validate with Low Risk Tests**: Run small scale experiments to gather fast customer feedback and reduce execution risk.\n"
+        f"1. **Clarify the Core Objective**: Focus on the specific outcome or metric you want to improve before committing heavy resources.\n\n"
+        f"2. **Validate with Low Risk Tests**: Run small scale experiments to gather fast customer feedback and reduce execution risk.\n\n"
         f"3. **Prioritize Velocity and Simplicity**: Choose the simplest path that unlocks immediate traction for your business.\n\n"
         f"Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need."
     )
@@ -168,6 +180,7 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
             f"4. If community members ({contributors_str}) shared insights, naturally synthesize or reference them alongside your own perspective.\n"
             f"5. End with an encouraging closing note formulated like this: 'Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need.' (Do NOT mention Decision Engine missions or task conversions).\n"
             f"STRICT PUNCTUATION INSTRUCTION: Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, periods, or standard complete sentences instead.\n"
+            f"STRICT SPACING INSTRUCTION: You MUST separate every single paragraph, greeting, and recommendation with two line breaks (\\n\\n) so that there is clean 2-line visual spacing between every paragraph. Never lump paragraphs together.\n"
             f"Keep the tone encouraging, crisp, professional, and practical (2-4 paragraphs). Do NOT wrap your answer in markdown code fences."
         )
 
@@ -176,7 +189,7 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
             messages=[
                 {
                     "role": "system", 
-                    "content": "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. STRICT RULE: Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead."
+                    "content": "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Always place 2 line spaces (double newline) between every paragraph and greeting."
                 },
                 {"role": "user", "content": prompt}
             ],
@@ -187,11 +200,11 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
         if completion and completion.choices:
             text_resp = completion.choices[0].message.content.strip()
             if text_resp:
-                return text_resp
+                return _normalize_paragraph_spacing(text_resp)
     except Exception as e:
         logger.error(f"[voo-bot] Grok generation failed, using fallback: {e}")
 
-    return fallback_message
+    return _normalize_paragraph_spacing(fallback_message)
 
 
 async def cron_process_pending_voo_replies(db: Session):
