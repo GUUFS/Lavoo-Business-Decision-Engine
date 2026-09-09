@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import os
 import secrets
