@@ -12,7 +12,7 @@ except (ImportError, RuntimeError):
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Third-party imports
 from dotenv import load_dotenv
