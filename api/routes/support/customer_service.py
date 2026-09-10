@@ -7,7 +7,7 @@ from jose import jwt, JWTError
 from api.routes.auth.login import SECRET_KEY, ALGORITHM
 
 from database.pg_connections import get_db
-from database.pg_models import User, Ticket, TicketMessage, TicketCreate, MessageCreate, TicketResponse, MessageResponse
+from database.pg_models import User, Ticket, TicketMessage, TicketCreate, MessageCreate, TicketResponse, MessageResponse, UserNotification
 from api.routes.auth.login import get_current_user
 
 from typing import Optional
@@ -426,7 +426,89 @@ async def reply_to_ticket(
         db.rollback()
         print(f"Error in reply_to_ticket: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/tickets/{ticket_id}/resolve")
+async def user_resolve_ticket(
+    ticket_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    User marks their ticket as resolved
+    """
+    try:
+        user_id = extract_user_id(current_user)
+        ticket = db.query(Ticket).filter(
+            Ticket.id == ticket_id,
+            Ticket.user_id == user_id
+        ).first()
         
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+            
+        ticket.status = "resolved"
+        ticket.updated_at = datetime.now(timezone.utc)
+        
+        system_msg = TicketMessage(
+            ticket_id=ticket.id,
+            sender_id=user_id,
+            sender_role="system",
+            message="Ticket marked as resolved by user",
+            is_read=True,
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(system_msg)
+        db.commit()
+        return {"success": True, "status": "resolved", "message": "Ticket marked as resolved"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/tickets/{ticket_id}/reopen")
+async def user_reopen_ticket(
+    ticket_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    User reopens their ticket
+    """
+    try:
+        user_id = extract_user_id(current_user)
+        ticket = db.query(Ticket).filter(
+            Ticket.id == ticket_id,
+            Ticket.user_id == user_id
+        ).first()
+        
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+            
+        ticket.status = "open"
+        ticket.updated_at = datetime.now(timezone.utc)
+        
+        system_msg = TicketMessage(
+            ticket_id=ticket.id,
+            sender_id=user_id,
+            sender_role="system",
+            message="Ticket reopened by user",
+            is_read=False,
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(system_msg)
+        db.commit()
+        return {"success": True, "status": "open", "message": "Ticket reopened"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 # ADMIN ENDPOINTS
 
@@ -564,17 +646,36 @@ async def admin_reply_to_ticket(
         )
         
         # Notify other admins (NOT the sender)
-        await manager.broadcast(
-            json.dumps({
-                "type": "admin_message_sent",
-                "message": {
-                    **message_payload,
-                    "user_id": ticket.user_id
-                },
-                "sender_id": user_id  # Include sender ID so they can ignore their own message
-            })
-        )
-        
+        try:
+            await manager.broadcast(
+                json.dumps({
+                    "type": "admin_message_sent",
+                    "message": {
+                        **message_payload,
+                        "user_id": ticket.user_id
+                    },
+                    "sender_id": user_id
+                })
+            )
+        except Exception:
+            pass
+
+        # Create in-app notification for the user
+        try:
+            user_notif = UserNotification(
+                user_id=ticket.user_id,
+                type="support_reply",
+                title="🎧 Lavoo Support Team replied",
+                message=f"Our support team replied to your ticket: '{(ticket.issue or 'Support Request')[:45]}'",
+                link=f"/l/customer-service?ticketId={ticket.id}",
+                is_read=False,
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(user_notif)
+            db.commit()
+        except Exception as notif_err:
+            print(f"Failed to record UserNotification for support reply: {notif_err}")
+
         return {"message": "Reply sent successfully", "message_id": new_message.id}
         
     except HTTPException:

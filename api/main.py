@@ -1368,6 +1368,7 @@ app.include_router(paypal.router) # endpoints start with /api/paypal
 app.include_router(flutterwave.router) # internally prefix /api/payments
 app.include_router(stripe.router) # internally prefix /api/stripe
 app.include_router(customer_service.router, prefix="/api") # internally prefix /api/customer-service
+app.include_router(customer_service.router) # internally prefix /customer-service
 app.include_router(support_contact.router, prefix="/api") # endpoints: /api/support/contact
 app.include_router(support_contact.router) # endpoints: /support/contact
 app.include_router(reviews.router, prefix="/api") # endpoints: /api/reviews, /api/admin/reviews
