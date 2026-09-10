@@ -265,7 +265,7 @@ class CommissionService:
             db.add(payout)
             db.flush()
 
-            PayoutService.process_flutterwave_payout(payout, db)
+            PayoutService.process_flutterwave_payout(payout, db, manage_transaction=False)
             # process_flutterwave_payout sets payout.status='processing' on a
             # confirmed-accepted transfer request and commits internally; any
             # failure raises, caught below. Flutterwave transfers are async

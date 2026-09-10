@@ -233,9 +233,23 @@ class PayoutService:
     
 
     @staticmethod
-    def process_flutterwave_payout(payout: Payout, db: Session) -> Dict[str, Any]:
+    def process_flutterwave_payout(payout: Payout, db: Session, manage_transaction: bool = True) -> Dict[str, Any]:
         """
-        Process payout via Flutterwave Transfer API
+        Process payout via Flutterwave Transfer API.
+
+        manage_transaction=True (the default, used by every standalone
+        admin/manual payout call site) means this function owns its own
+        commit/rollback boundary — the caller queried `payout` and nothing
+        else of value is pending on `db`.
+
+        manage_transaction=False is for a caller (commission_service.py's
+        immediate-payout path) that already has OTHER uncommitted work of
+        its own on this same shared session — a freshly-created Subscriptions
+        and Commission row, in that case — which a failed *optional* payout
+        attempt must never destroy. In that mode this function only
+        db.flush()es its own changes into the caller's still-open
+        transaction instead of committing or rolling back, so the caller
+        decides the fate of everything together, atomically.
         """
         logger.info(
             f"[FLW payout] START | payout={payout.id} user={payout.user_id} "
@@ -321,8 +335,11 @@ class PayoutService:
             payout.provider_response = json.dumps(data)
             payout.processed_at = datetime.now(timezone.utc)
 
-            db.commit()
-            db.refresh(payout)
+            if manage_transaction:
+                db.commit()
+                db.refresh(payout)
+            else:
+                db.flush()
 
             logger.info(
                 f"[FLW payout] SUCCESS | payout={payout.id} transfer_id={transfer_data.get('id')} "
@@ -343,19 +360,34 @@ class PayoutService:
             # Broadened from requests.RequestException only: a non-200 or a
             # non-"success" Flutterwave response (by far the most likely
             # real-world failure — bad account details, insufficient
-            # balance, unsupported bank) raises plain ValueError above,
-            # which this previously did NOT catch at all — the payout row
-            # was left stuck at status='pending' forever with no
-            # failure_reason recorded, indistinguishable from "still in
-            # progress." Also removed two references to payout.retry_count
-            # and payout.failed_at, neither of which exist as columns on
-            # Payout — hitting this block would itself raise AttributeError
-            # before even reaching db.commit(), so a genuine transfer
-            # failure was silently swallowed by a second, hidden crash.
-            db.rollback()
+            # balance, unsupported bank, or the server's outbound IP not
+            # being whitelisted in the Flutterwave dashboard) raises plain
+            # ValueError above, which this previously did NOT catch at all —
+            # the payout row was left stuck at status='pending' forever with
+            # no failure_reason recorded, indistinguishable from "still in
+            # progress."
+            #
+            # The db.rollback() an earlier fix added here was itself broken
+            # two ways: (1) rolling back BEFORE mutating payout.status/
+            # failure_reason detaches the object from the session, so the
+            # mutation that follows doesn't actually get saved by the
+            # db.commit() after it — SQLAlchemy raises "Instance ... is not
+            # persistent within this Session" the moment it tries, which is
+            # exactly the 400 confirm-subscription surfaced to the frontend.
+            # (2) when called with manage_transaction=False (from
+            # commission_service.py's immediate-payout attempt, sharing a
+            # session with an already-pending Subscriptions + Commission
+            # row from the SAME request), that rollback silently destroyed
+            # both of those too — an optional, best-effort payout attempt
+            # failing should never take an already-successful subscription
+            # payment down with it.
             payout.status = 'failed'
             payout.failure_reason = str(e)
-            db.commit()
+            if manage_transaction:
+                db.commit()
+                db.refresh(payout)
+            else:
+                db.flush()
 
             logger.error(f"[FLW payout] FAILED | payout={payout.id} error={e}", exc_info=True)
             raise ValueError(f"Payout failed: {str(e)}")
