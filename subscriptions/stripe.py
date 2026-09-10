@@ -1880,6 +1880,9 @@ async def confirm_subscription(
             )
             db.add(subscription)
         db.flush()
+        # Captured now, before commit expires every attribute on this
+        # object — see the note by the final return below for why.
+        subscription_id_value = subscription.id
 
         if hasattr(user, 'subscription_status'):
             user.subscription_status = "active"
@@ -1908,8 +1911,18 @@ async def confirm_subscription(
             CommissionService.calculate_commission(subscription=subscription, db=db)
 
         db.commit()
-        db.refresh(subscription)
 
+        # Building the response from values already in hand instead of
+        # returning/refreshing the ORM object itself, and instead of
+        # touching `subscription` again post-commit: commit() expires every
+        # attribute on every object in the session by default, and this
+        # endpoint runs alongside the Stripe webhook handler racing to
+        # touch the same row (confirmed in production logs: invoice_payment
+        # .paid webhooks firing concurrently with this exact request) — a
+        # refresh landing after the webhook's own commit/rollback cycle on
+        # the same identity raised "Instance ... is not persistent within
+        # this Session". Nothing here needs a fresh read; every field is
+        # already a known local value from earlier in this same request.
         background_tasks.add_task(
             email_service.send_payment_success_email,
             user.email, user.name, float(amount),
@@ -1921,7 +1934,20 @@ async def confirm_subscription(
             message=f"Your subscription is now active until {end_date.strftime('%B %d, %Y')}.",
             link="/dashboard"
         )
-        return {"status": "success", "subscription": subscription}
+        return {
+            "status": "success",
+            "subscription": {
+                "id": subscription_id_value,
+                "transaction_id": request.subscription_id,
+                "subscription_plan": plan_type,
+                "amount": float(amount),
+                "currency": "USD",
+                "status": "completed",
+                "subscription_status": "active",
+                "start_date": start_date.isoformat() if start_date else None,
+                "end_date": end_date.isoformat() if end_date else None,
+            },
+        }
 
     except HTTPException:
         db.rollback()

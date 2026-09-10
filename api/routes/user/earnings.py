@@ -362,17 +362,19 @@ async def get_monthly_performance(
             # older consumer; the frontend should prefer commission_by_currency.
             month_commissions = max(commission_by_currency.values(), default=0.0)
 
-            # Count paid users this month (users who made payment)
+            # Count paid users this month (users who made payment) — this
+            # already correctly scopes to month_payments; the previous
+            # paid_referral_count below re-derived it via a separate query
+            # that ALSO required User.subscription_status == "active" right
+            # now, which wrongly drops a referred user who paid this month
+            # but has since churned. Reuse this value directly instead.
             paid_users_this_month = len(set(p.user_id for p in month_payments))
 
             monthly_data.append({
                 "month": month_start.strftime("%b"),
                 "year": month_start.year,
                 "referral_count": len(month_refs),
-                "paid_referral_count": db.query(func.count(User.id)).filter(
-                    User.id.in_([p.user_id for p in month_payments] or [0]),
-                    User.subscription_status == "active"
-                ).scalar() or 0,
+                "paid_referral_count": paid_users_this_month,
                 "referral_chops": month_chops,
                 "commission": month_commissions,
                 "revenue": month_commissions,
@@ -458,26 +460,30 @@ async def get_monthly_metrics_for_period(
         
         print(f"[/earnings/monthly/{year}/{month}] Referrals created in month: {referral_count}, Chops: {referral_chops}")
         
-        # Paid Referrals: ALL referred users whose CURRENT subscription_status is "active"
-        # (NOT limited to those referred in this specific month)
+        # Paid Referrals for THIS SPECIFIC MONTH: distinct referred users who
+        # made a successful payment within [month_start, month_end] — not
+        # "however many of them currently happen to be active", which used
+        # to ignore the month entirely and just report the referrer's
+        # all-time active count on every month/year selected (confirmed:
+        # the UI showed the same "Paid Referrals" figure switching between
+        # different months, since this query never looked at month_start/
+        # month_end at all). A referred user counts as "paid" for the month
+        # they actually paid in, even if they've since churned.
         all_referred_user_ids = db.query(Referral.referred_user_id).filter(
             Referral.referrer_id == user_id
         ).subquery()
-        
-        # Count ALL referred users with active subscriptions
-        paid_referral_count = db.query(func.count(User.id)).filter(
-            User.id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
-            func.lower(User.subscription_status) == "active"
+
+        paid_referral_count = db.query(func.count(func.distinct(Subscriptions.user_id))).filter(
+            Subscriptions.user_id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
+            Subscriptions.status == "successful",
+            Subscriptions.created_at >= month_start,
+            Subscriptions.created_at <= month_end
         ).scalar() or 0
-        
-        print(f"[/earnings/monthly/{year}/{month}] Paid referrals (ALL active, not just from this month): {paid_referral_count}")
-        
+
+        print(f"[/earnings/monthly/{year}/{month}] Paid referrals (actually paid in this month): {paid_referral_count}")
+
         # Calculate commission based on actual subscription payments made in this month
-        # by ANY referred users (not just those referred this month)
-        all_referred_user_ids = db.query(Referral.referred_user_id).filter(
-            Referral.referrer_id == user_id
-        ).subquery()
-        
+        # by ANY referred users (not just those referred this month).
         # Use explicit select_from to avoid join ambiguity. GROUPED BY
         # CURRENCY — same reasoning as /earnings/summary and /earnings/monthly:
         # a single coalesced sum across currencies blends NGN and USD into
