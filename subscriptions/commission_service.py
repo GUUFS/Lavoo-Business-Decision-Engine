@@ -5,6 +5,8 @@ from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from database.pg_models import Commission, Referral, CommissionSummary, User, NotificationType
 from api.services.notification_service import NotificationService
+from emailing.email_service import email_service
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -283,6 +285,41 @@ class CommissionService:
 
         except Exception as e:
             logger.error(f"[BUILDER BONUS] Immediate payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            # Only a log line before this — a real transfer failure (bad IP
+            # whitelist, insufficient balance, bad account) went completely
+            # unnoticed until someone happened to dig through logs (which is
+            # exactly how this class of incident was found). The commission
+            # itself is safe either way (falls back to the manual payout
+            # queue, per this function's contract), but a human should know
+            # promptly rather than discover it by accident. Best-effort and
+            # isolated in its own try/except: a failure to send this alert
+            # must not turn an already-handled payout failure into a crash.
+            try:
+                admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
+                email_service._send_email(
+                    to_email=admin_email,
+                    to_name="Lavoo Admin",
+                    subject=f"⚠️ Immediate Flutterwave payout failed — commission #{commission.id}",
+                    html_content=(
+                        f"<p>An automatic immediate payout attempt failed for "
+                        f"commission #{commission.id} (referrer user_id={commission.user_id}, "
+                        f"amount={commission.amount} {commission.currency}).</p>"
+                        f"<p>Error: {e}</p>"
+                        f"<p>The commission is safe and has fallen back to the manual "
+                        f"payout queue — nothing is lost — but this may indicate a "
+                        f"systemic issue (e.g. the server's IP no longer whitelisted "
+                        f"in the Flutterwave dashboard) affecting every referrer's "
+                        f"immediate payouts, not just this one.</p>"
+                    ),
+                    text_content=(
+                        f"Immediate Flutterwave payout failed for commission #{commission.id} "
+                        f"(referrer user_id={commission.user_id}, amount={commission.amount} "
+                        f"{commission.currency}). Error: {e}. The commission itself is safe "
+                        f"(manual payout queue), but this may be a systemic issue."
+                    ),
+                )
+            except Exception as alert_err:
+                logger.error(f"[BUILDER BONUS] Failed to send payout-failure alert email: {alert_err}")
             return None
 
     @staticmethod
