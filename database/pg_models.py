@@ -546,7 +546,7 @@ class TicketCreate(BaseModel):
     category: Optional[str] = "general"
 
 class MessageCreate(BaseModel):
-    ticket_id: int
+    ticket_id: Optional[int] = None
     message: str
 
 class TicketResponse(BaseModel):
