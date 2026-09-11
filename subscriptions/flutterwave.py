@@ -934,6 +934,57 @@ async def get_flutterwave_config():
     return {"publicKey": FLUTTERWAVE_PUBLIC_KEY}
 
 
+@router.get("/flutterwave/connectivity-check")
+async def flutterwave_connectivity_check(current_user: User = Depends(get_current_user)):
+    """
+    Admin-only, read-only diagnostic: confirms this server's actual
+    outbound IP is allowed to reach Flutterwave's Transfers API — the
+    exact surface that rejects requests from a non-whitelisted IP (see
+    payout_service.py::process_flutterwave_payout). Lists transfers
+    (page=1) instead of creating one, so this is safe to call as often as
+    needed without moving any money — purely to verify IP whitelisting
+    before risking a real payment/payout test.
+    """
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    if not FLUTTERWAVE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Flutterwave secret key not configured")
+
+    try:
+        outbound_ip = requests.get("https://api.ipify.org", timeout=5).text.strip()
+    except Exception as e:
+        outbound_ip = f"lookup failed: {e}"
+
+    try:
+        response = requests.get(
+            f"{FLUTTERWAVE_BASE_URL}/transfers",
+            params={"page": 1},
+            headers={"Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}"},
+            timeout=15,
+        )
+        data = response.json() if response.content else {}
+        is_ip_block = response.status_code in (401, 403) and (
+            "ip" in str(data.get("message", "")).lower()
+            or "whitelist" in str(data.get("message", "")).lower()
+        )
+        return {
+            "outbound_ip": outbound_ip,
+            "flutterwave_status_code": response.status_code,
+            "flutterwave_message": data.get("message"),
+            "reachable": response.status_code == 200,
+            "looks_like_ip_block": is_ip_block,
+        }
+    except requests.RequestException as e:
+        return {
+            "outbound_ip": outbound_ip,
+            "flutterwave_status_code": None,
+            "flutterwave_message": str(e),
+            "reachable": False,
+            "looks_like_ip_block": False,
+        }
+
+
 @router.get("/health")
 async def payment_health_check():
     """
