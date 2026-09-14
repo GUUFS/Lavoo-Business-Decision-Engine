@@ -1292,7 +1292,8 @@ async def stripe_webhook(
                 parent = getattr(invoice, 'parent', None)
                 sub_details = getattr(parent, 'subscription_details', None) if parent else None
                 parent_meta = getattr(sub_details, 'metadata', None) if sub_details else None
-                uid = (parent_meta or {}).get("user_id") if parent_meta else None
+                parent_meta_dict = (parent_meta.to_dict() if hasattr(parent_meta, 'to_dict') else dict(parent_meta)) if parent_meta else {}
+                uid = parent_meta_dict.get("user_id")
                 if uid:
                     user = db.query(User).filter(User.id == int(uid)).first()
                     if user:
