@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Cookie
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Cookie, BackgroundTasks
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from typing import List, Dict
@@ -9,6 +9,7 @@ from api.routes.auth.login import SECRET_KEY, ALGORITHM
 from database.pg_connections import get_db
 from database.pg_models import User, Ticket, TicketMessage, TicketCreate, MessageCreate, TicketResponse, MessageResponse, UserNotification
 from api.routes.auth.login import get_current_user
+from api.routes.support.ai_support import async_process_ticket_support_ai
 
 from typing import Optional
 import json
@@ -156,7 +157,10 @@ def extract_user_id(current_user):
 @router.post("/tickets")
 @router.post("/tickets/create")
 async def create_ticket(
-    ticket_data: TicketCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    ticket_data: TicketCreate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     print(f"Current user: {current_user}")
     print(f"User ID: {extract_user_id(current_user)}")
@@ -195,6 +199,9 @@ async def create_ticket(
         
         db.add(initial_message)
         db.commit()
+        
+        # Schedule AI Support Copilot worker in background
+        background_tasks.add_task(async_process_ticket_support_ai, new_ticket.id)
         
         return {
             "message": "Ticket created successfully",
