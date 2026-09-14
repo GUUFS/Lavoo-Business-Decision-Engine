@@ -1857,7 +1857,21 @@ async def confirm_subscription(
             "quarterly": settings.get("quarterly_price") or 79.95,
             "yearly": settings.get("yearly_price") or 299.95
         }
-        amount = price_map.get(plan_type, 29.95)
+        # Trust what Stripe actually charged (verification["amount"], read
+        # directly off the real PaymentIntent in verify_payment) over a
+        # guess keyed only by plan_type. A promo price, a manually-adjusted
+        # charge, or a stale settings price all previously got silently
+        # replaced by whatever price_map said a "quarterly" plan costs —
+        # confirmed directly: a customer charged $1 had their subscription
+        # recorded, emailed, and used for commission math as $11.98 instead,
+        # because this ignored the real amount and price_map's fallback
+        # ($79.95, or a configured quarterly_price) was the only value used.
+        # price_map is still needed for the one case where Stripe genuinely
+        # has no charge amount to report: a seti_-based (SetupIntent)
+        # confirmation, where verify_payment always returns amount=0 since a
+        # SetupIntent has no payment of its own to read a real amount from.
+        real_amount = verification.get("amount") or 0
+        amount = real_amount if real_amount > 0 else price_map.get(plan_type, 29.95)
         start_date, end_date = get_subscription_dates_from_stripe(subscription_details, plan_type)
 
         existing = db.query(Subscriptions).filter(
