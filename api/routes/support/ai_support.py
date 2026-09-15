@@ -279,7 +279,7 @@ async def async_process_ticket_support_ai(ticket_id: int):
             # Find an admin user ID to associate or fallback
             admin_user = db.query(User).filter(User.is_admin == True).first()
             admin_id = admin_user.id if admin_user else (user.id if user else 1)
-            admin_name = "Lavoo Support Team"
+            admin_name = "Lavoo Admin"
 
             # Insert message as official support response (role: admin)
             support_msg = TicketMessage(
@@ -300,8 +300,8 @@ async def async_process_ticket_support_ai(ticket_id: int):
             user_notif = UserNotification(
                 user_id=ticket.user_id,
                 type="support_reply",
-                title="🎧 Lavoo Support Team replied",
-                message=f"Our team replied to your ticket: '{(latest_user_text or ticket.issue or 'Support Request')[:45]}'",
+                title="🎧 Lavoo Admin replied",
+                message=f"Lavoo Admin replied to your ticket: '{(latest_user_text or ticket.issue or 'Support Request')[:45]}'",
                 link=f"/l/customer-service?ticketId={ticket.id}",
                 is_read=False,
                 created_at=datetime.now(timezone.utc)
