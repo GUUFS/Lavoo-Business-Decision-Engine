@@ -323,16 +323,18 @@ async def get_ticket_messages( ticket_id: int, current_user: User = Depends(get_
         result = []
         for msg in messages:
             try:
-                sender = db.query(User).filter(User.id == msg.sender_id).first()
-                if sender:
-                    # Try these in order: full_name, name, email
-                    sender_name = (
-                        getattr(sender, 'full_name', None) or 
-                        getattr(sender, 'name', None) or 
-                        getattr(sender, 'email', 'Admin')
-                    )
+                if msg.sender_role in ["admin", "system"]:
+                    sender_name = "Lavoo Admin"
                 else:
-                    sender_name = "Admin"
+                    sender = db.query(User).filter(User.id == msg.sender_id).first()
+                    if sender:
+                        sender_name = (
+                            getattr(sender, 'full_name', None) or 
+                            getattr(sender, 'name', None) or 
+                            getattr(sender, 'email', 'User')
+                        )
+                    else:
+                        sender_name = "User"
                 
                 result.append({
                     "id": msg.id,
