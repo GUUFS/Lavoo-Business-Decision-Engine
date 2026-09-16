@@ -956,6 +956,23 @@ async def flutterwave_connectivity_check(current_user: User = Depends(get_curren
     except Exception as e:
         outbound_ip = f"lookup failed: {e}"
 
+    # Flutterwave's own IP-verification endpoint — authoritative over the
+    # ipify check above, since it reports exactly what THEIR infrastructure
+    # sees hitting their servers, from Flutterwave support directly
+    # (ticket FLW-516161) after "merchant is not enabled to make transfers"
+    # turned out to actually be an IP-whitelist mismatch all along.
+    try:
+        verify_ip_resp = requests.get(
+            "https://api.flutterwave.com/v3/verify-ip",
+            headers={"Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}"},
+            timeout=15,
+        )
+        flutterwave_reported_ip = (
+            verify_ip_resp.json() if verify_ip_resp.content else {"status_code": verify_ip_resp.status_code}
+        )
+    except Exception as e:
+        flutterwave_reported_ip = {"error": str(e)}
+
     try:
         response = requests.get(
             f"{FLUTTERWAVE_BASE_URL}/transfers",
@@ -970,6 +987,7 @@ async def flutterwave_connectivity_check(current_user: User = Depends(get_curren
         )
         return {
             "outbound_ip": outbound_ip,
+            "flutterwave_reported_ip": flutterwave_reported_ip,
             "flutterwave_status_code": response.status_code,
             "flutterwave_message": data.get("message"),
             "reachable": response.status_code == 200,
@@ -978,6 +996,7 @@ async def flutterwave_connectivity_check(current_user: User = Depends(get_curren
     except requests.RequestException as e:
         return {
             "outbound_ip": outbound_ip,
+            "flutterwave_reported_ip": flutterwave_reported_ip,
             "flutterwave_status_code": None,
             "flutterwave_message": str(e),
             "reachable": False,
