@@ -1004,6 +1004,61 @@ async def flutterwave_connectivity_check(current_user: User = Depends(get_curren
         }
 
 
+@router.post("/flutterwave/retry-commission-payout/{commission_id}")
+async def flutterwave_retry_commission_payout(
+    commission_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin-only diagnostic: re-runs the exact same immediate-payout code
+    path the app uses right after a Stripe payment (CommissionService.
+    _attempt_immediate_payout) for one existing commission, from THIS
+    server process. Unlike testing locally, this actually originates
+    from Railway's whitelisted outbound IP, so it isolates whether a
+    transfer failure is IP/whitelist-related vs. something else (e.g.
+    a bad callback_url from BASE_URL) — a local script can't tell the
+    two apart since it never hits Flutterwave from the whitelisted IP.
+    """
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from database.pg_models import Commission
+    from subscriptions.commission_service import CommissionService
+
+    commission = db.query(Commission).filter(Commission.id == commission_id).first()
+    if not commission:
+        raise HTTPException(status_code=404, detail="Commission not found")
+
+    before = {"status": commission.status, "payout_id": commission.payout_id}
+
+    try:
+        payout_id = CommissionService._attempt_immediate_payout(commission, db)
+        if payout_id:
+            commission.status = 'auto_settled'
+            commission.paid_at = datetime.now(timezone.utc)
+            commission.payout_id = payout_id
+            db.commit()
+        else:
+            db.rollback()
+    except Exception as e:
+        db.rollback()
+        return {
+            "commission_id": commission_id,
+            "before": before,
+            "result": "exception",
+            "error": str(e),
+        }
+
+    db.refresh(commission)
+    return {
+        "commission_id": commission_id,
+        "before": before,
+        "after": {"status": commission.status, "payout_id": commission.payout_id},
+        "payout_id": payout_id,
+    }
+
+
 @router.get("/health")
 async def payment_health_check():
     """
