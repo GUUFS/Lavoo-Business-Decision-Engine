@@ -57,45 +57,55 @@ class FounderInsightsGenerator:
         existing_insights = self.db.query(FounderInsightCard.insight_text).order_by(FounderInsightCard.created_at.desc()).limit(20).all()
         existing_list = [item[0] for item in existing_insights if item[0]]
 
-        prompt = f"""You are Lavoo's Founder Intelligence Engine, an elite strategist discovering high-impact startup metrics and inspiring founder insights.
+        prompt = f"""You are Lavoo's Builder Intelligence Engine, an elite strategist discovering high-impact product metrics and inspiring builder insights across global, US, UK, and Nigerian/African startup ecosystems.
 
 CRITICAL REQUIREMENTS:
-1. FOCUS & NARRATIVE BALANCE:
-   - 70% WEIGHT: Positive African tech ecosystem narratives, African founder milestones, and West/East/South African product-building statistics (referencing reports/sources like TechCabal, Disrupt Africa, YC African startups like Paystack, Flutterwave, Moniepoint, Chowdeck, or solo African tech builders).
-   - 30% WEIGHT: Global product-building research (YC, Harvard Business Review, Indie Hackers) and internal founder activity metrics.
+1. REGIONAL CATEGORY BALANCE:
+   Generate a balanced distribution across these exact 4 categories:
+   - "us": US SaaS benchmarks, YC founder metrics, independent builder research (e.g., Y Combinator, MicroConf, SaaS Capital, Indie Hackers).
+   - "uk": UK and European tech benchmarks, London founder data, enterprise fintech (e.g., UK Tech Nation, Dealroom, British Business Bank).
+   - "nigeria": Nigerian and African tech milestones, builder surveys (e.g., TechCabal, Disrupt Africa, Stears, Paystack/Moniepoint research).
+   - "global": Universal product validation rules, decision diagnostics, startup post-mortems (e.g., CB Insights, Harvard Business Review, First Round Review).
 
 2. CONTENT STRUCTURE:
    - Every insight MUST be a short, punchy 1-SENTENCE statement (max 25 words).
-   - Must include an eye-catching stat or multiplier if available (e.g., "42%", "3.5x", "78%", "9 in 10", "60 days").
-   - Must include an explicit, authoritative source attribution line (e.g., "Based on TechCabal African Tech Report", "Based on Build Room founder activity").
+   - Must include an eye-catching stat or multiplier (e.g., "42%", "3.5x", "£2.4M", "78%", "9 in 10", "60 days").
+   - Must include an explicit, authoritative source attribution line.
 
 3. HARD RULES:
-   - NO fake or hallucinated stats. Use REAL, verifiable data or well-established founder principles.
+   - NO fake or hallucinated stats. Use REAL, verifiable benchmarks and well-established builder principles.
    - NO negative news or doom-and-gloom. Focus strictly on positive, actionable, encouraging insights for builders.
    - Return up to {count} insights in a strict JSON array.
 
 Return output in THIS exact JSON array format:
 [
   {{
-    "highlight_stat": "42%",
-    "insight_text": "of solo founders who review decisions weekly ship products twice as fast as unguided teams.",
-    "source": "Based on Build Room founder activity",
-    "category": "build_room",
-    "accent_color": "#e87a02"
+    "highlight_stat": "68%",
+    "insight_text": "of US B2B software builders achieve faster profitability by focusing on niche vertical workflows over horizontal platforms.",
+    "source": "Based on YC Founder Research & US SaaS Benchmarks",
+    "category": "us",
+    "accent_color": "#2563eb"
   }},
   {{
-    "highlight_stat": "3.5x",
-    "insight_text": "faster user acquisition is achieved by African B2B startups prioritizing WhatsApp integration over custom portals.",
-    "source": "Based on TechCabal African Tech Report",
-    "category": "african_tech",
-    "accent_color": "#2f7de1"
+    "highlight_stat": "£2.4M",
+    "insight_text": "average seed valuation premium is secured by UK tech founders who demonstrate clear unit economics within 6 months.",
+    "source": "Based on UK Tech Nation Founder Index",
+    "category": "uk",
+    "accent_color": "#7c3aed"
   }},
   {{
     "highlight_stat": "78%",
     "insight_text": "of successful solo builders in West Africa pre-sell their service before writing their first line of backend code.",
     "source": "Based on Disrupt Africa Founder Survey",
-    "category": "african_tech",
-    "accent_color": "#7c6cf0"
+    "category": "nigeria",
+    "accent_color": "#e87a02"
+  }},
+  {{
+    "highlight_stat": "9 in 10",
+    "insight_text": "startups fail from lack of market demand, not lack of effort. Validate the decision before you build.",
+    "source": "CB Insights, Global Startup Post-Mortems",
+    "category": "global",
+    "accent_color": "#10b981"
   }}
 ]
 
@@ -109,15 +119,15 @@ Return ONLY valid JSON array: no intro text, no markdown block wrappers, no comm
             "Content-Type": "application/json"
         }
 
-        models_to_try = [self.model, self.fallback_model]
-        content = ""
+        models_to_try = ["grok-2-latest", "grok-beta", "grok-2"]
+        content = None
 
         for model_name in models_to_try:
             try:
                 payload = json.dumps({
                     "model": model_name,
                     "messages": [
-                        {"role": "system", "content": "You are a startup intelligence analyst specializing in positive founder insights and African tech ecosystem research. Return valid JSON arrays only."},
+                        {"role": "system", "content": "You are a startup intelligence analyst specializing in positive builder insights and African tech ecosystem research. Return valid JSON arrays only."},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.4

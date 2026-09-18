@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import json
 import os
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, String
@@ -855,8 +855,157 @@ def _summarize_mission_title(text: str, max_chars: int = 80) -> str:
     return (' '.join(out) + '…') if out else text[:max_chars - 1] + '…'
 
 
+def _resolve_geo_bucket(country_code: Optional[str]) -> str:
+    """
+    Normalizes a country code into one of four geo buckets:
+    - 'NG' -> 'nigeria'
+    - 'US' -> 'us'
+    - 'GB' / 'UK' -> 'uk'
+    - other -> 'row' (Rest of World)
+    """
+    if not country_code:
+        return "row"
+    code = country_code.strip().upper()
+    if code == "NG":
+        return "nigeria"
+    if code == "US":
+        return "us"
+    if code in ("GB", "UK"):
+        return "uk"
+    return "row"
+
+
+def _extract_country_code(
+    request: Optional[Request] = None,
+    explicit_country: Optional[str] = None,
+    current_user: Optional[User] = None
+) -> str:
+    """
+    Resolves client country from:
+    1. Explicit query parameter or header (e.g., country=US or x-user-country)
+    2. Cloudflare edge header (cf-ipcountry)
+    3. User profile country (if available on User model)
+    4. Defaults to 'ROW'
+    """
+    if explicit_country and len(explicit_country.strip()) == 2:
+        return explicit_country.strip().upper()
+
+    if request:
+        cf_country = request.headers.get("cf-ipcountry")
+        if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
+            return cf_country.strip().upper()
+
+        user_country = request.headers.get("x-user-country") or request.headers.get("x-country-code")
+        if user_country and len(user_country.strip()) == 2:
+            return user_country.strip().upper()
+
+    if current_user and getattr(current_user, "country", None):
+        c = str(current_user.country).strip().upper()
+        if len(c) == 2:
+            return c
+
+    return "ROW"
+
+
+def _get_geo_weighted_insights(db: Session, geo_bucket: str) -> List[dict]:
+    """
+    Fetches active FounderInsightCard records and builds a balanced, weighted sequence:
+    - 'us': 60% US : 40% Global
+    - 'uk': 60% UK : 40% Global
+    - 'nigeria': 60% Nigeria/African Tech : 40% Global
+    - 'row': 70% Global : 30% US
+    """
+    insights_raw = db.query(FounderInsightCard).filter(FounderInsightCard.is_active == True).order_by(FounderInsightCard.created_at.desc()).all()
+    if not insights_raw:
+        return []
+
+    def _to_dict(card: FounderInsightCard) -> dict:
+        return {
+            "id": f"insight_{card.id}",
+            "type": "founder_insight",
+            "isStat": True,
+            "big": card.highlight_stat or "",
+            "highlight_stat": card.highlight_stat or "",
+            "headline": card.insight_text,
+            "insight_text": card.insight_text,
+            "source": card.source,
+            "category": card.category or "global",
+            "accent": card.accent_color or "#e87a02",
+            "accent_color": card.accent_color or "#e87a02",
+            "created_at": card.created_at.isoformat() if card.created_at else None
+        }
+
+    # Partition by category
+    by_cat: dict = {
+        "us": [],
+        "uk": [],
+        "nigeria": [],
+        "global": []
+    }
+
+    for card in insights_raw:
+        cat = (card.category or "global").lower().strip()
+        if cat in ("us", "united_states", "usa", "us_tech"):
+            by_cat["us"].append(_to_dict(card))
+        elif cat in ("uk", "united_kingdom", "gb", "britain", "uk_tech", "europe"):
+            by_cat["uk"].append(_to_dict(card))
+        elif cat in ("nigeria", "ng", "african_tech", "africa", "west_africa"):
+            by_cat["nigeria"].append(_to_dict(card))
+        else:
+            by_cat["global"].append(_to_dict(card))
+
+    all_available = [_to_dict(c) for c in insights_raw]
+
+    # Select primary and secondary pools and ratios
+    if geo_bucket == "us":
+        pool_primary = by_cat["us"]
+        pool_secondary = by_cat["global"] or by_cat["nigeria"] or by_cat["uk"]
+        ratio_primary, ratio_secondary = 3, 2  # 60% : 40%
+    elif geo_bucket == "uk":
+        pool_primary = by_cat["uk"]
+        pool_secondary = by_cat["global"] or by_cat["us"] or by_cat["nigeria"]
+        ratio_primary, ratio_secondary = 3, 2  # 60% : 40%
+    elif geo_bucket == "nigeria":
+        pool_primary = by_cat["nigeria"]
+        pool_secondary = by_cat["global"] or by_cat["us"] or by_cat["uk"]
+        ratio_primary, ratio_secondary = 3, 2  # 60% : 40%
+    else:  # 'row'
+        pool_primary = by_cat["global"] or by_cat["us"]
+        pool_secondary = by_cat["us"] or by_cat["uk"] or by_cat["nigeria"]
+        ratio_primary, ratio_secondary = 7, 3  # 70% : 30%
+
+    if not pool_primary and not pool_secondary:
+        return all_available
+    if not pool_primary:
+        pool_primary = pool_secondary or all_available
+    if not pool_secondary:
+        pool_secondary = pool_primary or all_available
+
+    # Generate blended sequence
+    blended = []
+    total_slots = max(len(pool_primary) + len(pool_secondary), 10)
+    p_idx = 0
+    s_idx = 0
+
+    while len(blended) < total_slots:
+        for _ in range(ratio_primary):
+            if pool_primary:
+                blended.append(pool_primary[p_idx % len(pool_primary)])
+                p_idx += 1
+        for _ in range(ratio_secondary):
+            if pool_secondary:
+                blended.append(pool_secondary[s_idx % len(pool_secondary)])
+                s_idx += 1
+        if len(blended) >= 30:
+            break
+
+    return blended
+
+
 @router.get("/discussions")
 async def get_discussions(
+    request: Request,
+    country: Optional[str] = Query(None),
     channel_id: Optional[int] = Query(None),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
@@ -865,7 +1014,9 @@ async def get_discussions(
 ):
     try:
         user_id_str = str(current_user.id) if current_user else "anon"
-        cache_key = f"community:discussions:user:{user_id_str}:ch:{channel_id}:lim:{limit}:off:{offset}"
+        detected_country = _extract_country_code(request, explicit_country=country, current_user=current_user)
+        geo_bucket = _resolve_geo_bucket(detected_country)
+        cache_key = f"community:discussions:geo:{geo_bucket}:user:{user_id_str}:ch:{channel_id}:lim:{limit}:off:{offset}"
         cached = await get_cached(cache_key)
         if cached is not None:
             items = cached.get("data") if isinstance(cached, dict) else (cached if isinstance(cached, list) else None)
@@ -1026,22 +1177,9 @@ async def get_discussions(
         except Exception as reflection_err:
             logger.warning(f"Mission reflections fetch error: {reflection_err}")
 
-        # Interleave Founder Insights & Decision Engine Reflections into the discussion stream (4 Standard : 1 Insight : 4 Standard : 1 Reflection)
+        # Interleave Geo-Weighted Builder Insights & Decision Engine Reflections into the discussion stream (4 Standard : 1 Insight : 4 Standard : 1 Reflection)
         try:
-            insights_raw = db.query(FounderInsightCard).filter(FounderInsightCard.is_active == True).order_by(FounderInsightCard.created_at.desc()).all()
-            insight_cards = [{
-                "id": f"insight_{card.id}",
-                "type": "founder_insight",
-                "isStat": True,
-                "big": card.highlight_stat or "",
-                "highlight_stat": card.highlight_stat or "",
-                "headline": card.insight_text,
-                "insight_text": card.insight_text,
-                "source": card.source,
-                "accent": card.accent_color or "#e87a02",
-                "accent_color": card.accent_color or "#e87a02",
-                "created_at": card.created_at.isoformat() if card.created_at else None
-            } for card in insights_raw]
+            insight_cards = _get_geo_weighted_insights(db, geo_bucket)
 
             std_posts = [p for p in result if p.get("type") != "mission_reflection"]
             ref_posts = sorted(
