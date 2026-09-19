@@ -28,9 +28,8 @@ router = APIRouter(prefix="/api/stripe/connect", tags=["stripe-connect"])
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 
 BASE_URL = (
-    os.getenv("BASE_URL")
-    or os.getenv("FRONTEND_URL")
-    or "https://lavooai.com"
+    os.getenv("FRONTEND_URL")
+    or "https://lavoo.io"
 )
 
 logger.info(f"[Stripe Connect] BASE_URL resolved to: {BASE_URL}")
@@ -195,8 +194,8 @@ async def create_stripe_connect_account(
                 )
 
         # ── Generate the hosted onboarding link ───────────────────────────────
-        return_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=success"
-        refresh_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=refresh"
+        return_url = f"{BASE_URL}/l/upgrade?stripe_connect=success"
+        refresh_url = f"{BASE_URL}/l/upgrade?stripe_connect=refresh"
         logger.info(
             f"[Stripe Connect /onboard] creating AccountLink for {stripe_account_id}"
         )
@@ -357,8 +356,8 @@ async def refresh_stripe_onboarding(
                 detail="No Stripe account found. Please start onboarding first.",
             )
 
-        return_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=success"
-        refresh_url = f"{BASE_URL}/dashboard/upgrade?stripe_connect=refresh"
+        return_url = f"{BASE_URL}/l/upgrade?stripe_connect=success"
+        refresh_url = f"{BASE_URL}/l/upgrade?stripe_connect=refresh"
         logger.info(
             f"[Stripe Connect /refresh-onboarding] creating AccountLink for {account_id}"
         )
