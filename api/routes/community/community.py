@@ -892,17 +892,17 @@ def _extract_country_code(
         return explicit_country.strip().upper()
 
     if request:
+        cf_country = request.headers.get("cf-ipcountry")
+        if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
+            return cf_country.strip().upper()
+
         user_country = (
             request.headers.get("x-user-country")
             or request.headers.get("x-country-code")
             or request.headers.get("x-country")
         )
-        if user_country and len(user_country.strip()) == 2:
+        if user_country and len(user_country.strip()) == 2 and user_country.strip().upper() not in ("XX", "T1"):
             return user_country.strip().upper()
-
-        cf_country = request.headers.get("cf-ipcountry")
-        if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
-            return cf_country.strip().upper()
 
     if current_user and getattr(current_user, "country", None):
         c = str(current_user.country).strip().upper()

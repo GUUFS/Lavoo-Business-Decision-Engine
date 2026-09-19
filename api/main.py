@@ -1187,9 +1187,10 @@ def run_heavy_schema_migrations():
             # Normalize legacy categories on existing production rows
             db2.execute(text("UPDATE founder_insight_cards SET category = 'global' WHERE category = 'build_room'"))
             db2.execute(text("UPDATE founder_insight_cards SET category = 'nigeria' WHERE category = 'african_tech'"))
+            db2.execute(text("UPDATE founder_insight_cards SET category = 'global' WHERE category = 'nigeria' AND (insight_text ILIKE '%South Africa%' OR insight_text ILIKE '%East Africa%' OR insight_text ILIKE '%Kenya%')"))
             db2.commit()
 
-            # Seed missing categories independently
+            # Seed missing categories and curated cards
             cat_seeds = {
                 "nigeria": [
                     ('78%', 'of successful solo builders in West Africa pre-sell their service before writing their first line of backend code.', 'Based on Disrupt Africa Founder Survey', 'nigeria', '#e87a02'),
@@ -1218,14 +1219,17 @@ def run_heavy_schema_migrations():
             }
 
             for cat, items in cat_seeds.items():
-                existing_cat_count = db2.execute(text("SELECT COUNT(*) FROM founder_insight_cards WHERE category = :cat"), {"cat": cat}).scalar()
-                if existing_cat_count == 0:
-                    for stat, text_val, src, cat_val, accent in items:
+                for stat, text_val, src, cat_val, accent in items:
+                    exists = db2.execute(
+                        text("SELECT id FROM founder_insight_cards WHERE highlight_stat = :stat AND insight_text = :text_val"),
+                        {"stat": stat, "text_val": text_val}
+                    ).first()
+                    if not exists:
                         db2.execute(
                             text("INSERT INTO founder_insight_cards (highlight_stat, insight_text, source, category, accent_color) VALUES (:stat, :text_val, :src, :cat_val, :accent)"),
                             {"stat": stat, "text_val": text_val, "src": src, "cat_val": cat_val, "accent": accent}
                         )
-                    db2.commit()
+            db2.commit()
         except Exception as seed_err:
             logger.warning(f"Seeding founder insights failed: {seed_err}")
         logger.info(f"✓ Performance indexes verified ({len(index_statements)} statements) (background)")
