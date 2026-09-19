@@ -882,22 +882,27 @@ def _extract_country_code(
 ) -> str:
     """
     Resolves client country from:
-    1. Explicit query parameter or header (e.g., country=US or x-user-country)
-    2. Cloudflare edge header (cf-ipcountry)
-    3. User profile country (if available on User model)
-    4. Defaults to 'ROW'
+    1. Explicit query parameter or query override (e.g., country=US)
+    2. Client forwarded country headers (x-user-country, x-country-code, x-country)
+    3. Cloudflare edge header (cf-ipcountry)
+    4. User profile country (if available on User model)
+    5. Defaults to 'ROW'
     """
     if explicit_country and len(explicit_country.strip()) == 2:
         return explicit_country.strip().upper()
 
     if request:
+        user_country = (
+            request.headers.get("x-user-country")
+            or request.headers.get("x-country-code")
+            or request.headers.get("x-country")
+        )
+        if user_country and len(user_country.strip()) == 2:
+            return user_country.strip().upper()
+
         cf_country = request.headers.get("cf-ipcountry")
         if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
             return cf_country.strip().upper()
-
-        user_country = request.headers.get("x-user-country") or request.headers.get("x-country-code")
-        if user_country and len(user_country.strip()) == 2:
-            return user_country.strip().upper()
 
     if current_user and getattr(current_user, "country", None):
         c = str(current_user.country).strip().upper()
