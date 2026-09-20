@@ -875,6 +875,39 @@ def _resolve_geo_bucket(country_code: Optional[str]) -> str:
     return "row"
 
 
+_BACKEND_IP_GEO_CACHE: dict = {}  # {ip: (country_code, expire_timestamp)}
+
+def _lookup_ip_country(ip: str) -> Optional[str]:
+    """
+    Fast server-side fallback IP lookup with in-memory caching and short timeout.
+    """
+    if not ip or ip in ("127.0.0.1", "localhost", "::1") or ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172.16."):
+        return None
+    import time
+    import urllib.request
+    now = time.time()
+    cached = _BACKEND_IP_GEO_CACHE.get(ip)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    try:
+        req = urllib.request.Request(
+            f"https://get.geojs.io/v1/ip/country/{ip}.json",
+            headers={"User-Agent": "Lavoo-Backend/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                code = data.get("country")
+                if code and len(str(code).strip()) == 2:
+                    clean_code = str(code).strip().upper()
+                    _BACKEND_IP_GEO_CACHE[ip] = (clean_code, now + 3600)
+                    return clean_code
+    except Exception:
+        pass
+    return None
+
+
 def _extract_country_code(
     request: Optional[Request] = None,
     explicit_country: Optional[str] = None,
@@ -882,20 +915,18 @@ def _extract_country_code(
 ) -> str:
     """
     Resolves client country from:
-    1. Explicit query parameter or query override (e.g., country=US)
+    1. Explicit query parameter or query override (e.g., country=NG or country=US)
     2. Client forwarded country headers (x-user-country, x-country-code, x-country)
     3. Cloudflare edge header (cf-ipcountry)
-    4. User profile country (if available on User model)
-    5. Defaults to 'ROW'
+    4. Client connecting IP lookup (x-forwarded-for, x-real-ip, client.host)
+    5. User profile country (if available on User model)
+    6. Defaults to 'ROW'
     """
     if explicit_country and len(explicit_country.strip()) == 2:
         return explicit_country.strip().upper()
 
     if request:
-        cf_country = request.headers.get("cf-ipcountry")
-        if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
-            return cf_country.strip().upper()
-
+        # 1. Check explicit client header from frontend
         user_country = (
             request.headers.get("x-user-country")
             or request.headers.get("x-country-code")
@@ -903,6 +934,27 @@ def _extract_country_code(
         )
         if user_country and len(user_country.strip()) == 2 and user_country.strip().upper() not in ("XX", "T1"):
             return user_country.strip().upper()
+
+        # 2. Check Cloudflare edge header
+        cf_country = request.headers.get("cf-ipcountry")
+        if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
+            return cf_country.strip().upper()
+
+        # 3. Server-side IP geo-lookup fallback from x-forwarded-for / client host
+        forwarded_for = request.headers.get("x-forwarded-for")
+        client_ip = ""
+        if forwarded_for and isinstance(forwarded_for, str):
+            client_ip = forwarded_for.split(",")[0].strip()
+        if not client_ip:
+            x_real = request.headers.get("x-real-ip")
+            if x_real and isinstance(x_real, str):
+                client_ip = x_real.strip()
+            elif getattr(request, 'client', None) and hasattr(request.client, 'host') and isinstance(request.client.host, str):
+                client_ip = request.client.host.strip()
+        if client_ip:
+            ip_country = _lookup_ip_country(client_ip)
+            if ip_country:
+                return ip_country
 
     if current_user and getattr(current_user, "country", None):
         c = str(current_user.country).strip().upper()
