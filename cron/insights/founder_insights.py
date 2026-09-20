@@ -32,8 +32,8 @@ class FounderInsightsGenerator:
     def __init__(self, db_session: Session):
         self.db = db_session
         self.api_key = os.getenv("XAI_API_KEY")
-        self.model = "grok-4-1-fast-reasoning"
-        self.fallback_model = "grok-2-latest"
+        self.model = "grok-4.3"
+        self.fallback_model = "grok-4.20-multi-agent-0309"
         try:
             FounderInsightCard.__table__.create(bind=self.db.get_bind(), checkfirst=True)
         except Exception:
@@ -114,33 +114,63 @@ DO NOT CREATE DUPLICATES — Exclude any titles or stats similar to these recent
 
 Return ONLY valid JSON array: no intro text, no markdown block wrappers, no commentary."""
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
-        models_to_try = ["grok-2-latest", "grok-beta", "grok-2"]
+        models_to_try = [self.model, self.fallback_model, "grok-build-0.1"]
         content = None
 
-        for model_name in models_to_try:
-            try:
-                payload = json.dumps({
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": "You are a startup intelligence analyst specializing in positive builder insights and African tech ecosystem research. Return valid JSON arrays only."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.4
-                }).encode('utf-8')
-                req = urllib.request.Request("https://api.x.ai/v1/chat/completions", data=payload, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=45) as resp:
-                    if resp.status == 200:
-                        res_data = json.loads(resp.read().decode('utf-8'))
-                        content = res_data["choices"][0]["message"]["content"].strip()
-                        logger.info(f"Successfully generated insights using Grok model: {model_name}")
-                        break
-            except Exception as err:
-                logger.warning(f"Failed calling Grok API model {model_name}: {err}")
+        # 1. Primary: OpenAI SDK client (robust retries and keepalive)
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                api_key=self.api_key,
+                base_url="https://api.x.ai/v1",
+                timeout=45.0,
+                max_retries=2
+            )
+            for model_name in models_to_try:
+                try:
+                    completion = client.chat.completions.create(
+                        model=model_name,
+                        messages=[
+                            {"role": "system", "content": "You are a startup intelligence analyst specializing in positive builder insights across global, US, UK, and Nigerian/African startup ecosystems. Return valid JSON arrays only."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=0.35,
+                    )
+                    if completion and completion.choices:
+                        content = completion.choices[0].message.content.strip()
+                        if content:
+                            logger.info(f"Successfully generated insights using Grok model: {model_name}")
+                            break
+                except Exception as model_err:
+                    logger.warning(f"Failed calling Grok API model {model_name} via SDK: {model_err}")
+        except Exception as sdk_err:
+            logger.warning(f"OpenAI SDK initialization error: {sdk_err}, falling back to direct HTTP")
+
+        # 2. Fallback: Direct HTTP request
+        if not content:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            for model_name in models_to_try:
+                try:
+                    payload = json.dumps({
+                        "model": model_name,
+                        "messages": [
+                            {"role": "system", "content": "You are a startup intelligence analyst specializing in positive builder insights across global, US, UK, and Nigerian/African startup ecosystems. Return valid JSON arrays only."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.35
+                    }).encode('utf-8')
+                    req = urllib.request.Request("https://api.x.ai/v1/chat/completions", data=payload, headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=45) as resp:
+                        if resp.status == 200:
+                            res_data = json.loads(resp.read().decode('utf-8'))
+                            content = res_data["choices"][0]["message"]["content"].strip()
+                            logger.info(f"Successfully generated insights using Grok model (HTTP fallback): {model_name}")
+                            break
+                except Exception as err:
+                    logger.warning(f"Failed calling Grok API model {model_name} (HTTP fallback): {err}")
 
         if not content:
             logger.error("Failed to receive output from Grok API")
