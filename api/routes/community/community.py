@@ -126,12 +126,14 @@ def _is_question_discussion(post_type: str = "", title: str = "", content: str =
 def _normalize_paragraph_spacing(text: str) -> str:
     """
     Ensures that every paragraph, greeting, numbered point, and closing note
-    is cleanly separated by exactly double newlines (\\n\\n), giving 2 lines of breathing space.
+    is cleanly separated by standard newlines without rendering literal escaped tokens.
     """
     if not text:
         return ""
-    # Split on newlines, strip each chunk, filter out empty ones
-    chunks = [c.strip() for c in text.split("\n") if c.strip()]
+    # Strip literal \n or \\n characters outputted by LLMs
+    cleaned = text.replace("\\n", "\n").replace("\\r", "").replace("/n", "\n")
+    # Split on newlines, strip each chunk, filter out empty ones and raw slash-n tokens
+    chunks = [c.strip() for c in cleaned.split("\n") if c.strip() and c.strip().lower() not in ("\\n", "/n", r"\n")]
     return "\n\n".join(chunks)
 
 
@@ -179,13 +181,13 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
         f"4. If community members ({contributors_str}) shared insights, naturally synthesize or reference them alongside your own perspective.\n"
         f"5. End with an encouraging closing note formulated like this: 'Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need.' (Do NOT mention Decision Engine missions or task conversions).\n"
         f"STRICT PUNCTUATION INSTRUCTION: Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, periods, or standard complete sentences instead.\n"
-        f"STRICT SPACING INSTRUCTION: You MUST separate every single paragraph, greeting, and recommendation with two line breaks (\\n\\n) so that there is clean 2-line visual spacing between every paragraph. Never lump paragraphs together.\n"
+        f"STRICT SPACING INSTRUCTION: Separate each paragraph and recommendation with regular blank lines. Never output literal backslash-n or slash-n text tokens.\n"
         f"Keep the tone encouraging, crisp, professional, and practical (2-4 paragraphs). Do NOT wrap your answer in markdown code fences."
     )
 
     system_prompt = (
         "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. "
-        "STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Always place 2 line spaces (double newline) between every paragraph and greeting."
+        "STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Place clean blank line spaces between every paragraph. Never output literal slash-n text."
     )
 
     from openai import OpenAI
