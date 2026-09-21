@@ -137,9 +137,17 @@ def _normalize_paragraph_spacing(text: str) -> str:
 
 def _generate_voo_answer_message(author_handle: str, question_title: str, question_content: str, contributors: List[str], replies_text: str) -> str:
     """
-    Generates an intelligent, high-value, and direct perspective answer from Voo using xAI Grok (or OpenAI client).
+    Generates an intelligent, high-value, and direct perspective answer from Voo
+    using NVIDIA NIM LLM (or xAI Grok as configurable toggle/fallback).
     """
-    api_key = os.getenv("XAI_API_KEY")
+    nvidia_key = os.getenv("NVIDIA_API_KEY")
+    xai_key = os.getenv("XAI_API_KEY")
+    preferred_provider = os.getenv("VOO_LLM_PROVIDER", "").strip().lower()
+
+    # Determine primary provider: 'nvidia' if set or if NVIDIA key exists; otherwise 'grok'
+    if not preferred_provider:
+        preferred_provider = "nvidia" if nvidia_key else "grok"
+
     contributors_str = ", ".join(contributors[:3]) if contributors else ""
     
     fallback_message = (
@@ -151,58 +159,93 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
         f"Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need."
     )
 
-    if not api_key:
+    if not nvidia_key and not xai_key:
         return fallback_message
 
-    try:
-        from openai import OpenAI
+    community_context = (
+        f"\n\nCommunity members ({contributors_str}) also shared these points:\n{replies_text}"
+        if contributors_str and replies_text else ""
+    )
+
+    prompt = (
+        f"You are Voo, the intelligent, strategic, and hyper-practical AI advisor for business owners and solo founders in the Lavoo Build Room.\n\n"
+        f"The founder ({author_handle}) posted this question:\n"
+        f"Title: {question_title}\n"
+        f"Question details: {question_content}{community_context}\n\n"
+        f"Provide your own high-impact, direct, and actionable answer to solve {author_handle}'s question:\n"
+        f"1. Start with a friendly greeting directly tagging {author_handle} (e.g. 'Hi {author_handle},' or 'Hey {author_handle}! 👋').\n"
+        f"2. Directly answer their question with clear, actionable insights, strategy, or frameworks tailored for a founder/business builder.\n"
+        f"3. Give 2-3 structured, high-leverage recommendations or key decision principles that provide immediate clarity.\n"
+        f"4. If community members ({contributors_str}) shared insights, naturally synthesize or reference them alongside your own perspective.\n"
+        f"5. End with an encouraging closing note formulated like this: 'Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need.' (Do NOT mention Decision Engine missions or task conversions).\n"
+        f"STRICT PUNCTUATION INSTRUCTION: Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, periods, or standard complete sentences instead.\n"
+        f"STRICT SPACING INSTRUCTION: You MUST separate every single paragraph, greeting, and recommendation with two line breaks (\\n\\n) so that there is clean 2-line visual spacing between every paragraph. Never lump paragraphs together.\n"
+        f"Keep the tone encouraging, crisp, professional, and practical (2-4 paragraphs). Do NOT wrap your answer in markdown code fences."
+    )
+
+    system_prompt = (
+        "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. "
+        "STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Always place 2 line spaces (double newline) between every paragraph and greeting."
+    )
+
+    from openai import OpenAI
+
+    def _call_nvidia():
+        if not nvidia_key:
+            return None
+        model_name = os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
         client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.x.ai/v1",
+            api_key=nvidia_key,
+            base_url="https://integrate.api.nvidia.com/v1",
             timeout=30.0,
             max_retries=2,
         )
-        
-        community_context = (
-            f"\n\nCommunity members ({contributors_str}) also shared these points:\n{replies_text}"
-            if contributors_str and replies_text else ""
-        )
-
-        prompt = (
-            f"You are Voo, the intelligent, strategic, and hyper-practical AI advisor for business owners and solo founders in the Lavoo Build Room.\n\n"
-            f"The founder ({author_handle}) posted this question:\n"
-            f"Title: {question_title}\n"
-            f"Question details: {question_content}{community_context}\n\n"
-            f"Provide your own high-impact, direct, and actionable answer to solve {author_handle}'s question:\n"
-            f"1. Start with a friendly greeting directly tagging {author_handle} (e.g. 'Hi {author_handle},' or 'Hey {author_handle}! 👋').\n"
-            f"2. Directly answer their question with clear, actionable insights, strategy, or frameworks tailored for a founder/business builder.\n"
-            f"3. Give 2-3 structured, high-leverage recommendations or key decision principles that provide immediate clarity.\n"
-            f"4. If community members ({contributors_str}) shared insights, naturally synthesize or reference them alongside your own perspective.\n"
-            f"5. End with an encouraging closing note formulated like this: 'Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need.' (Do NOT mention Decision Engine missions or task conversions).\n"
-            f"STRICT PUNCTUATION INSTRUCTION: Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, periods, or standard complete sentences instead.\n"
-            f"STRICT SPACING INSTRUCTION: You MUST separate every single paragraph, greeting, and recommendation with two line breaks (\\n\\n) so that there is clean 2-line visual spacing between every paragraph. Never lump paragraphs together.\n"
-            f"Keep the tone encouraging, crisp, professional, and practical (2-4 paragraphs). Do NOT wrap your answer in markdown code fences."
-        )
-
         completion = client.chat.completions.create(
-            model="grok-4-1-fast-reasoning",
+            model=model_name,
             messages=[
-                {
-                    "role": "system", 
-                    "content": "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Always place 2 line spaces (double newline) between every paragraph and greeting."
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4,
             max_tokens=450,
         )
-
         if completion and completion.choices:
-            text_resp = completion.choices[0].message.content.strip()
+            return completion.choices[0].message.content.strip()
+        return None
+
+    def _call_grok():
+        if not xai_key:
+            return None
+        model_name = os.getenv("VOO_GROK_MODEL", "grok-4-1-fast-reasoning")
+        client = OpenAI(
+            api_key=xai_key,
+            base_url="https://api.x.ai/v1",
+            timeout=30.0,
+            max_retries=2,
+        )
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.4,
+            max_tokens=450,
+        )
+        if completion and completion.choices:
+            return completion.choices[0].message.content.strip()
+        return None
+
+    order = [_call_nvidia, _call_grok] if preferred_provider == "nvidia" else [_call_grok, _call_nvidia]
+
+    for call_fn in order:
+        try:
+            text_resp = call_fn()
             if text_resp:
                 return _normalize_paragraph_spacing(text_resp)
-    except Exception as e:
-        logger.error(f"[voo-bot] Grok generation failed, using fallback: {e}")
+        except Exception as e:
+            provider_name = "NVIDIA" if call_fn == _call_nvidia else "Grok"
+            logger.warning(f"[voo-bot] {provider_name} generation failed, trying next provider: {e}")
 
     return _normalize_paragraph_spacing(fallback_message)
 
@@ -325,65 +368,99 @@ async def cron_process_pending_voo_replies(db: Session):
 
 def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
     """
-    Calls xAI Grok (or OpenAI API format) using XAI_API_KEY to generate 3 bullet points
-    for Decision Takeaways.
+    Calls NVIDIA NIM LLM (or xAI Grok as configurable toggle/fallback) using OpenAI API format
+    to generate 3 structured, high-leverage bullet points for Decision Takeaways.
     """
-    api_key = os.getenv("XAI_API_KEY")
-    if not api_key:
-        logger.warning("XAI_API_KEY not set in environment — skipping AI takeaway generation")
+    nvidia_key = os.getenv("NVIDIA_API_KEY")
+    xai_key = os.getenv("XAI_API_KEY")
+    preferred_provider = os.getenv("VOO_LLM_PROVIDER", "").strip().lower()
+
+    if not preferred_provider:
+        preferred_provider = "nvidia" if nvidia_key else "grok"
+
+    if not nvidia_key and not xai_key:
+        logger.warning("Neither NVIDIA_API_KEY nor XAI_API_KEY set in environment — skipping AI takeaway generation")
         return None
 
-    try:
-        from openai import OpenAI
+    prompt = (
+        f"Analyze this founder post from the Lavoo Build Room:\n\n"
+        f"Headline: {title}\n"
+        f"Content: {content}\n\n"
+        f"Extract EXACTLY 3 concise, highly actionable 'Decision Takeaways' for solo founders.\n"
+        f"Format your response as a strict JSON object: {{\"takeaways\": [\"Takeaway 1\", \"Takeaway 2\", \"Takeaway 3\"]}}"
+    )
+    system_prompt = "You are the Lavoo Business Decision Engine AI. Extract 3 actionable decision takeaways for solo founders in strict JSON format."
+
+    from openai import OpenAI
+
+    def _call_nvidia():
+        if not nvidia_key:
+            return None
+        model_name = os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
         client = OpenAI(
-            api_key=api_key,
+            api_key=nvidia_key,
+            base_url="https://integrate.api.nvidia.com/v1",
+            timeout=30.0,
+            max_retries=2,
+        )
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=300,
+        )
+        if completion and completion.choices:
+            return completion.choices[0].message.content.strip()
+        return None
+
+    def _call_grok():
+        if not xai_key:
+            return None
+        client = OpenAI(
+            api_key=xai_key,
             base_url="https://api.x.ai/v1",
             timeout=30.0,
             max_retries=2,
         )
-        prompt = (
-            f"Analyze this founder post from the Lavoo Build Room:\n\n"
-            f"Headline: {title}\n"
-            f"Content: {content}\n\n"
-            f"Extract EXACTLY 3 concise, highly actionable 'Decision Takeaways' for solo founders.\n"
-            f"Format your response as a strict JSON object: {{\"takeaways\": [\"Takeaway 1\", \"Takeaway 2\", \"Takeaway 3\"]}}"
-        )
         models_to_try = ["grok-4-1-fast-reasoning", "grok-2-latest", "grok-4-1-fast-non-reasoning"]
-        completion = None
-        last_err = None
-
         for m in models_to_try:
             try:
                 completion = client.chat.completions.create(
                     model=m,
                     messages=[
-                        {"role": "system", "content": "You are the Lavoo Business Decision Engine AI. Extract 3 actionable decision takeaways for solo founders in strict JSON format."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.3,
                     max_tokens=300,
                 )
                 if completion and completion.choices:
-                    break
-            except Exception as err:
-                last_err = err
+                    return completion.choices[0].message.content.strip()
+            except Exception:
                 continue
+        return None
 
-        if not completion or not completion.choices:
-            if last_err:
-                raise last_err
-            return None
+    order = [_call_nvidia, _call_grok] if preferred_provider == "nvidia" else [_call_grok, _call_nvidia]
 
-        raw_text = completion.choices[0].message.content.strip()
-        if "```" in raw_text:
-            raw_text = re.sub(r"^```(?:json)?|```$", "", raw_text, flags=re.MULTILINE).strip()
-        parsed = json.loads(raw_text)
-        takeaways = parsed.get("takeaways", [])
-        if isinstance(takeaways, list) and len(takeaways) > 0:
-            cleaned = [re.sub(r"^[›\-*\d.\s]+", "", str(t)).strip() for t in takeaways[:3]]
-            return cleaned
-    except Exception as e:
-        logger.error(f"Grok AI takeaway generation error: {e}")
+    for call_fn in order:
+        try:
+            raw_text = call_fn()
+            if not raw_text:
+                continue
+            if "```" in raw_text:
+                raw_text = re.sub(r"^```(?:json)?|```$", "", raw_text, flags=re.MULTILINE).strip()
+            parsed = json.loads(raw_text)
+            takeaways = parsed.get("takeaways", [])
+            if isinstance(takeaways, list) and len(takeaways) > 0:
+                cleaned = [re.sub(r"^[›\-*\d.\s]+", "", str(t)).strip() for t in takeaways[:3]]
+                return cleaned
+        except Exception as err:
+            provider_name = "NVIDIA" if call_fn == _call_nvidia else "Grok"
+            logger.warning(f"Takeaways generation via {provider_name} failed: {err}")
+
     return None
 
 
