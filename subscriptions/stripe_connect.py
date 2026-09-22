@@ -535,8 +535,15 @@ async def stripe_connect_webhook(
         logger.info(f"[Stripe Connect /webhook] received event type={event.type}")
 
         if event.type == "account.updated":
-            account = event.data.object
-            account_id = account.id
+            account_id = event.data.object.id
+            # Re-fetch the account instead of trusting event.data.object: under
+            # newer Stripe API versions, webhook payloads can be sent "thin"
+            # (id only, no snapshot), which silently produced None/missing
+            # fields here and made details_submitted/charges_enabled/
+            # payouts_enabled/metadata reads unreliable — the whole
+            # PayoutAccount-creation branch below was never reliably reached
+            # even for accounts that were fully verified on Stripe's side.
+            account = stripe.Account.retrieve(account_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
             all_complete = (
                 account.details_submitted
                 and account.charges_enabled
@@ -657,6 +664,14 @@ async def stripe_connect_webhook(
                     logger.error(
                         f"[Stripe Connect /webhook] DB commit failed for {account_id}: "
                         f"{db_err}\n{traceback.format_exc()}"
+                    )
+                    # Report failure so Stripe retries this delivery instead of
+                    # treating a lost write as delivered — previously this
+                    # returned "success" below regardless, so a failed commit
+                    # here was indistinguishable from one that never happened.
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"DB commit failed for account {account_id}: {db_err}",
                     )
 
         return {"status": "success", "event": event.type}
