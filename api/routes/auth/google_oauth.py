@@ -14,6 +14,7 @@ Requirements:
 """
 
 import os
+import secrets
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Query
@@ -23,9 +24,11 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
 
 from database.pg_connections import get_db
-from database.pg_models import User
-from api.routes.auth.login import create_access_token
+from database.pg_models import User, Referral, NotificationType
+from api.routes.auth.login import create_access_token, get_effective_role
+from api.routes.auth.signup import pwd_context, generate_referral_code
 from api.services.streak_service import update_login_streak
+from api.services.notification_service import NotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -159,60 +162,103 @@ async def google_callback(
         db: Session = next(get_db())
         
         try:
-            # Check if user exists by email or Google ID
-            user = db.query(User).filter(
-                (User.email == email) | (User.google_id == google_id)
-            ).first()
-            
+            # User has no google_id/profile_image_url/email_verified columns —
+            # this previously filtered/assigned all three, raising an
+            # AttributeError on the very first query for every single
+            # attempt (new signup, existing user, all alike), which the
+            # broad except below silently turned into a generic
+            # ?error=oauth_failed redirect. Matched by email only, same as
+            # every other lookup in this codebase (see e.g.
+            # subscriptions/flutterwave.py's /verify).
+            user = db.query(User).filter(User.email == email).first()
+
             if user:
-                # Update existing user with Google info
-                user.google_id = google_id
-                user.profile_image_url = picture or user.profile_image_url
+                user.avatar_url = picture or user.avatar_url
                 user.last_login = datetime.now(timezone.utc)
                 logger.info(f"Existing user logged in via Google: {email}")
             else:
-                # Create new user
+                # New account via Google: password/confirm_password are
+                # NOT NULL columns with no OAuth carve-out, so a real (but
+                # unusable — the user never sees it) hash goes in both,
+                # matching signup.py's pattern of hashing into each field
+                # rather than leaving either unset.
+                placeholder_password = pwd_context.hash(secrets.token_urlsafe(32))
+
+                user_refcode = generate_referral_code()
+                while db.query(User).filter(User.referral_code == user_refcode).first():
+                    user_refcode = generate_referral_code()
+
+                referrer = None
+                if referral_code:
+                    referrer = db.query(User).filter(User.referral_code == referral_code).first()
+
                 user = User(
                     email=email,
                     name=name or email.split("@")[0],
-                    google_id=google_id,
-                    profile_image_url=picture,
-                    hashed_password="",  # No password for OAuth users
-                    role="user",
+                    avatar_url=picture,
+                    password=placeholder_password,
+                    confirm_password=placeholder_password,
+                    referral_code=user_refcode,
+                    referrer_code=referrer.referral_code if referrer else None,
                     is_active=True,
-                    email_verified=True,  # Google emails are pre-verified
                     created_at=datetime.now(timezone.utc),
                     last_login=datetime.now(timezone.utc),
                 )
-                
-                # Handle referral code if provided
-                if referral_code:
-                    referrer = db.query(User).filter(User.referral_code == referral_code).first()
-                    if referrer:
-                        user.referrer_id = referrer.id
-                        logger.info(f"New user created via Google OAuth with referral: {referral_code}")
-                
+
+                from subscriptions.beta_service import BetaService
+                BetaService.initialize_grace_period(user, db)
+
                 db.add(user)
+                db.flush()  # assigns user.id, needed for the Referral row below
                 logger.info(f"New user created via Google OAuth: {email}")
+
+                if referrer:
+                    referrer.referral_count = (referrer.referral_count or 0) + 1
+                    user.total_chops = (user.total_chops or 0) + 50
+                    referrer.total_chops = (referrer.total_chops or 0) + 50
+                    referrer.referral_chops = (referrer.referral_chops or 0) + 50
+
+                    db.add(Referral(
+                        referrer_id=referrer.id,
+                        referred_user_id=user.id,
+                        chops_awarded=50,
+                        created_at=datetime.now(timezone.utc),
+                    ))
+                    NotificationService.create_notification(
+                        db=db,
+                        user_id=user.id,
+                        type=NotificationType.REFERRAL_REGISTERED.value,
+                        title="Welcome Bonus!",
+                        message="You received 50 chops for joining via a referral link.",
+                        link="/dashboard/earnings",
+                    )
+                    logger.info(f"New user created via Google OAuth with referral: {referral_code}")
 
             update_login_streak(db, user)
 
             db.commit()
             db.refresh(user)
-            
-            # Generate JWT access token
+
+            # sub must be the user's email, not id — get_current_user (the
+            # dependency every authenticated endpoint uses) decodes `sub`
+            # and looks the user up by User.email == sub. This previously
+            # put the numeric id in `sub`, which would have made every
+            # request with this token fail auth even had the rest of this
+            # function not already been crashing before reaching here.
+            effective_role = get_effective_role(user)
             jwt_token = create_access_token(
                 data={
-                    "sub": str(user.id),
-                    "email": user.email,
-                    "role": user.role
+                    "sub": user.email,
+                    "id": user.id,
+                    "role": effective_role,
+                    "is_admin": bool(user.is_admin),
                 },
                 expires_delta=timedelta(days=30)
             )
-            
+
             # Redirect to frontend with token
-            redirect_url = f"{FRONTEND_URL}/auth/callback?token={jwt_token}&user_id={user.id}&role={user.role}"
-            
+            redirect_url = f"{FRONTEND_URL}/auth/callback?token={jwt_token}&user_id={user.id}&role={effective_role}"
+
             logger.info(f"Google OAuth successful for user {email}, redirecting to frontend")
             
             return RedirectResponse(url=redirect_url)
