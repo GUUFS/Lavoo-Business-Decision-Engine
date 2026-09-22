@@ -1656,7 +1656,15 @@ async def create_subscription_with_saved_card(
             user_id=user_id, email=user.email, name=user.name,
             stripe_customer_id=getattr(user, 'stripe_customer_id', None)
         )
-        if not getattr(user, 'stripe_customer_id', None) and hasattr(user, 'stripe_customer_id'):
+        # Compare against the *new* customer_id, not just "was it ever set" —
+        # get_or_create_customer creates a fresh Stripe customer whenever the
+        # stored id is stale/invalid (retrieve() fails), so a user who
+        # already had ANY id on file, even a dead one, previously never got
+        # the new id persisted here. Every call after that created yet
+        # another throwaway Stripe customer with nothing on file pointing to
+        # it — this is how one user ended up with 5 separate Stripe
+        # customers while our DB kept citing the original dead one.
+        if getattr(user, 'stripe_customer_id', None) != customer_id:
             user.stripe_customer_id = customer_id
             db.commit()
 

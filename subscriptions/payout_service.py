@@ -292,7 +292,7 @@ class PayoutService:
                 "currency": payout.currency,
                 "narration": f"Lavoo Builder Bonus payout #{payout.id}",
                 "reference": f"PAYOUT-{payout.id}-{int(datetime.now(timezone.utc).timestamp())}",
-                "callback_url": f"{os.getenv('BASE_URL')}/api/payouts/flutterwave/callback",
+                "callback_url": f"{os.getenv('BASE_URL')}/api/payments/flutterwave/callback",
                 "beneficiary_name": payout_account.account_name or payout.recipient_name
             }
             
@@ -397,6 +397,7 @@ class PayoutService:
     def complete_flutterwave_payout(
         payout_id: int, background_tasks: BackgroundTasks, transfer_status: str, db: Session,
         settled_amount: float | None = None, fee: float | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         """
         Complete Flutterwave payout after webhook confirmation.
@@ -449,19 +450,18 @@ class PayoutService:
                 payout.processed_at
             )
         elif transfer_status == "failed":
-            payout.status = 'failed'
-            payout.failed_at = datetime.now(timezone.utc)
-            
-            # Revert commissions to 'pending' so they can be paid again
-            commissions = db.query(Commission).filter(
-                Commission.payout_id == payout.id
-            ).all()
-            
-            for commission in commissions:
-                commission.payout_id = None
-                commission.status = 'pending'  # Revert to pending for retry
-                commission.approved_at = None
-        
+            # Delegate to reverse_payout rather than duplicating its revert
+            # logic here: this branch used to set status/failure_reason and
+            # revert commissions to 'pending' inline, but never touched
+            # commission_summaries — the pre-aggregated table the Earnings
+            # page's monthly totals actually read from. That left a paid
+            # commission's amount stuck counted as "paid" in the summary
+            # forever after the payout that was supposed to fund it failed,
+            # with no code path that ever corrected it back to "pending".
+            PayoutService.reverse_payout(payout_id, failure_reason, db)
+            logger.info(f"Flutterwave payout {payout_id} marked as {transfer_status}")
+            return
+
         db.commit()
         logger.info(f"Flutterwave payout {payout_id} marked as {transfer_status}")
     
@@ -568,7 +568,6 @@ class PayoutService:
 
         payout.status = "failed"
         payout.failure_reason = failure_reason or "Funds returned/Reversed"
-        payout.failed_at = datetime.now(timezone.utc)
 
         commissions = db.query(Commission).filter(
             Commission.payout_id == payout.id

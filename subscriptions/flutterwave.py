@@ -883,8 +883,12 @@ async def flutterwave_payout_callback(
                     payout_id, settled_amount, fee,
                 )
             elif event_type == "transfer.failed" or transfer_status == "failed":
-                PayoutService.complete_flutterwave_payout(payout_id, background_tasks, "failed", db)
-                logger.warning("[FLW webhook] payout %s failed", payout_id)
+                failure_reason = transfer_data.get("complete_message") or transfer_data.get("narration")
+                PayoutService.complete_flutterwave_payout(
+                    payout_id, background_tasks, "failed", db,
+                    failure_reason=failure_reason,
+                )
+                logger.warning("[FLW webhook] payout %s failed: %s", payout_id, failure_reason)
             else:
                 logger.warning("[FLW webhook] unknown event=%s status=%s", event_type, transfer_status)
         else:
