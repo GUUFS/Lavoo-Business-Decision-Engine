@@ -34,8 +34,15 @@ router = APIRouter(prefix="/auth/google", tags=["Google OAuth"])
 # Google OAuth settings
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/auth/google/callback")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+# Defaults corrected to match reality, not just left as a placeholder: the
+# route is actually mounted at /api/auth/google/callback (api/main.py mounts
+# this router at prefix="/api"; the old /api/v1/... default 404s), and the
+# frontend is lavoo.io in production, not a Vite dev server on :5173 — same
+# class of stale-default bug found this session in stripe_connect.py and
+# payout_service.py, which each broke a redirect/callback whenever the real
+# env var was unset.
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://lavoo.io")
 
 # Google OAuth URLs
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
