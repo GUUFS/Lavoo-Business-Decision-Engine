@@ -152,6 +152,16 @@ def extract_user_id(current_user):
     else:
         return current_user.id
 
+def serialize_dt(dt) -> Optional[str]:
+    """Serializes datetime ensuring UTC ISO-8601 string formatting with timezone marker"""
+    if not dt:
+        return None
+    if isinstance(dt, str):
+        return dt if dt.endswith("Z") or ("+" in dt) else f"{dt}Z"
+    if hasattr(dt, "tzinfo") and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
 # USER ENDPOINTS
 
 @router.post("/tickets")
@@ -252,11 +262,11 @@ async def get_my_tickets(
                 "issue": ticket.issue,
                 "category": ticket.category,
                 "status": ticket.status,
-                "created_at": ticket.created_at,
-                "updated_at": ticket.updated_at,
+                "created_at": serialize_dt(ticket.created_at),
+                "updated_at": serialize_dt(ticket.updated_at),
                 "unread_count": unread_count,
                 "last_message": last_message.message if last_message else None,
-                "last_message_at": last_message.created_at if last_message else None
+                "last_message_at": serialize_dt(last_message.created_at) if last_message else None
             })
         
         return {"tickets": result}
@@ -313,16 +323,18 @@ async def get_ticket_messages( ticket_id: int, current_user: User = Depends(get_
         result = []
         for msg in messages:
             try:
-                sender = db.query(User).filter(User.id == msg.sender_id).first()
-                if sender:
-                    # Try these in order: full_name, name, email
-                    sender_name = (
-                        getattr(sender, 'full_name', None) or 
-                        getattr(sender, 'name', None) or 
-                        getattr(sender, 'email', 'Admin')
-                    )
+                if msg.sender_role in ["admin", "system"]:
+                    sender_name = "Lavoo Admin"
                 else:
-                    sender_name = "Admin"
+                    sender = db.query(User).filter(User.id == msg.sender_id).first()
+                    if sender:
+                        sender_name = (
+                            getattr(sender, 'full_name', None) or 
+                            getattr(sender, 'name', None) or 
+                            getattr(sender, 'email', 'User')
+                        )
+                    else:
+                        sender_name = "User"
                 
                 result.append({
                     "id": msg.id,
@@ -332,7 +344,7 @@ async def get_ticket_messages( ticket_id: int, current_user: User = Depends(get_
                     "sender_role": msg.sender_role,
                     "message": msg.message,
                     "is_read": msg.is_read,
-                    "created_at": msg.created_at.isoformat() if msg.created_at else None
+                    "created_at": serialize_dt(msg.created_at)
                 })
             except Exception as e:
                 print(f"Error formatting message {msg.id}: {str(e)}")  # Debug log
@@ -344,7 +356,7 @@ async def get_ticket_messages( ticket_id: int, current_user: User = Depends(get_
                 "id": ticket.id,
                 "issue": ticket.issue,
                 "status": ticket.status,
-                "created_at": ticket.created_at.isoformat() if ticket.created_at else None
+                "created_at": serialize_dt(ticket.created_at)
             },
             "messages": result
         }
@@ -362,6 +374,7 @@ async def get_ticket_messages( ticket_id: int, current_user: User = Depends(get_
 async def reply_to_ticket(
     ticket_id: int, 
     message_data: MessageCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -408,6 +421,9 @@ async def reply_to_ticket(
         db.commit()
         db.refresh(new_message)
         
+        # Schedule AI Support Copilot worker in background for user reply
+        background_tasks.add_task(async_process_ticket_support_ai, ticket_id)
+        
         # Notify Admins via WebSocket
         await manager.broadcast(
             json.dumps({
@@ -419,7 +435,7 @@ async def reply_to_ticket(
                     "sender_role": "user",
                     "sender_name": user_name,
                     "content": new_message.message,
-                    "created_at": new_message.created_at.isoformat()
+                    "created_at": serialize_dt(new_message.created_at)
                 }
             })
         )
@@ -568,11 +584,11 @@ async def get_all_tickets(
                 "issue": ticket.issue,
                 "category": ticket.category,
                 "status": ticket.status,
-                "created_at": ticket.created_at,
-                "updated_at": ticket.updated_at,
+                "created_at": serialize_dt(ticket.created_at),
+                "updated_at": serialize_dt(ticket.updated_at),
                 "unread_count": unread_count,
                 "last_message": last_message.message if last_message else None,
-                "last_message_at": last_message.created_at if last_message else None
+                "last_message_at": serialize_dt(last_message.created_at) if last_message else None
             })
         
         return {"tickets": result}

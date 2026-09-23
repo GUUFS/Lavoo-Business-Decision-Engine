@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import json
 import os
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, String
@@ -126,20 +126,30 @@ def _is_question_discussion(post_type: str = "", title: str = "", content: str =
 def _normalize_paragraph_spacing(text: str) -> str:
     """
     Ensures that every paragraph, greeting, numbered point, and closing note
-    is cleanly separated by exactly double newlines (\\n\\n), giving 2 lines of breathing space.
+    is cleanly separated by standard newlines without rendering literal escaped tokens.
     """
     if not text:
         return ""
-    # Split on newlines, strip each chunk, filter out empty ones
-    chunks = [c.strip() for c in text.split("\n") if c.strip()]
+    # Strip literal \n or \\n characters outputted by LLMs
+    cleaned = text.replace("\\n", "\n").replace("\\r", "").replace("/n", "\n")
+    # Split on newlines, strip each chunk, filter out empty ones and raw slash-n tokens
+    chunks = [c.strip() for c in cleaned.split("\n") if c.strip() and c.strip().lower() not in ("\\n", "/n", r"\n")]
     return "\n\n".join(chunks)
 
 
 def _generate_voo_answer_message(author_handle: str, question_title: str, question_content: str, contributors: List[str], replies_text: str) -> str:
     """
-    Generates an intelligent, high-value, and direct perspective answer from Voo using xAI Grok (or OpenAI client).
+    Generates an intelligent, high-value, and direct perspective answer from Voo
+    using NVIDIA NIM LLM (or xAI Grok as configurable toggle/fallback).
     """
-    api_key = os.getenv("XAI_API_KEY")
+    nvidia_key = os.getenv("NVIDIA_API_KEY")
+    xai_key = os.getenv("XAI_API_KEY")
+    preferred_provider = os.getenv("VOO_LLM_PROVIDER", "").strip().lower()
+
+    # Determine primary provider: 'nvidia' if set or if NVIDIA key exists; otherwise 'grok'
+    if not preferred_provider:
+        preferred_provider = "nvidia" if nvidia_key else "grok"
+
     contributors_str = ", ".join(contributors[:3]) if contributors else ""
     
     fallback_message = (
@@ -151,58 +161,93 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
         f"Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need."
     )
 
-    if not api_key:
+    if not nvidia_key and not xai_key:
         return fallback_message
 
-    try:
-        from openai import OpenAI
+    community_context = (
+        f"\n\nCommunity members ({contributors_str}) also shared these points:\n{replies_text}"
+        if contributors_str and replies_text else ""
+    )
+
+    prompt = (
+        f"You are Voo, the intelligent, strategic, and hyper-practical AI advisor for business owners and solo founders in the Lavoo Build Room.\n\n"
+        f"The founder ({author_handle}) posted this question:\n"
+        f"Title: {question_title}\n"
+        f"Question details: {question_content}{community_context}\n\n"
+        f"Provide your own high-impact, direct, and actionable answer to solve {author_handle}'s question:\n"
+        f"1. Start with a friendly greeting directly tagging {author_handle} (e.g. 'Hi {author_handle},' or 'Hey {author_handle}! 👋').\n"
+        f"2. Directly answer their question with clear, actionable insights, strategy, or frameworks tailored for a founder/business builder.\n"
+        f"3. Give 2-3 structured, high-leverage recommendations or key decision principles that provide immediate clarity.\n"
+        f"4. If community members ({contributors_str}) shared insights, naturally synthesize or reference them alongside your own perspective.\n"
+        f"5. End with an encouraging closing note formulated like this: 'Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need.' (Do NOT mention Decision Engine missions or task conversions).\n"
+        f"STRICT PUNCTUATION INSTRUCTION: Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, periods, or standard complete sentences instead.\n"
+        f"STRICT SPACING INSTRUCTION: Separate each paragraph and recommendation with regular blank lines. Never output literal backslash-n or slash-n text tokens.\n"
+        f"Keep the tone encouraging, crisp, professional, and practical (2-4 paragraphs). Do NOT wrap your answer in markdown code fences."
+    )
+
+    system_prompt = (
+        "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. "
+        "STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Place clean blank line spaces between every paragraph. Never output literal slash-n text."
+    )
+
+    from openai import OpenAI
+
+    def _call_nvidia():
+        if not nvidia_key:
+            return None
+        model_name = os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
         client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.x.ai/v1",
+            api_key=nvidia_key,
+            base_url="https://integrate.api.nvidia.com/v1",
             timeout=30.0,
             max_retries=2,
         )
-        
-        community_context = (
-            f"\n\nCommunity members ({contributors_str}) also shared these points:\n{replies_text}"
-            if contributors_str and replies_text else ""
-        )
-
-        prompt = (
-            f"You are Voo, the intelligent, strategic, and hyper-practical AI advisor for business owners and solo founders in the Lavoo Build Room.\n\n"
-            f"The founder ({author_handle}) posted this question:\n"
-            f"Title: {question_title}\n"
-            f"Question details: {question_content}{community_context}\n\n"
-            f"Provide your own high-impact, direct, and actionable answer to solve {author_handle}'s question:\n"
-            f"1. Start with a friendly greeting directly tagging {author_handle} (e.g. 'Hi {author_handle},' or 'Hey {author_handle}! 👋').\n"
-            f"2. Directly answer their question with clear, actionable insights, strategy, or frameworks tailored for a founder/business builder.\n"
-            f"3. Give 2-3 structured, high-leverage recommendations or key decision principles that provide immediate clarity.\n"
-            f"4. If community members ({contributors_str}) shared insights, naturally synthesize or reference them alongside your own perspective.\n"
-            f"5. End with an encouraging closing note formulated like this: 'Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need.' (Do NOT mention Decision Engine missions or task conversions).\n"
-            f"STRICT PUNCTUATION INSTRUCTION: Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, periods, or standard complete sentences instead.\n"
-            f"STRICT SPACING INSTRUCTION: You MUST separate every single paragraph, greeting, and recommendation with two line breaks (\\n\\n) so that there is clean 2-line visual spacing between every paragraph. Never lump paragraphs together.\n"
-            f"Keep the tone encouraging, crisp, professional, and practical (2-4 paragraphs). Do NOT wrap your answer in markdown code fences."
-        )
-
         completion = client.chat.completions.create(
-            model="grok-4-1-fast-reasoning",
+            model=model_name,
             messages=[
-                {
-                    "role": "system", 
-                    "content": "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Always place 2 line spaces (double newline) between every paragraph and greeting."
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4,
             max_tokens=450,
         )
-
         if completion and completion.choices:
-            text_resp = completion.choices[0].message.content.strip()
+            return completion.choices[0].message.content.strip()
+        return None
+
+    def _call_grok():
+        if not xai_key:
+            return None
+        model_name = os.getenv("VOO_GROK_MODEL", "grok-4-1-fast-reasoning")
+        client = OpenAI(
+            api_key=xai_key,
+            base_url="https://api.x.ai/v1",
+            timeout=30.0,
+            max_retries=2,
+        )
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.4,
+            max_tokens=450,
+        )
+        if completion and completion.choices:
+            return completion.choices[0].message.content.strip()
+        return None
+
+    order = [_call_nvidia, _call_grok] if preferred_provider == "nvidia" else [_call_grok, _call_nvidia]
+
+    for call_fn in order:
+        try:
+            text_resp = call_fn()
             if text_resp:
                 return _normalize_paragraph_spacing(text_resp)
-    except Exception as e:
-        logger.error(f"[voo-bot] Grok generation failed, using fallback: {e}")
+        except Exception as e:
+            provider_name = "NVIDIA" if call_fn == _call_nvidia else "Grok"
+            logger.warning(f"[voo-bot] {provider_name} generation failed, trying next provider: {e}")
 
     return _normalize_paragraph_spacing(fallback_message)
 
@@ -325,65 +370,99 @@ async def cron_process_pending_voo_replies(db: Session):
 
 def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
     """
-    Calls xAI Grok (or OpenAI API format) using XAI_API_KEY to generate 3 bullet points
-    for Decision Takeaways.
+    Calls NVIDIA NIM LLM (or xAI Grok as configurable toggle/fallback) using OpenAI API format
+    to generate 3 structured, high-leverage bullet points for Decision Takeaways.
     """
-    api_key = os.getenv("XAI_API_KEY")
-    if not api_key:
-        logger.warning("XAI_API_KEY not set in environment — skipping AI takeaway generation")
+    nvidia_key = os.getenv("NVIDIA_API_KEY")
+    xai_key = os.getenv("XAI_API_KEY")
+    preferred_provider = os.getenv("VOO_LLM_PROVIDER", "").strip().lower()
+
+    if not preferred_provider:
+        preferred_provider = "nvidia" if nvidia_key else "grok"
+
+    if not nvidia_key and not xai_key:
+        logger.warning("Neither NVIDIA_API_KEY nor XAI_API_KEY set in environment — skipping AI takeaway generation")
         return None
 
-    try:
-        from openai import OpenAI
+    prompt = (
+        f"Analyze this founder post from the Lavoo Build Room:\n\n"
+        f"Headline: {title}\n"
+        f"Content: {content}\n\n"
+        f"Extract EXACTLY 3 concise, highly actionable 'Decision Takeaways' for solo founders.\n"
+        f"Format your response as a strict JSON object: {{\"takeaways\": [\"Takeaway 1\", \"Takeaway 2\", \"Takeaway 3\"]}}"
+    )
+    system_prompt = "You are the Lavoo Business Decision Engine AI. Extract 3 actionable decision takeaways for solo founders in strict JSON format."
+
+    from openai import OpenAI
+
+    def _call_nvidia():
+        if not nvidia_key:
+            return None
+        model_name = os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
         client = OpenAI(
-            api_key=api_key,
+            api_key=nvidia_key,
+            base_url="https://integrate.api.nvidia.com/v1",
+            timeout=30.0,
+            max_retries=2,
+        )
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=300,
+        )
+        if completion and completion.choices:
+            return completion.choices[0].message.content.strip()
+        return None
+
+    def _call_grok():
+        if not xai_key:
+            return None
+        client = OpenAI(
+            api_key=xai_key,
             base_url="https://api.x.ai/v1",
             timeout=30.0,
             max_retries=2,
         )
-        prompt = (
-            f"Analyze this founder post from the Lavoo Build Room:\n\n"
-            f"Headline: {title}\n"
-            f"Content: {content}\n\n"
-            f"Extract EXACTLY 3 concise, highly actionable 'Decision Takeaways' for solo founders.\n"
-            f"Format your response as a strict JSON object: {{\"takeaways\": [\"Takeaway 1\", \"Takeaway 2\", \"Takeaway 3\"]}}"
-        )
         models_to_try = ["grok-4-1-fast-reasoning", "grok-2-latest", "grok-4-1-fast-non-reasoning"]
-        completion = None
-        last_err = None
-
         for m in models_to_try:
             try:
                 completion = client.chat.completions.create(
                     model=m,
                     messages=[
-                        {"role": "system", "content": "You are the Lavoo Business Decision Engine AI. Extract 3 actionable decision takeaways for solo founders in strict JSON format."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.3,
                     max_tokens=300,
                 )
                 if completion and completion.choices:
-                    break
-            except Exception as err:
-                last_err = err
+                    return completion.choices[0].message.content.strip()
+            except Exception:
                 continue
+        return None
 
-        if not completion or not completion.choices:
-            if last_err:
-                raise last_err
-            return None
+    order = [_call_nvidia, _call_grok] if preferred_provider == "nvidia" else [_call_grok, _call_nvidia]
 
-        raw_text = completion.choices[0].message.content.strip()
-        if "```" in raw_text:
-            raw_text = re.sub(r"^```(?:json)?|```$", "", raw_text, flags=re.MULTILINE).strip()
-        parsed = json.loads(raw_text)
-        takeaways = parsed.get("takeaways", [])
-        if isinstance(takeaways, list) and len(takeaways) > 0:
-            cleaned = [re.sub(r"^[›\-*\d.\s]+", "", str(t)).strip() for t in takeaways[:3]]
-            return cleaned
-    except Exception as e:
-        logger.error(f"Grok AI takeaway generation error: {e}")
+    for call_fn in order:
+        try:
+            raw_text = call_fn()
+            if not raw_text:
+                continue
+            if "```" in raw_text:
+                raw_text = re.sub(r"^```(?:json)?|```$", "", raw_text, flags=re.MULTILINE).strip()
+            parsed = json.loads(raw_text)
+            takeaways = parsed.get("takeaways", [])
+            if isinstance(takeaways, list) and len(takeaways) > 0:
+                cleaned = [re.sub(r"^[›\-*\d.\s]+", "", str(t)).strip() for t in takeaways[:3]]
+                return cleaned
+        except Exception as err:
+            provider_name = "NVIDIA" if call_fn == _call_nvidia else "Grok"
+            logger.warning(f"Takeaways generation via {provider_name} failed: {err}")
+
     return None
 
 
@@ -855,8 +934,228 @@ def _summarize_mission_title(text: str, max_chars: int = 80) -> str:
     return (' '.join(out) + '…') if out else text[:max_chars - 1] + '…'
 
 
+def _resolve_geo_bucket(country_code: Optional[str]) -> str:
+    """
+    Normalizes a country code into one of four geo buckets:
+    - 'NG' -> 'nigeria'
+    - 'US' -> 'us'
+    - 'GB' / 'UK' -> 'uk'
+    - other -> 'row' (Rest of World)
+    """
+    if not country_code:
+        return "row"
+    code = country_code.strip().upper()
+    if code == "NG":
+        return "nigeria"
+    if code == "US":
+        return "us"
+    if code in ("GB", "UK"):
+        return "uk"
+    return "row"
+
+
+_BACKEND_IP_GEO_CACHE: dict = {}  # {ip: (country_code, expire_timestamp)}
+
+def _lookup_ip_country(ip: str) -> Optional[str]:
+    """
+    Fast server-side fallback IP lookup with in-memory caching and short timeout.
+    """
+    if not ip or ip in ("127.0.0.1", "localhost", "::1") or ip.startswith("192.168.") or ip.startswith("10.") or ip.startswith("172.16."):
+        return None
+    import time
+    now = time.time()
+    cached = _BACKEND_IP_GEO_CACHE.get(ip)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    # Try geojs.io
+    try:
+        import httpx
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(f"https://get.geojs.io/v1/ip/country/{ip}.json")
+            if resp.status_code == 200:
+                data = resp.json()
+                code = data.get("country")
+                if code and len(str(code).strip()) == 2:
+                    clean_code = str(code).strip().upper()
+                    _BACKEND_IP_GEO_CACHE[ip] = (clean_code, now + 3600)
+                    return clean_code
+    except Exception:
+        pass
+
+    # Fallback to ipwho.is
+    try:
+        import httpx
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(f"https://ipwho.is/{ip}")
+            if resp.status_code == 200:
+                data = resp.json()
+                code = data.get("country_code")
+                if code and len(str(code).strip()) == 2:
+                    clean_code = str(code).strip().upper()
+                    _BACKEND_IP_GEO_CACHE[ip] = (clean_code, now + 3600)
+                    return clean_code
+    except Exception:
+        pass
+
+    return None
+
+
+def _extract_country_code(
+    request: Optional[Request] = None,
+    explicit_country: Optional[str] = None,
+    current_user: Optional[User] = None
+) -> str:
+    """
+    Resolves client country from:
+    1. Explicit query parameter or query override (e.g., country=NG or country=US)
+    2. Cloudflare edge header (cf-ipcountry)
+    3. Client connecting IP lookup (x-forwarded-for, x-real-ip, client.host)
+    4. Client forwarded country headers (x-user-country, x-country-code, x-country)
+    5. User profile country (if available on User model)
+    6. Defaults to 'ROW'
+    """
+    if explicit_country and len(explicit_country.strip()) == 2:
+        return explicit_country.strip().upper()
+
+    if request:
+        # 1. Check Cloudflare edge header
+        cf_country = request.headers.get("cf-ipcountry")
+        if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
+            return cf_country.strip().upper()
+
+        # 2. Server-side IP geo-lookup from connecting network IP (x-forwarded-for / client host)
+        forwarded_for = request.headers.get("x-forwarded-for")
+        client_ip = ""
+        if forwarded_for and isinstance(forwarded_for, str):
+            client_ip = forwarded_for.split(",")[0].strip()
+        if not client_ip:
+            x_real = request.headers.get("x-real-ip")
+            if x_real and isinstance(x_real, str):
+                client_ip = x_real.strip()
+            elif getattr(request, 'client', None) and hasattr(request.client, 'host') and isinstance(request.client.host, str):
+                client_ip = request.client.host.strip()
+        if client_ip:
+            ip_country = _lookup_ip_country(client_ip)
+            if ip_country:
+                return ip_country
+
+        # 3. Client forwarded header fallback
+        user_country = (
+            request.headers.get("x-user-country")
+            or request.headers.get("x-country-code")
+            or request.headers.get("x-country")
+        )
+        if user_country and len(user_country.strip()) == 2 and user_country.strip().upper() not in ("XX", "T1"):
+            return user_country.strip().upper()
+
+    if current_user and getattr(current_user, "country", None):
+        c = str(current_user.country).strip().upper()
+        if len(c) == 2:
+            return c
+
+    return "ROW"
+
+
+def _get_geo_weighted_insights(db: Session, geo_bucket: str) -> List[dict]:
+    """
+    Fetches active FounderInsightCard records and builds a balanced, weighted sequence:
+    - 'us': 60% US : 40% Global
+    - 'uk': 60% UK : 40% Global
+    - 'nigeria': 60% Nigeria/African Tech : 40% Global
+    - 'row': 70% Global : 30% US
+    """
+    insights_raw = db.query(FounderInsightCard).filter(FounderInsightCard.is_active == True).order_by(FounderInsightCard.created_at.desc()).all()
+    if not insights_raw:
+        return []
+
+    def _to_dict(card: FounderInsightCard) -> dict:
+        return {
+            "id": f"insight_{card.id}",
+            "type": "founder_insight",
+            "isStat": True,
+            "big": card.highlight_stat or "",
+            "highlight_stat": card.highlight_stat or "",
+            "headline": card.insight_text,
+            "insight_text": card.insight_text,
+            "source": card.source,
+            "category": card.category or "global",
+            "accent": card.accent_color or "#e87a02",
+            "accent_color": card.accent_color or "#e87a02",
+            "created_at": card.created_at.isoformat() if card.created_at else None
+        }
+
+    # Partition by category
+    by_cat: dict = {
+        "us": [],
+        "uk": [],
+        "nigeria": [],
+        "global": []
+    }
+
+    for card in insights_raw:
+        cat = (card.category or "global").lower().strip()
+        if cat in ("us", "united_states", "usa", "us_tech"):
+            by_cat["us"].append(_to_dict(card))
+        elif cat in ("uk", "united_kingdom", "gb", "britain", "uk_tech", "europe"):
+            by_cat["uk"].append(_to_dict(card))
+        elif cat in ("nigeria", "ng", "african_tech", "africa", "west_africa"):
+            by_cat["nigeria"].append(_to_dict(card))
+        else:
+            by_cat["global"].append(_to_dict(card))
+
+    all_available = [_to_dict(c) for c in insights_raw]
+
+    # Select primary and secondary pools and ratios
+    if geo_bucket == "us":
+        pool_primary = by_cat["us"]
+        pool_secondary = by_cat["global"] or by_cat["nigeria"] or by_cat["uk"]
+        ratio_primary, ratio_secondary = 3, 2  # 60% : 40%
+    elif geo_bucket == "uk":
+        pool_primary = by_cat["uk"]
+        pool_secondary = by_cat["global"] or by_cat["us"] or by_cat["nigeria"]
+        ratio_primary, ratio_secondary = 3, 2  # 60% : 40%
+    elif geo_bucket == "nigeria":
+        pool_primary = by_cat["nigeria"]
+        pool_secondary = by_cat["global"] or by_cat["us"] or by_cat["uk"]
+        ratio_primary, ratio_secondary = 3, 2  # 60% : 40%
+    else:  # 'row'
+        pool_primary = by_cat["global"] or by_cat["us"]
+        pool_secondary = by_cat["us"] or by_cat["uk"] or by_cat["nigeria"]
+        ratio_primary, ratio_secondary = 7, 3  # 70% : 30%
+
+    if not pool_primary and not pool_secondary:
+        return all_available
+    if not pool_primary:
+        pool_primary = pool_secondary or all_available
+    if not pool_secondary:
+        pool_secondary = pool_primary or all_available
+
+    # Generate blended sequence
+    blended = []
+    total_slots = max(len(pool_primary) + len(pool_secondary), 10)
+    p_idx = 0
+    s_idx = 0
+
+    while len(blended) < total_slots:
+        for _ in range(ratio_primary):
+            if pool_primary:
+                blended.append(pool_primary[p_idx % len(pool_primary)])
+                p_idx += 1
+        for _ in range(ratio_secondary):
+            if pool_secondary:
+                blended.append(pool_secondary[s_idx % len(pool_secondary)])
+                s_idx += 1
+        if len(blended) >= 30:
+            break
+
+    return blended
+
+
 @router.get("/discussions")
 async def get_discussions(
+    request: Request,
+    country: Optional[str] = Query(None),
     channel_id: Optional[int] = Query(None),
     limit: int = Query(20, le=100),
     offset: int = Query(0),
@@ -865,7 +1164,9 @@ async def get_discussions(
 ):
     try:
         user_id_str = str(current_user.id) if current_user else "anon"
-        cache_key = f"community:discussions:user:{user_id_str}:ch:{channel_id}:lim:{limit}:off:{offset}"
+        detected_country = _extract_country_code(request, explicit_country=country, current_user=current_user)
+        geo_bucket = _resolve_geo_bucket(detected_country)
+        cache_key = f"community:discussions:geo:{geo_bucket}:user:{user_id_str}:ch:{channel_id}:lim:{limit}:off:{offset}"
         cached = await get_cached(cache_key)
         if cached is not None:
             items = cached.get("data") if isinstance(cached, dict) else (cached if isinstance(cached, list) else None)
@@ -1026,22 +1327,9 @@ async def get_discussions(
         except Exception as reflection_err:
             logger.warning(f"Mission reflections fetch error: {reflection_err}")
 
-        # Interleave Founder Insights & Decision Engine Reflections into the discussion stream (4 Standard : 1 Insight : 4 Standard : 1 Reflection)
+        # Interleave Geo-Weighted Builder Insights & Decision Engine Reflections into the discussion stream (4 Standard : 1 Insight : 4 Standard : 1 Reflection)
         try:
-            insights_raw = db.query(FounderInsightCard).filter(FounderInsightCard.is_active == True).order_by(FounderInsightCard.created_at.desc()).all()
-            insight_cards = [{
-                "id": f"insight_{card.id}",
-                "type": "founder_insight",
-                "isStat": True,
-                "big": card.highlight_stat or "",
-                "highlight_stat": card.highlight_stat or "",
-                "headline": card.insight_text,
-                "insight_text": card.insight_text,
-                "source": card.source,
-                "accent": card.accent_color or "#e87a02",
-                "accent_color": card.accent_color or "#e87a02",
-                "created_at": card.created_at.isoformat() if card.created_at else None
-            } for card in insights_raw]
+            insight_cards = _get_geo_weighted_insights(db, geo_bucket)
 
             std_posts = [p for p in result if p.get("type") != "mission_reflection"]
             ref_posts = sorted(

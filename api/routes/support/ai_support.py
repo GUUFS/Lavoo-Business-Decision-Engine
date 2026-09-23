@@ -133,7 +133,8 @@ def _generate_humanized_support_reply(
     user_email: str,
     category: str,
     issue_text: str,
-    ticket_id: int
+    ticket_id: int,
+    conversation_history: Optional[str] = None
 ) -> str:
     """
     Generates a human-written, warm, and accurate support answer using xAI Grok.
@@ -143,7 +144,7 @@ def _generate_humanized_support_reply(
 
     fallback_reply = (
         f"Hi {display_name},\n\n"
-        f"Thanks for reaching out to us about this. I have looked into your inquiry regarding **{category.capitalize()}**.\n\n"
+        f"Thanks for reaching out to us. I have looked into your inquiry regarding **{category.capitalize()}**.\n\n"
         f"To resolve this quickly, please check that you are on the latest version of the dashboard and try refreshing your browser. If you are referencing a specific mission or idea evaluation, navigating to `/l/decision-engine` will allow you to access your latest saved data.\n\n"
         f"Please let me know if this helps or if you need any further assistance. We are happy to help!"
     )
@@ -162,14 +163,17 @@ def _generate_humanized_support_reply(
 
         system_prompt = (
             "You are a helpful, empathetic, and knowledgeable Senior Support Specialist on the Lavoo team replying to a user support ticket. "
-            "Your replies must sound 100% human, personal, and authentic. "
+            "Your replies must sound 100% human, personal, and authentic.\n\n"
             "STRICT RULES:\n"
-            "1. NEVER identify as an AI, bot, or language model. Write like a human team member resolving the customer's issue.\n"
-            "2. Never use generic AI intros like 'Certainly!', 'I understand your concern', or 'I hope this message finds you well'.\n"
-            "3. Strictly never use em-dashes (—). Use commas, colons, or natural sentence structures instead.\n"
+            "1. NEVER identify as an AI, bot, or language model. Write as an actual human team member on the Lavoo engineering & support team.\n"
+            "2. Never use generic robotic intros like 'Certainly!', 'I understand your concern', or 'I hope this message finds you well'.\n"
+            "3. Strictly NEVER use em-dashes (—). Use commas, colons, or clean sentences instead.\n"
             "4. Separate all paragraphs and greeting with exactly two line breaks (\\n\\n) so there is generous breathing room.\n"
-            "5. Keep the reply concise (2-3 paragraphs), direct, helpful, and polite."
+            "5. Keep the reply concise (2-3 paragraphs), direct, helpful, and polite.\n"
+            "6. Reference actual Lavoo pages and concepts (/l/decision-engine, /l/thebuildroom, /l/earnings, /l/thesignal, Chops, Missions) accurately."
         )
+
+        history_section = f"--- PREVIOUS CONVERSATION THREAD ---\n{conversation_history}\n\n" if conversation_history else ""
 
         user_prompt = (
             f"Here is the Lavoo Platform Master Knowledge:\n"
@@ -178,9 +182,11 @@ def _generate_humanized_support_reply(
             f"Ticket ID: #{ticket_id}\n"
             f"User Name: {display_name}\n"
             f"User Email: {user_email}\n"
-            f"Category: {category}\n"
-            f"Issue: {issue_text}\n\n"
-            f"Please write a warm, expert, human response directly solving {display_name}'s inquiry using Lavoo platform specifics.\n"
+            f"Category: {category}\n\n"
+            f"{history_section}"
+            f"--- LATEST USER MESSAGE TO ANSWER ---\n"
+            f"{issue_text}\n\n"
+            f"Please write a warm, expert, human response directly answering {display_name}'s latest message using Lavoo platform specifics.\n"
             f"Start with 'Hi {display_name},' and end with a friendly sign-off like 'Let me know if you need anything else, and I will be glad to assist!'."
         )
 
@@ -208,9 +214,10 @@ def _generate_humanized_support_reply(
 # ─── BACKGROUND WORKER ENTRYPOINT ─────────────────────────────────────────────
 async def async_process_ticket_support_ai(ticket_id: int):
     """
-    Background worker invoked whenever a new support ticket is submitted.
-    1. Checks if ticket is sensitive -> if so, leaves for human admin.
-    2. If standard -> generates humanized reply and records as admin reply.
+    Background worker invoked whenever a new support ticket is submitted or user replies.
+    1. Inspects the latest message in the thread.
+    2. If latest is from user -> checks sensitivity; if standard, generates humanized reply.
+    3. Posts reply as official admin message and updates ticket.
     """
     with SessionLocal() as db:
         try:
@@ -219,37 +226,51 @@ async def async_process_ticket_support_ai(ticket_id: int):
                 logger.warning(f"[AI Support] Ticket #{ticket_id} not found.")
                 return
 
-            # Check if ticket already has a reply (e.g. admin stepped in quickly)
-            existing_replies = db.query(TicketMessage).filter(
-                TicketMessage.ticket_id == ticket_id,
-                TicketMessage.sender_role.in_(["admin", "system"])
-            ).first()
+            # Fetch all messages in the thread ordered chronologically
+            messages = db.query(TicketMessage).filter(
+                TicketMessage.ticket_id == ticket_id
+            ).order_by(TicketMessage.created_at.asc()).all()
 
-            if existing_replies:
-                logger.info(f"[AI Support] Ticket #{ticket_id} already has a reply. Skipping.")
+            if not messages:
+                logger.info(f"[AI Support] No messages found for ticket #{ticket_id}. Skipping.")
+                return
+
+            # Inspect latest message
+            latest_msg = messages[-1]
+            if latest_msg.sender_role in ["admin", "system"]:
+                logger.info(f"[AI Support] Ticket #{ticket_id} latest message is already from {latest_msg.sender_role}. Skipping.")
                 return
 
             user = db.query(User).filter(User.id == ticket.user_id).first()
             user_name = user.name if user and hasattr(user, 'name') and user.name else "there"
             user_email = user.email if user and hasattr(user, 'email') and user.email else ""
 
-            # Run Sensitivity Classifier
             category_val = ticket.category or "general"
-            issue_val = ticket.issue or ""
-            is_sensitive, reason = _classify_support_sensitivity(category_val, issue_val)
+            latest_user_text = (latest_msg.message or ticket.issue or "").strip()
+
+            # Run Sensitivity Classifier on latest user message
+            is_sensitive, reason = _classify_support_sensitivity(category_val, latest_user_text)
 
             if is_sensitive:
                 logger.info(f"[AI Support] Ticket #{ticket_id} is sensitive ({reason}). Escalating to Human Admin.")
                 # Leave ticket in 'open' status for human admin to review in lavoo_admin
                 return
 
+            # Format previous conversation history (up to last 6 messages)
+            history_lines = []
+            for msg in messages[:-1][-6:]:
+                role_label = "User" if msg.sender_role == "user" else "Lavoo Support"
+                history_lines.append(f"{role_label}: {msg.message}")
+            conversation_history = "\n\n".join(history_lines) if history_lines else None
+
             # Generate humanized support reply
             ai_reply_text = _generate_humanized_support_reply(
                 user_name=user_name,
                 user_email=user_email,
                 category=category_val,
-                issue_text=issue_val,
-                ticket_id=ticket.id
+                issue_text=latest_user_text,
+                ticket_id=ticket.id,
+                conversation_history=conversation_history
             )
 
             if not ai_reply_text:
@@ -258,6 +279,7 @@ async def async_process_ticket_support_ai(ticket_id: int):
             # Find an admin user ID to associate or fallback
             admin_user = db.query(User).filter(User.is_admin == True).first()
             admin_id = admin_user.id if admin_user else (user.id if user else 1)
+            admin_name = "Lavoo Admin"
 
             # Insert message as official support response (role: admin)
             support_msg = TicketMessage(
@@ -278,8 +300,8 @@ async def async_process_ticket_support_ai(ticket_id: int):
             user_notif = UserNotification(
                 user_id=ticket.user_id,
                 type="support_reply",
-                title="🎧 Lavoo Support Team replied",
-                message=f"Our team replied to your ticket: '{(ticket.issue or 'Support Request')[:45]}'",
+                title="🎧 Lavoo Admin replied",
+                message=f"Lavoo Admin replied to your ticket: '{(latest_user_text or ticket.issue or 'Support Request')[:45]}'",
                 link=f"/l/customer-service?ticketId={ticket.id}",
                 is_read=False,
                 created_at=datetime.now(timezone.utc)
@@ -287,7 +309,32 @@ async def async_process_ticket_support_ai(ticket_id: int):
             db.add(user_notif)
 
             db.commit()
+            db.refresh(support_msg)
             logger.info(f"✅ [AI Support] Successfully posted support reply to ticket #{ticket.id}")
+
+            # Notify via WebSockets if available
+            try:
+                import json
+                from api.routes.support.customer_service import manager, notification_manager
+
+                created_iso = support_msg.created_at.replace(tzinfo=timezone.utc).isoformat() if support_msg.created_at else datetime.now(timezone.utc).isoformat()
+                ws_payload = json.dumps({
+                    "type": "new_message",
+                    "payload": {
+                        "id": support_msg.id,
+                        "ticket_id": ticket.id,
+                        "sender_id": admin_id,
+                        "sender_role": "admin",
+                        "sender_name": admin_name,
+                        "content": support_msg.message,
+                        "created_at": created_iso
+                    }
+                })
+                # Broadcast to admin and user notification channels
+                await manager.broadcast(ws_payload)
+                await notification_manager.send_personal_message(ws_payload, ticket.user_id)
+            except Exception as ws_err:
+                logger.debug(f"[AI Support] WebSocket push (non-critical): {ws_err}")
 
         except Exception as err:
             db.rollback()
