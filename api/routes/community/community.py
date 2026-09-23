@@ -10,7 +10,7 @@ import os
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import func, or_, String
 
 from database.pg_connections import get_db, SessionLocal
@@ -636,7 +636,7 @@ def _get_poll_payload(d: CommunityDiscussion, current_user: Optional[User] = Non
     }
 
 
-def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, saved_ids: Optional[set] = None, include_quoted: bool = True, current_user: Optional[User] = None) -> dict:
+def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, saved_ids: Optional[set] = None, include_quoted: bool = True, current_user: Optional[User] = None, db: Optional[Session] = None) -> dict:
     has_liked = d.id in liked_ids if liked_ids is not None else False
     has_saved = d.id in saved_ids if saved_ids is not None else False
     post_type_val = getattr(d, 'post_type', None) or 'discussion'
@@ -669,7 +669,7 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
     quoted_dict = None
     if include_quoted and getattr(d, 'quoted_discussion', None) is not None:
         try:
-            quoted_dict = _discussion_dict(d.quoted_discussion, liked_ids=liked_ids, saved_ids=saved_ids, include_quoted=False, current_user=current_user)
+            quoted_dict = _discussion_dict(d.quoted_discussion, liked_ids=liked_ids, saved_ids=saved_ids, include_quoted=False, current_user=current_user, db=db)
         except Exception:
             quoted_dict = None
 
@@ -704,7 +704,7 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
         "mission_task": getattr(d, 'mission_task', None),
         "tagged_user_ids": tagged_ids,
         "visibility": visibility_val,
-        "poll": _get_poll_payload(d, current_user=current_user),
+        "poll": _get_poll_payload(d, current_user=current_user, db=db),
         "voo_status": getattr(d, 'voo_status', 'untracked') or 'untracked',
         "voo_reply_id": getattr(d, 'voo_reply_id', None),
         "is_resolved": getattr(d, 'is_resolved', False) or False,
@@ -1010,8 +1010,8 @@ def _extract_country_code(
     Resolves client country from:
     1. Explicit query parameter or query override (e.g., country=NG or country=US)
     2. Cloudflare edge header (cf-ipcountry)
-    3. Client connecting IP lookup (x-forwarded-for, x-real-ip, client.host)
-    4. Client forwarded country headers (x-user-country, x-country-code, x-country)
+    3. Client forwarded country headers (x-user-country, x-country-code, x-country)
+    4. Server-side IP lookup fallback (cached)
     5. User profile country (if available on User model)
     6. Defaults to 'ROW'
     """
@@ -1024,7 +1024,16 @@ def _extract_country_code(
         if cf_country and len(cf_country.strip()) == 2 and cf_country.strip().upper() not in ("XX", "T1"):
             return cf_country.strip().upper()
 
-        # 2. Server-side IP geo-lookup from connecting network IP (x-forwarded-for / client host)
+        # 2. Client forwarded header (sent with 0ms by frontend geo.ts)
+        user_country = (
+            request.headers.get("x-user-country")
+            or request.headers.get("x-country-code")
+            or request.headers.get("x-country")
+        )
+        if user_country and len(user_country.strip()) == 2 and user_country.strip().upper() not in ("XX", "T1"):
+            return user_country.strip().upper()
+
+        # 3. Server-side IP geo-lookup fallback (only if headers absent)
         forwarded_for = request.headers.get("x-forwarded-for")
         client_ip = ""
         if forwarded_for and isinstance(forwarded_for, str):
@@ -1040,15 +1049,6 @@ def _extract_country_code(
             if ip_country:
                 return ip_country
 
-        # 3. Client forwarded header fallback
-        user_country = (
-            request.headers.get("x-user-country")
-            or request.headers.get("x-country-code")
-            or request.headers.get("x-country")
-        )
-        if user_country and len(user_country.strip()) == 2 and user_country.strip().upper() not in ("XX", "T1"):
-            return user_country.strip().upper()
-
     if current_user and getattr(current_user, "country", None):
         c = str(current_user.country).strip().upper()
         if len(c) == 2:
@@ -1057,15 +1057,26 @@ def _extract_country_code(
     return "ROW"
 
 
+_INSIGHT_CARDS_CACHE: dict = {"data": None, "expires_at": 0}
+
 def _get_geo_weighted_insights(db: Session, geo_bucket: str) -> List[dict]:
     """
-    Fetches active FounderInsightCard records and builds a balanced, weighted sequence:
+    Fetches active FounderInsightCard records with 120s in-memory caching:
     - 'us': 60% US : 40% Global
     - 'uk': 60% UK : 40% Global
     - 'nigeria': 60% Nigeria/African Tech : 40% Global
     - 'row': 70% Global : 30% US
     """
-    insights_raw = db.query(FounderInsightCard).filter(FounderInsightCard.is_active == True).order_by(FounderInsightCard.created_at.desc()).all()
+    import time
+    now = time.time()
+    insights_raw = None
+    if _INSIGHT_CARDS_CACHE["data"] is not None and _INSIGHT_CARDS_CACHE["expires_at"] > now:
+        insights_raw = _INSIGHT_CARDS_CACHE["data"]
+    else:
+        insights_raw = db.query(FounderInsightCard).filter(FounderInsightCard.is_active == True).order_by(FounderInsightCard.created_at.desc()).all()
+        _INSIGHT_CARDS_CACHE["data"] = insights_raw
+        _INSIGHT_CARDS_CACHE["expires_at"] = now + 120.0
+
     if not insights_raw:
         return []
 
@@ -1152,6 +1163,87 @@ def _get_geo_weighted_insights(db: Session, geo_bucket: str) -> List[dict]:
     return blended
 
 
+_MISSION_REFLECTIONS_CACHE: dict = {"data": [], "expires_at": 0}
+
+def _get_cached_mission_reflections(db: Session) -> List[dict]:
+    """
+    Fetches and caches completed mission roadmap reflection items for 60 seconds
+    to prevent querying and parsing multi-MB BusinessAnalysis JSON trees on every feed request.
+    """
+    import time
+    now = time.time()
+    if _MISSION_REFLECTIONS_CACHE["data"] and _MISSION_REFLECTIONS_CACHE["expires_at"] > now:
+        return _MISSION_REFLECTIONS_CACHE["data"]
+
+    reflections = []
+    try:
+        opted_in_user_ids = db.query(UserSettings.user_id).filter(
+            UserSettings.show_mission_comments_in_community == True
+        ).all()
+        opted_in_ids = [row[0] for row in opted_in_user_ids]
+        if opted_in_ids:
+            analyses = (
+                db.query(BusinessAnalysis, User)
+                .join(User, BusinessAnalysis.user_id == User.id)
+                .filter(BusinessAnalysis.user_id.in_(opted_in_ids))
+                .order_by(BusinessAnalysis.updated_at.desc())
+                .limit(25)
+                .all()
+            )
+            for analysis, author in analyses:
+                up = analysis.user_progress or {}
+                roadmap_comments = up.get('roadmap_comments', {}) if isinstance(up, dict) else {}
+                if not isinstance(roadmap_comments, dict) or not roadmap_comments:
+                    continue
+                mission_titles = {
+                    t['frontend_id']: t['text'] for t in _flatten_roadmap_tasks(analysis)
+                }
+                for task_id, comments in roadmap_comments.items():
+                    if not isinstance(comments, list):
+                        continue
+                    for comment in comments:
+                        text = comment.get('text', '').strip()
+                        if not text or len(text) < 5 or text.lower().strip('.!') in ('test', 'testing', 'tes', 'tesst', 'text', 'test2', 'tessssst', 'reesss', 'done', 'testtt'):
+                            continue
+                        created_at = comment.get('createdAt')
+                        comment_id = comment.get('id', f"rc_{analysis.id}_{task_id}")
+                        full_title = mission_titles.get(task_id) or ""
+                        reflections.append({
+                            "id": f"rc_{comment_id}",
+                            "type": "mission_reflection",
+                            "title": full_title if full_title else text[:80],
+                            "mission_task": full_title if full_title else text[:80],
+                            "analysis_goal": analysis.business_goal,
+                            "content": text,
+                            "excerpt": text[:160],
+                            "tags": [],
+                            "like_count": 0, "reply_count": 0,
+                            "likes": 0, "replies": 0,
+                            "pinned": False, "is_pinned": False,
+                            "hot": False,
+                            "view_count": 0,
+                            "has_liked": False, "liked_by_user": False,
+                            "chops_gifted": 0,
+                            "author": {
+                                "id": author.id,
+                                "name": author.name or "Member",
+                                "initials": (author.name or "M")[:2].upper(),
+                                "gradient": _AUTHOR_GRADIENTS[author.id % len(_AUTHOR_GRADIENTS)],
+                                "role": getattr(author, 'role', '') or 'Founder',
+                                "total_chops": author.total_chops or 0,
+                            },
+                            "channel": "reflections",
+                            "created_at": created_at,
+                            "timeAgo": created_at,
+                            "updated_at": None,
+                        })
+        _MISSION_REFLECTIONS_CACHE["data"] = reflections
+        _MISSION_REFLECTIONS_CACHE["expires_at"] = now + 60.0
+    except Exception as reflection_err:
+        logger.warning(f"Mission reflections fetch error: {reflection_err}")
+    return _MISSION_REFLECTIONS_CACHE["data"]
+
+
 @router.get("/discussions")
 async def get_discussions(
     request: Request,
@@ -1211,13 +1303,17 @@ async def get_discussions(
                         ]
                         if poll_pids:
                             poll_discussions = db.query(CommunityDiscussion).filter(CommunityDiscussion.id.in_(poll_pids)).all()
-                            poll_map = {p.id: _get_poll_payload(p, current_user=current_user) for p in poll_discussions}
+                            poll_map = {p.id: _get_poll_payload(p, current_user=current_user, db=db) for p in poll_discussions}
                             for item in items:
                                 if isinstance(item, dict) and item.get("id") in poll_map:
                                     item["poll"] = poll_map[item["id"]]
                     return cached
 
-        q = db.query(CommunityDiscussion)
+        # Eager load user and channel relationships to eliminate N+1 queries
+        q = db.query(CommunityDiscussion).options(
+            joinedload(CommunityDiscussion.user),
+            joinedload(CommunityDiscussion.channel)
+        )
         if channel_id:
             q = q.filter_by(channel_id=channel_id)
 
@@ -1262,70 +1358,12 @@ async def get_discussions(
 
         saved = bm_saved.union(tbl_saved)
 
-        result = [_discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user) for d in discussions]
+        result = [_discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db) for d in discussions]
 
-        # Include mission roadmap comments from users who opted in.
-        try:
-            opted_in_user_ids = db.query(UserSettings.user_id).filter(
-                UserSettings.show_mission_comments_in_community == True
-            ).all()
-            opted_in_ids = [row[0] for row in opted_in_user_ids]
-            if opted_in_ids:
-                analyses = (
-                    db.query(BusinessAnalysis, User)
-                    .join(User, BusinessAnalysis.user_id == User.id)
-                    .filter(BusinessAnalysis.user_id.in_(opted_in_ids))
-                    .all()
-                )
-                for analysis, author in analyses:
-                    up = analysis.user_progress or {}
-                    roadmap_comments = up.get('roadmap_comments', {}) if isinstance(up, dict) else {}
-                    if not isinstance(roadmap_comments, dict):
-                        continue
-                    mission_titles = {
-                        t['frontend_id']: t['text'] for t in _flatten_roadmap_tasks(analysis)
-                    }
-                    for task_id, comments in roadmap_comments.items():
-                        if not isinstance(comments, list):
-                            continue
-                        for comment in comments:
-                            text = comment.get('text', '').strip()
-                            if not text or len(text) < 5 or text.lower().strip('.!') in ('test', 'testing', 'tes', 'tesst', 'text', 'test2', 'tessssst', 'reesss', 'done', 'testtt'):
-                                continue
-                            created_at = comment.get('createdAt')
-                            comment_id = comment.get('id', f"rc_{analysis.id}_{task_id}")
-                            full_title = mission_titles.get(task_id) or ""
-                            result.append({
-                                "id": f"rc_{comment_id}",
-                                "type": "mission_reflection",
-                                "title": full_title if full_title else text[:80],
-                                "mission_task": full_title if full_title else text[:80],
-                                "analysis_goal": analysis.business_goal,
-                                "content": text,
-                                "excerpt": text[:160],
-                                "tags": [],
-                                "like_count": 0, "reply_count": 0,
-                                "likes": 0, "replies": 0,
-                                "pinned": False, "is_pinned": False,
-                                "hot": False,
-                                "view_count": 0,
-                                "has_liked": False, "liked_by_user": False,
-                                "chops_gifted": 0,
-                                "author": {
-                                    "id": author.id,
-                                    "name": author.name or "Member",
-                                    "initials": (author.name or "M")[:2].upper(),
-                                    "gradient": _AUTHOR_GRADIENTS[author.id % len(_AUTHOR_GRADIENTS)],
-                                    "role": getattr(author, 'role', '') or 'Founder',
-                                    "total_chops": author.total_chops or 0,
-                                },
-                                "channel": "reflections",
-                                "created_at": created_at,
-                                "timeAgo": created_at,
-                                "updated_at": None,
-                            })
-        except Exception as reflection_err:
-            logger.warning(f"Mission reflections fetch error: {reflection_err}")
+        # Fast cached mission roadmap reflections
+        cached_reflections = _get_cached_mission_reflections(db)
+        if cached_reflections:
+            result.extend(cached_reflections)
 
         # Interleave Geo-Weighted Builder Insights & Decision Engine Reflections into the discussion stream (4 Standard : 1 Insight : 4 Standard : 1 Reflection)
         try:
