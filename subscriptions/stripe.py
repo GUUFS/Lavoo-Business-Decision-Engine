@@ -2250,4 +2250,4 @@ async def payment_failed_notify(
     except Exception as e:
         db.rollback()
         logger.error(f"❌ payment-failed-notify error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))

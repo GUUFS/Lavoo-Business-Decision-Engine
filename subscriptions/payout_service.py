@@ -877,4 +877,4 @@ class PayoutService:
             if summary:
                 summary.paid_commissions -= amount
                 summary.pending_commissions += amount
-                summary.updated_at = now
+                summary.updated_at = now
