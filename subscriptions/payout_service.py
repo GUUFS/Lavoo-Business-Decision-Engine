@@ -6,7 +6,7 @@ import os
 import stripe
 import requests
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
 import logging
 import json
@@ -40,6 +40,37 @@ class PayoutService:
     """
     
     MIN_PAYOUT_AMOUNT = Decimal("5.00")  # Minimum $10 for payout
+
+    @staticmethod
+    def _send_payout_success_email(user_id: int, amount, currency: str, payout_id: int, processed_at) -> None:
+        """
+        Adapter for the payout-completed notification. Every payout path used
+        to queue `email_service.send_payout_success_email`, a function that
+        was never defined anywhere — evaluating that attribute raised
+        AttributeError inside the completion functions *before* their
+        db.commit(), so a payout that genuinely succeeded (money already
+        moved) could never be recorded as completed. Opens its own session
+        because it runs as a background task, after the request's session
+        has closed.
+        """
+        try:
+            from database.pg_connections import SessionLocal
+            with SessionLocal() as s:
+                user = s.query(User).filter(User.id == user_id).first()
+                payout = s.query(Payout).filter(Payout.id == payout_id).first()
+                if not user or not user.email:
+                    return
+                email_service.email_service.send_payout_processed(
+                    user_email=user.email,
+                    name=user.name or "there",
+                    amount=float(amount),
+                    currency=currency,
+                    payment_method=(payout.payment_method if payout else None) or "bank transfer",
+                    transaction_id=str(payout.provider_payout_id if payout and payout.provider_payout_id else payout_id),
+                    processing_date=(processed_at or datetime.now(timezone.utc)).strftime("%B %d, %Y"),
+                )
+        except Exception as e:
+            logger.error(f"Could not send payout success email for payout {payout_id}: {e}")
     
     @staticmethod
     def create_payout_request(user_id: int, amount: Decimal, payment_method: str,  # 'stripe' or 'flutterwave'   
@@ -208,7 +239,7 @@ class PayoutService:
             )
             
             background_tasks.add_task(
-                email_service.send_payout_success_email,
+                PayoutService._send_payout_success_email,
                 payout.user_id,
                 payout.amount,
                 payout.currency,
@@ -416,6 +447,13 @@ class PayoutService:
             logger.error(f"Payout {payout_id} not found")
             return
 
+        # The same outcome can now arrive twice (Flutterwave's webhook AND the
+        # polling reconciler below) — counting a success twice would add the
+        # amount to commission_summaries.paid_commissions twice.
+        if transfer_status == "successful" and payout.status == "completed":
+            logger.info(f"Flutterwave payout {payout_id} already completed — ignoring duplicate success")
+            return
+
         if transfer_status == "successful":
             payout.status = 'completed'
             payout.completed_at = datetime.now(timezone.utc)
@@ -442,7 +480,7 @@ class PayoutService:
             # Update summary
             PayoutService._update_summary_on_payout(payout, db)
             background_tasks.add_task(
-                email_service.send_payout_success_email,
+                PayoutService._send_payout_success_email,
                 payout.user_id,
                 payout.amount,
                 payout.currency,
@@ -465,6 +503,98 @@ class PayoutService:
         db.commit()
         logger.info(f"Flutterwave payout {payout_id} marked as {transfer_status}")
     
+
+    @staticmethod
+    def reconcile_flutterwave_payouts(
+        db: Session, background_tasks: BackgroundTasks, min_age_seconds: int = 90
+    ) -> Dict[str, int]:
+        """
+        Ask Flutterwave directly for the real outcome of every transfer we
+        still have at 'processing', instead of relying on its webhook alone.
+
+        A transfer request being *accepted* ("Transfer Queued Successfully")
+        says nothing about whether it later succeeds — e.g. it can still fail
+        with "Insufficient funds in customer wallet". Until now the only thing
+        that could move a payout out of 'processing' was Flutterwave's webhook
+        reaching us, and when it didn't (payout #29, #30, #31) the payout sat
+        at 'processing' and its commission at 'auto_settled' forever, even
+        though Flutterwave's own dashboard showed FAILED. This polls
+        GET /v3/transfers/:id and applies the same completion logic the
+        webhook would have, so our records converge on Flutterwave's.
+
+        Emails/alerts are queued onto `background_tasks`; the caller runs them.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=min_age_seconds)
+        stuck = db.query(Payout).filter(
+            Payout.payment_method == 'flutterwave',
+            Payout.status == 'processing',
+            Payout.provider_payout_id.isnot(None),
+            Payout.processed_at <= cutoff,
+        ).all()
+
+        counts = {"checked": 0, "completed": 0, "failed": 0, "still_pending": 0, "errors": 0}
+        headers = {"Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}"}
+
+        for payout in stuck:
+            counts["checked"] += 1
+            payout_id = payout.id
+            try:
+                resp = requests.get(
+                    f"{FLUTTERWAVE_BASE_URL}/transfers/{payout.provider_payout_id}",
+                    headers=headers, timeout=15,
+                )
+                if resp.status_code != 200:
+                    counts["errors"] += 1
+                    logger.warning(
+                        f"[FLW reconcile] payout={payout_id} transfer={payout.provider_payout_id} "
+                        f"lookup returned {resp.status_code}: {resp.text[:200]}"
+                    )
+                    continue
+
+                transfer = resp.json().get("data") or {}
+                status = str(transfer.get("status") or "").upper()
+
+                if status == "SUCCESSFUL":
+                    PayoutService.complete_flutterwave_payout(
+                        payout_id, background_tasks, "successful", db,
+                        settled_amount=transfer.get("amount"), fee=transfer.get("fee"),
+                    )
+                    counts["completed"] += 1
+                    logger.info(f"[FLW reconcile] payout={payout_id} -> completed")
+                elif status == "FAILED":
+                    reason = transfer.get("complete_message") or "Transfer failed at Flutterwave"
+                    PayoutService.complete_flutterwave_payout(
+                        payout_id, background_tasks, "failed", db, failure_reason=reason,
+                    )
+                    counts["failed"] += 1
+                    logger.warning(f"[FLW reconcile] payout={payout_id} -> failed: {reason}")
+
+                    admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
+                    background_tasks.add_task(
+                        email_service.email_service._send_email,
+                        to_email=admin_email,
+                        to_name="Lavoo Admin",
+                        subject=f"⚠️ Flutterwave payout #{payout_id} failed — {reason}",
+                        html_content=(
+                            f"<p>Flutterwave reports transfer {payout.provider_payout_id} "
+                            f"(payout #{payout_id}, {payout.amount} {payout.currency} to user "
+                            f"{payout.user_id}) as <b>FAILED</b>: {reason}.</p>"
+                            f"<p>The commission has been returned to <b>pending</b> so it can be "
+                            f"retried once the cause is fixed (e.g. fund the Flutterwave NGN wallet).</p>"
+                        ),
+                        text_content=(
+                            f"Flutterwave payout #{payout_id} FAILED: {reason}. The commission is "
+                            f"back to pending and can be retried."
+                        ),
+                    )
+                else:
+                    counts["still_pending"] += 1
+            except Exception as e:
+                counts["errors"] += 1
+                db.rollback()
+                logger.error(f"[FLW reconcile] payout={payout_id} error: {e}", exc_info=True)
+
+        return counts
 
     @staticmethod
     def complete_stripe_payout(payout_id: int, background_tasks: BackgroundTasks, status: str, db: Session) -> None:
@@ -494,7 +624,7 @@ class PayoutService:
             PayoutService._update_summary_on_payout(payout, db)
             
             background_tasks.add_task(
-                email_service.send_payout_success_email,
+                PayoutService._send_payout_success_email,
                 payout.user_id,
                 payout.amount,
                 payout.currency,

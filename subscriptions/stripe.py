@@ -2,6 +2,7 @@
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, timedelta, timezone
@@ -262,6 +263,25 @@ def resolve_stripe_subscription_state(user: User, db: Session) -> dict:
         f"stripe_active_no_db (will upsert)"
     )
     return {"case": "stripe_active_no_db", "stripe_sub": stripe_sub, "stripe_sub_id": sub_id}
+
+
+def _lock_user_billing(db: Session, user_id: int) -> None:
+    """
+    Serialise the two independent writers of a subscription payment — the
+    invoice.payment_succeeded webhook and the frontend's /confirm-subscription
+    call — per user. Both check "was this payment already recorded?" and then
+    insert; run concurrently (or back-to-back before either commits) they each
+    see nothing and each insert, which double-recorded one $1 payment as two
+    subscriptions, two commissions and two Flutterwave payouts.
+
+    A transaction-level advisory lock makes the second one wait until the first
+    has committed, so its "already recorded?" check (run after taking the lock)
+    sees the first one's row. Released automatically on commit/rollback.
+    """
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :uid)"),
+        {"ns": 7301, "uid": int(user_id)},
+    )
 
 
 def get_subscription_dates_from_stripe(subscription_result: dict, plan_type: str):
@@ -1344,6 +1364,7 @@ async def stripe_webhook(
             # payment_intent exists. Check all three identifiers so that
             # a subscription created by the API and then confirmed by the
             # webhook does not produce a second row.
+            _lock_user_billing(db, user.id)  # wait out an in-flight /confirm-subscription
             ident_checks = [payment_intent_id]
             if subscription_id:
                 ident_checks.append(subscription_id)
@@ -1381,7 +1402,10 @@ async def stripe_webhook(
             new_sub = Subscriptions(
                 user_id=user.id, subscription_plan=plan_type,
                 transaction_id=payment_intent_id,
-                tx_ref=f"RENEW-{user.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+                tx_ref=(
+                    f"{'STRIPE-INITIAL' if getattr(invoice, 'billing_reason', None) == 'subscription_create' else 'RENEW'}"
+                    f"-{user.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+                ),
                 amount=Decimal(str(amount_paid / 100)),
                 currency=currency.upper(),
                 status="completed", subscription_status="active",
@@ -1883,8 +1907,24 @@ async def confirm_subscription(
         amount = real_amount if real_amount > 0 else price_map.get(plan_type, 29.95)
         start_date, end_date = get_subscription_dates_from_stripe(subscription_details, plan_type)
 
+        # This payment may already have been recorded by the
+        # invoice.payment_succeeded webhook — which normally lands FIRST, the
+        # moment Stripe takes the payment, before the frontend's confirm call
+        # returns — and the webhook keys its row by the payment_intent /
+        # charge / *invoice* id, never the subscription id. Looking only for
+        # transaction_id == subscription_id therefore never found it, and
+        # this endpoint recorded the same payment a second time (with a
+        # second commission and a second payout). Take the same per-user lock
+        # the webhook takes, then look under every id the webhook could have
+        # used.
+        _lock_user_billing(db, user_id)
+        related_ids = {
+            request.subscription_id,
+            request.payment_intent_id,
+            subscription_details.get("latest_invoice_id"),
+        }
         existing = db.query(Subscriptions).filter(
-            Subscriptions.transaction_id == request.subscription_id
+            Subscriptions.transaction_id.in_([i for i in related_ids if i])
         ).first()
 
         if existing:
