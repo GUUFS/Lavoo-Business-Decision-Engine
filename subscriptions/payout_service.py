@@ -468,15 +468,34 @@ class PayoutService:
                     f"still show the requested amount; provider_settled_amount now has the real figure"
                 )
 
-            # Update commissions
+            payout.failure_reason = None
+
+            # A payout that failed and was later retried successfully has no
+            # commissions linked anymore (failure detached them). Re-link the
+            # ones it was covering — otherwise the referrer would be paid by
+            # this transfer AND their still-'pending' commission paid again.
             commissions = db.query(Commission).filter(
                 Commission.payout_id == payout.id
             ).all()
-            
+            if not commissions:
+                commissions = PayoutService._relink_commissions_from_history(payout, db)
+                if not commissions:
+                    PayoutService._queue_admin_alert(
+                        background_tasks,
+                        subject=f"⚠️ Flutterwave payout #{payout_id} succeeded but has no commission to settle",
+                        body=(
+                            f"Flutterwave reports payout #{payout_id} ({payout.amount} {payout.currency}, "
+                            f"user {payout.user_id}) as SUCCESSFUL, but no pending commission is linked to it "
+                            f"(already settled another way, or this was a duplicate transfer). "
+                            f"Money has left the Flutterwave wallet — please check this one manually."
+                        ),
+                    )
+
             for commission in commissions:
                 commission.status = 'paid'
                 commission.paid_at = datetime.now(timezone.utc)
-            
+            db.flush()  # session has autoflush off; the summary query below reads the DB
+
             # Update summary
             PayoutService._update_summary_on_payout(payout, db)
             background_tasks.add_task(
@@ -505,90 +524,203 @@ class PayoutService:
     
 
     @staticmethod
+    def _queue_admin_alert(background_tasks: BackgroundTasks, subject: str, body: str) -> None:
+        admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
+        background_tasks.add_task(
+            email_service.email_service._send_email,
+            to_email=admin_email,
+            to_name="Lavoo Admin",
+            subject=subject,
+            html_content=f"<p>{body}</p>",
+            text_content=body,
+        )
+
+    # The linkage is kept inside the payout's existing provider_response JSON
+    # (under a "lavoo" key) rather than a new column: a new column on this hot
+    # table would make every Payout query fail on a deploy where the migration
+    # hadn't landed yet. provider_response is diagnostic-only and its one
+    # external reader (admin/revenue.py) just parses and returns the JSON.
+    @staticmethod
+    def _response_blob(payout: Payout) -> Dict[str, Any]:
+        try:
+            blob = json.loads(payout.provider_response or "{}")
+        except (TypeError, ValueError):
+            blob = {"raw": payout.provider_response}
+        return blob if isinstance(blob, dict) else {"raw": blob}
+
+    @staticmethod
+    def _remember_commissions(payout: Payout, commission_ids: list) -> None:
+        blob = PayoutService._response_blob(payout)
+        blob.setdefault("lavoo", {})["commission_ids"] = [int(i) for i in commission_ids]
+        payout.provider_response = json.dumps(blob)
+
+    @staticmethod
+    def _remembered_commission_ids(payout: Payout) -> list:
+        ids = (PayoutService._response_blob(payout).get("lavoo") or {}).get("commission_ids") or []
+        return [int(i) for i in ids]
+
+    @staticmethod
+    def _record_provider_attempt(payout: Payout, attempt: Dict[str, Any]) -> None:
+        """Store the transfer attempt that decided this payout, keeping our linkage."""
+        keep = PayoutService._response_blob(payout).get("lavoo")
+        blob: Dict[str, Any] = {"status": "success", "data": attempt}
+        if keep:
+            blob["lavoo"] = keep
+        payout.provider_response = json.dumps(blob)
+
+    @staticmethod
+    def _relink_commissions_from_history(payout: Payout, db: Session) -> list:
+        """
+        Re-attach the commissions a failed payout remembered (see
+        reverse_payout), but only those still waiting: pending and unlinked. A
+        commission that was paid some other way in the meantime is left alone
+        so it can't be settled twice.
+        """
+        ids = PayoutService._remembered_commission_ids(payout)
+        if not ids:
+            return []
+        commissions = db.query(Commission).filter(
+            Commission.id.in_(ids),
+            Commission.payout_id.is_(None),
+            Commission.status == 'pending',
+        ).all()
+        for commission in commissions:
+            commission.payout_id = payout.id
+        db.flush()
+        return commissions
+
+    @staticmethod
+    def _flw_get(path: str) -> Optional[Dict[str, Any]]:
+        resp = requests.get(
+            f"{FLUTTERWAVE_BASE_URL}{path}",
+            headers={"Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            logger.warning(f"[FLW reconcile] GET {path} -> {resp.status_code}: {resp.text[:200]}")
+            return None
+        return resp.json()
+
+    @staticmethod
+    def _latest_flutterwave_attempt(transfer_id: str) -> Optional[Dict[str, Any]]:
+        """
+        The freshest view of a transfer. Retrying a failed transfer from
+        Flutterwave's dashboard doesn't change the original transfer (it stays
+        FAILED forever) — it creates a new attempt listed under
+        GET /transfers/:id/retries. So the truth is the latest retry if there
+        is one, otherwise the original itself.
+        """
+        retries = (PayoutService._flw_get(f"/transfers/{transfer_id}/retries") or {}).get("data") or []
+        attempts = [r for r in retries if isinstance(r, dict) and (r.get("id") or r.get("status"))]
+        if attempts:
+            latest = sorted(
+                attempts, key=lambda r: (str(r.get("created_at") or ""), int(r.get("id") or 0))
+            )[-1]
+            if not latest.get("status") and latest.get("id"):
+                latest = (PayoutService._flw_get(f"/transfers/{latest['id']}") or {}).get("data") or latest
+            return latest
+        return (PayoutService._flw_get(f"/transfers/{transfer_id}") or {}).get("data")
+
+    @staticmethod
     def reconcile_flutterwave_payouts(
-        db: Session, background_tasks: BackgroundTasks, min_age_seconds: int = 90
+        db: Session, background_tasks: BackgroundTasks, min_age_seconds: int = 90,
+        retry_lookback_days: int = 14, processing_lookback_days: int = 30,
+        payout_ids: Optional[list] = None,
     ) -> Dict[str, int]:
         """
-        Ask Flutterwave directly for the real outcome of every transfer we
-        still have at 'processing', instead of relying on its webhook alone.
+        Ask Flutterwave directly for the real outcome of our transfers, instead
+        of relying on its webhook alone. Covers two cases:
 
-        A transfer request being *accepted* ("Transfer Queued Successfully")
-        says nothing about whether it later succeeds — e.g. it can still fail
-        with "Insufficient funds in customer wallet". Until now the only thing
-        that could move a payout out of 'processing' was Flutterwave's webhook
-        reaching us, and when it didn't (payout #29, #30, #31) the payout sat
-        at 'processing' and its commission at 'auto_settled' forever, even
-        though Flutterwave's own dashboard showed FAILED. This polls
-        GET /v3/transfers/:id and applies the same completion logic the
-        webhook would have, so our records converge on Flutterwave's.
+        1. Payouts still 'processing': a transfer being *accepted* says nothing
+           about whether it later succeeds (e.g. it can still fail with
+           "Insufficient funds"). When the webhook doesn't reach us, the payout
+           and its 'auto_settled' commission sat there forever (payouts
+           #29/#30/#31) while Flutterwave's dashboard showed FAILED.
+        2. Payouts we already marked 'failed': when someone clicks "Retry
+           transfer" in Flutterwave's dashboard after funding the wallet, the
+           retry succeeds there but nothing tells us. This follows retries so
+           the payout completes and its commission is settled, or shows as
+           'processing' again while the retry is in flight.
 
         Emails/alerts are queued onto `background_tasks`; the caller runs them.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=min_age_seconds)
-        stuck = db.query(Payout).filter(
+        now = datetime.now(timezone.utc)
+        counts = {"checked": 0, "completed": 0, "failed": 0, "retrying": 0, "still_pending": 0, "errors": 0}
+
+        processing = db.query(Payout).filter(
             Payout.payment_method == 'flutterwave',
             Payout.status == 'processing',
             Payout.provider_payout_id.isnot(None),
-            Payout.processed_at <= cutoff,
-        ).all()
+            Payout.processed_at <= now - timedelta(seconds=min_age_seconds),
+            # Old sandbox-era payouts (e.g. December test transfers) sit at
+            # 'processing' forever and can't be looked up on the live API —
+            # polling them every cycle would only ever error.
+            Payout.processed_at >= now - timedelta(days=processing_lookback_days),
+        )
+        failed_recent = db.query(Payout).filter(
+            Payout.payment_method == 'flutterwave',
+            Payout.status == 'failed',
+            Payout.provider_payout_id.isnot(None),
+            Payout.created_at >= now - timedelta(days=retry_lookback_days),
+        )
+        if payout_ids is not None:
+            processing = processing.filter(Payout.id.in_(payout_ids))
+            failed_recent = failed_recent.filter(Payout.id.in_(payout_ids))
+        processing = processing.all()
+        failed_recent = failed_recent.limit(50).all()
 
-        counts = {"checked": 0, "completed": 0, "failed": 0, "still_pending": 0, "errors": 0}
-        headers = {"Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}"}
-
-        for payout in stuck:
+        for payout in [*processing, *failed_recent]:
             counts["checked"] += 1
             payout_id = payout.id
+            was_failed = payout.status == 'failed'
             try:
-                resp = requests.get(
-                    f"{FLUTTERWAVE_BASE_URL}/transfers/{payout.provider_payout_id}",
-                    headers=headers, timeout=15,
-                )
-                if resp.status_code != 200:
+                attempt = PayoutService._latest_flutterwave_attempt(payout.provider_payout_id)
+                if not attempt:
                     counts["errors"] += 1
-                    logger.warning(
-                        f"[FLW reconcile] payout={payout_id} transfer={payout.provider_payout_id} "
-                        f"lookup returned {resp.status_code}: {resp.text[:200]}"
-                    )
                     continue
-
-                transfer = resp.json().get("data") or {}
-                status = str(transfer.get("status") or "").upper()
+                status = str(attempt.get("status") or "").upper()
 
                 if status == "SUCCESSFUL":
+                    PayoutService._record_provider_attempt(payout, attempt)
                     PayoutService.complete_flutterwave_payout(
                         payout_id, background_tasks, "successful", db,
-                        settled_amount=transfer.get("amount"), fee=transfer.get("fee"),
+                        settled_amount=attempt.get("amount"), fee=attempt.get("fee"),
                     )
                     counts["completed"] += 1
-                    logger.info(f"[FLW reconcile] payout={payout_id} -> completed")
+                    logger.info(
+                        f"[FLW reconcile] payout={payout_id} -> completed"
+                        + (f" (via retry transfer {attempt.get('id')})" if was_failed else "")
+                    )
                 elif status == "FAILED":
-                    reason = transfer.get("complete_message") or "Transfer failed at Flutterwave"
+                    if was_failed:
+                        continue  # nothing new — still the failure we already recorded
+                    reason = attempt.get("complete_message") or "Transfer failed at Flutterwave"
                     PayoutService.complete_flutterwave_payout(
                         payout_id, background_tasks, "failed", db, failure_reason=reason,
                     )
                     counts["failed"] += 1
                     logger.warning(f"[FLW reconcile] payout={payout_id} -> failed: {reason}")
-
-                    admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
-                    background_tasks.add_task(
-                        email_service.email_service._send_email,
-                        to_email=admin_email,
-                        to_name="Lavoo Admin",
+                    PayoutService._queue_admin_alert(
+                        background_tasks,
                         subject=f"⚠️ Flutterwave payout #{payout_id} failed — {reason}",
-                        html_content=(
-                            f"<p>Flutterwave reports transfer {payout.provider_payout_id} "
-                            f"(payout #{payout_id}, {payout.amount} {payout.currency} to user "
-                            f"{payout.user_id}) as <b>FAILED</b>: {reason}.</p>"
-                            f"<p>The commission has been returned to <b>pending</b> so it can be "
-                            f"retried once the cause is fixed (e.g. fund the Flutterwave NGN wallet).</p>"
-                        ),
-                        text_content=(
-                            f"Flutterwave payout #{payout_id} FAILED: {reason}. The commission is "
-                            f"back to pending and can be retried."
+                        body=(
+                            f"Flutterwave reports transfer {payout.provider_payout_id} (payout #{payout_id}, "
+                            f"{payout.amount} {payout.currency}, user {payout.user_id}) as FAILED: {reason}. "
+                            f"The commission is back to pending. Once the cause is fixed (e.g. the Flutterwave "
+                            f"NGN wallet is funded) use 'Retry transfer' on Flutterwave's dashboard — Lavoo will "
+                            f"pick the retry up automatically."
                         ),
                     )
                 else:
-                    counts["still_pending"] += 1
+                    # NEW / PENDING / QUEUED — the transfer (or its retry) is still in flight.
+                    if was_failed:
+                        payout.status = 'processing'
+                        payout.failure_reason = "Retry in progress at Flutterwave"
+                        db.commit()
+                        counts["retrying"] += 1
+                        logger.info(f"[FLW reconcile] payout={payout_id} retry in flight -> processing")
+                    else:
+                        counts["still_pending"] += 1
             except Exception as e:
                 counts["errors"] += 1
                 db.rollback()
@@ -702,6 +834,15 @@ class PayoutService:
         commissions = db.query(Commission).filter(
             Commission.payout_id == payout.id
         ).all()
+
+        # Remember which commissions this payout was covering before they're
+        # detached, so a later successful RETRY of this same transfer (from
+        # Flutterwave's dashboard) can settle exactly these instead of being
+        # paid out again. Only overwrite when there is something to record: a
+        # payout revived for a retry and failing again has nothing linked
+        # anymore, and must not erase what it remembered the first time.
+        if commissions:
+            PayoutService._remember_commissions(payout, [c.id for c in commissions])
 
         for commission in commissions:
             commission.payout_id = None

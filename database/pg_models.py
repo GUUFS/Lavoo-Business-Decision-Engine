@@ -2263,4 +2263,4 @@ class ContactMessage(Base):
     notes = Column(Text, nullable=True)
     admin_replies = Column(JSON, nullable=True, default=list)
     last_replied_at = Column(DateTime(timezone=True), nullable=True)
-    last_replied_by = Column(String(255), nullable=True)
+    last_replied_by = Column(String(255), nullable=True)

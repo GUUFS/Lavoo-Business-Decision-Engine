@@ -1399,13 +1399,17 @@ async def stripe_webhook(
             amount_paid = _invoice_val(invoice, 'amount_paid', 'total', 'amount_due')
             currency = getattr(invoice, 'currency', None) or 'usd'
 
+            # Stripe states which this is: 'subscription_create' is the
+            # customer's first-ever invoice on this subscription; anything
+            # else ('subscription_cycle', 'subscription_update', ...) is a
+            # later charge. Previously every paid invoice was recorded and
+            # announced as a "renewal", including the very first payment.
+            is_initial_payment = getattr(invoice, 'billing_reason', None) == 'subscription_create'
+
             new_sub = Subscriptions(
                 user_id=user.id, subscription_plan=plan_type,
                 transaction_id=payment_intent_id,
-                tx_ref=(
-                    f"{'STRIPE-INITIAL' if getattr(invoice, 'billing_reason', None) == 'subscription_create' else 'RENEW'}"
-                    f"-{user.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-                ),
+                tx_ref=f"{'STRIPE-INITIAL' if is_initial_payment else 'RENEW'}-{user.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
                 amount=Decimal(str(amount_paid / 100)),
                 currency=currency.upper(),
                 status="completed", subscription_status="active",
@@ -1417,14 +1421,25 @@ async def stripe_webhook(
             from subscriptions.commission_service import CommissionService
             CommissionService.calculate_commission(subscription=new_sub, db=db)
             db.commit()
-            logger.info(f"✅ Renewal recorded: user={user.email} (id={user.id}), plan={plan_type}, {start_date.date()} → {end_date.date()}")
-
-            NotificationService.create_notification(
-                db=db, user_id=user.id, type="subscription_renewed",
-                title="✅ Subscription Renewed",
-                message=f"Your {plan_type} subscription has been renewed until {end_date.strftime('%B %d, %Y')}.",
-                link="/dashboard"
+            logger.info(
+                f"✅ {'First payment' if is_initial_payment else 'Renewal'} recorded: user={user.email} "
+                f"(id={user.id}), plan={plan_type}, {start_date.date()} → {end_date.date()}"
             )
+
+            if is_initial_payment:
+                NotificationService.create_notification(
+                    db=db, user_id=user.id, type="subscription_activated",
+                    title="🎉 Subscription Activated",
+                    message=f"Your {plan_type} subscription is active until {end_date.strftime('%B %d, %Y')}.",
+                    link="/dashboard"
+                )
+            else:
+                NotificationService.create_notification(
+                    db=db, user_id=user.id, type="subscription_renewed",
+                    title="✅ Subscription Renewed",
+                    message=f"Your {plan_type} subscription has been renewed until {end_date.strftime('%B %d, %Y')}.",
+                    link="/dashboard"
+                )
             db.commit()
 
         elif event.type == "invoice.payment_failed":
