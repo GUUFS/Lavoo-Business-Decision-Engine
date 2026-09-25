@@ -1118,18 +1118,22 @@ async def flutterwave_reconcile_payouts(
     db: Session = Depends(get_db),
 ):
     """
-    Admin-only: run the same Flutterwave payout reconciliation the background
-    job runs every couple of minutes, right now. Asks Flutterwave for the real
-    status of every payout still at 'processing' and syncs our records to it.
+    Admin-only: run both payout checks right now (the background jobs do the
+    same on a timer).
+    - flutterwave: asks Flutterwave for the real status of payouts we sent.
+    - stripe: asks Stripe whether any transfer we sent has been reversed.
     """
     if not getattr(current_user, "is_admin", False):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     from subscriptions.payout_service import PayoutService
-    counts = await asyncio.to_thread(
+    flutterwave_counts = await asyncio.to_thread(
         PayoutService.reconcile_flutterwave_payouts, db, background_tasks, 0
     )
-    return {"status": "success", "result": counts}
+    stripe_counts = await asyncio.to_thread(
+        PayoutService.reconcile_stripe_payouts, db, background_tasks
+    )
+    return {"status": "success", "result": flutterwave_counts, "stripe": stripe_counts}
 
 
 @router.get("/health")

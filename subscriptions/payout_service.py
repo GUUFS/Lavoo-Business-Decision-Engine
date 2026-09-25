@@ -75,11 +75,12 @@ class PayoutService:
     @staticmethod
     def get_platform_stripe_available(currency: str) -> Optional[int]:
         """
-        The platform's AVAILABLE Stripe balance in `currency`, in minor units
-        (pence/cents), or None when it can't be read. A Stripe Transfer can
-        only draw on available funds — money still "pending" settlement
-        doesn't count — so paying a referrer from a platform whose balance is
-        empty just fails; check first instead of creating a doomed payout.
+        How much Stripe money Lavoo can spend right now, in pence/cents.
+        Returns None if Stripe can't be reached.
+
+        A Stripe transfer can only use "available" money. Money that is still
+        "pending" (not yet settled) can't be sent, so we check first instead
+        of trying a payout that is bound to fail.
         """
         try:
             balance = stripe.Balance.retrieve(api_key=os.getenv("STRIPE_SECRET_KEY"))
@@ -98,20 +99,19 @@ class PayoutService:
         existing_transfer: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Pay a referrer by moving `payout.amount` into their Stripe Connect
-        account with ONE idempotent Transfer. Used for the automatic
-        commission payout (Flutterwave/NGN revenue -> a Stripe-only referrer).
+        Send a referrer their money with one Stripe transfer into their
+        Stripe Connect account. Stripe then pays it on to their bank on the
+        account's normal payout schedule.
 
-        Deliberately not process_stripe_payout(): that one creates a Transfer
-        and then a second, manual Payout on the connected account, so if the
-        Payout step failed (e.g. under a bank's minimum) the money had ALREADY
-        moved while our record said "failed" — a retry would then pay twice.
-        Here the Transfer is the whole operation: from the connected account's
-        Stripe balance, Stripe pays the referrer's bank on its own payout
-        schedule. The idempotency key is derived from our payout id, so
-        repeating this call for the same payout can never send money twice.
+        We do this in one step on purpose. The older process_stripe_payout()
+        makes a transfer and then a second "payout". If that second step
+        failed, the money had already moved but we recorded "failed", and a
+        retry would pay the person twice.
 
-        manage_transaction: same meaning as process_flutterwave_payout.
+        The idempotency key means: if this exact request is sent again,
+        Stripe returns the first result instead of sending money again.
+
+        manage_transaction: same meaning as in process_flutterwave_payout.
         """
         try:
             payout_account = db.query(PayoutAccount).filter(
@@ -831,6 +831,73 @@ class PayoutService:
                 counts["errors"] += 1
                 db.rollback()
                 logger.error(f"[FLW reconcile] payout={payout_id} error: {e}", exc_info=True)
+
+        return counts
+
+    @staticmethod
+    def reconcile_stripe_payouts(
+        db: Session, background_tasks: BackgroundTasks,
+        lookback_days: int = 30, payout_ids: Optional[list] = None,
+    ) -> Dict[str, int]:
+        """
+        Check our recent Stripe payouts against Stripe and fix any that
+        Stripe has taken back.
+
+        Why: a Stripe transfer succeeds straight away, so we mark the payout
+        "completed". But Stripe (or someone in the Stripe dashboard) can
+        still REVERSE a transfer later, which returns the money to us. Nothing
+        told us when that happened, so we would keep showing the referrer as
+        paid. Now we ask Stripe. If a transfer was reversed, the payout is
+        marked failed and the commission goes back to pending.
+
+        We do not re-send a reversed transfer automatically. A person decides.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        query = db.query(Payout).filter(
+            Payout.payment_method == 'stripe',
+            Payout.status == 'completed',
+            Payout.provider_payout_id.like('tr_%'),   # only transfers made by process_stripe_transfer_payout
+            Payout.completed_at >= cutoff,
+        )
+        if payout_ids is not None:
+            query = query.filter(Payout.id.in_(payout_ids))
+
+        counts = {"checked": 0, "reversed": 0, "partly_reversed": 0, "errors": 0}
+        for payout in query.limit(100).all():
+            counts["checked"] += 1
+            payout_id = payout.id
+            try:
+                transfer = stripe.Transfer.retrieve(payout.provider_payout_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
+                transfer = transfer.to_dict() if hasattr(transfer, "to_dict") else dict(transfer)
+                amount = int(transfer.get("amount") or 0)
+                amount_reversed = int(transfer.get("amount_reversed") or 0)
+
+                if amount and amount_reversed >= amount:
+                    reason = "Stripe reversed this transfer (the money was returned to Lavoo)"
+                    PayoutService.reverse_payout(payout_id, reason, db)
+                    counts["reversed"] += 1
+                    logger.warning(f"[Stripe reconcile] payout={payout_id} transfer={payout.provider_payout_id} REVERSED")
+                    PayoutService._queue_admin_alert(
+                        background_tasks,
+                        subject=f"⚠️ Stripe reversed the transfer for payout #{payout_id}",
+                        body=(
+                            f"Stripe transfer {payout.provider_payout_id} ({payout.amount} {payout.currency}, "
+                            f"user {payout.user_id}) was reversed. The payout is now marked failed and the "
+                            f"commission is back to pending. It will NOT be re-sent automatically. If the "
+                            f"referrer is still owed this money, pay it manually."
+                        ),
+                    )
+                elif amount_reversed > 0:
+                    # Only part of it was taken back. Log it; a person should look.
+                    counts["partly_reversed"] += 1
+                    logger.warning(
+                        f"[Stripe reconcile] payout={payout_id} transfer={payout.provider_payout_id} "
+                        f"PARTLY reversed ({amount_reversed} of {amount}) — needs a manual look"
+                    )
+            except Exception as e:
+                counts["errors"] += 1
+                db.rollback()
+                logger.error(f"[Stripe reconcile] payout={payout_id} error: {e}", exc_info=True)
 
         return counts
 

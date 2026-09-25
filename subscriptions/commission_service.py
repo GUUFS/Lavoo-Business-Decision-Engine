@@ -340,18 +340,15 @@ class CommissionService:
     @staticmethod
     def _attempt_stripe_immediate_payout(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
         """
-        Pay a commission to a referrer whose payout method is Stripe Connect —
-        the Flutterwave -> Stripe direction (e.g. a UK referrer whose referred
-        user paid in NGN). The commission (any currency) is converted to the
-        connected account's own currency at Flutterwave's live rate and sent
-        as one idempotent Stripe Transfer (see PayoutService.
-        process_stripe_transfer_payout).
+        Pay a commission to a referrer who is paid through Stripe Connect.
+        Example: a UK referrer whose referred user paid in Naira.
 
-        Same contract as _attempt_immediate_payout: returns the new Payout's
-        id on success, None on anything else, never raises. On None the
-        commission is untouched ('pending') and is picked up again by the
-        settlement job once whatever blocked it (typically the platform's
-        Stripe balance) is fixed.
+        Steps: convert the amount to the referrer's Stripe currency, check we
+        have enough Stripe balance, then send one Stripe transfer.
+
+        Returns the payout id if it worked, or None if not. It never raises.
+        On None the commission stays 'pending', and the retry job tries it
+        again later (for example once the Stripe balance has been topped up).
         """
         try:
             from sqlalchemy import text
@@ -377,10 +374,17 @@ class CommissionService:
                 )
                 return None
 
-            # Serialise per commission and re-read it: this can be reached
-            # from a request AND the settlement job (and Railway may run more
-            # than one instance), and a commission must only ever be paid once.
+            # LOCK: only one process may pay this commission at a time.
+            # Two things can try to pay the same commission together, for
+            # example a web request and the 10-minute retry job (or two copies
+            # of the server). The lock makes the second one wait. By the time
+            # it gets its turn, the first has finished and the commission is
+            # already paid, so the second sees that below and stops.
+            # 7302 = our "commission payout" lock group. The commission id
+            # picks the exact lock inside that group. The lock frees itself
+            # when this database transaction ends.
             db.execute(text("SELECT pg_advisory_xact_lock(7302, :cid)"), {"cid": int(commission.id)})
+            # Reload the commission: another process may have paid it while we waited.
             db.refresh(commission)
             if commission.payout_id is not None or (commission.status or "").lower() != "pending":
                 logger.info(f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} already handled (status={commission.status})")
@@ -422,12 +426,12 @@ class CommissionService:
                 logger.warning(f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} converts to less than 0.01 {target_currency}")
                 return None
 
-            # Before sending anything, ask Stripe whether this commission was
-            # already paid. Idempotency keys only last 24h and our own records
-            # can lag (e.g. the transfer went through but the DB commit after
-            # it failed), so a later retry could otherwise pay it twice.
+            # Ask Stripe if this commission was already paid, before sending.
+            # Our own database can be behind Stripe (for example the money was
+            # sent but saving it here failed), so we trust Stripe's record.
             transfer_group = f"LAVOO-COMMISSION-{commission.id}"
-            prior_transfer = None
+            prior_transfer = None      # a transfer that is still in place
+            reversed_transfer = None   # a transfer Stripe took back
             try:
                 found = stripe.Transfer.list(
                     destination=stripe_account.stripe_account_id, transfer_group=transfer_group,
@@ -435,12 +439,24 @@ class CommissionService:
                 )
                 for t in found.data:
                     t = t.to_dict() if hasattr(t, "to_dict") else dict(t)
-                    if not t.get("reversed"):
+                    if t.get("reversed"):
+                        reversed_transfer = reversed_transfer or t
+                    else:
                         prior_transfer = t
                         break
             except Exception as lookup_err:
-                # Can't rule out a prior payment -> don't risk paying twice.
+                # If we can't check, we can't be sure it wasn't paid, so don't send.
                 logger.warning(f"[BUILDER BONUS] could not check Stripe for an existing transfer for commission {commission.id}: {lookup_err} — leaving pending")
+                return None
+
+            if reversed_transfer and not prior_transfer:
+                # It was paid once and then taken back (by a person, usually on
+                # purpose). Do NOT send it again automatically. A human decides.
+                logger.warning(
+                    f"[BUILDER BONUS] commission {commission.id} was already sent (transfer "
+                    f"{reversed_transfer.get('id')}) and Stripe reversed it — not sending again. "
+                    f"Review it and pay manually if it is still owed."
+                )
                 return None
 
             available = None if prior_transfer else PayoutService.get_platform_stripe_available(target_currency)
@@ -586,10 +602,11 @@ class CommissionService:
                 CommissionService._last_waiting_alert = now
                 CommissionService._alert_admin(
                     f"⏳ {counts['waiting']} referral payout(s) waiting to be sent via Stripe",
-                    f"{counts['waiting']} pending commission(s) could not be paid to Stripe-connected referrers "
-                    f"(most often the platform's available Stripe balance is too low — Dashboard > Balances > "
-                    f"Add to balance). They are retried every 10 minutes and will be paid automatically once "
-                    f"the cause clears. See the [stripe-settle-job] / [BUILDER BONUS] log lines for details.",
+                    f"{counts['waiting']} pending commission(s) could not be paid to Stripe-connected referrers. "
+                    f"Most often the available Stripe balance is too low (Dashboard > Balances > Add to balance). "
+                    f"They are retried every 10 minutes and paid automatically once the cause clears. "
+                    f"One exception: a transfer that Stripe reversed is never re-sent automatically, so it "
+                    f"needs a manual decision. The [BUILDER BONUS] log lines say which case each one is.",
                 )
         return counts
 

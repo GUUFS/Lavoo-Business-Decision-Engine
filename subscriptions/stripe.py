@@ -267,16 +267,16 @@ def resolve_stripe_subscription_state(user: User, db: Session) -> dict:
 
 def _lock_user_billing(db: Session, user_id: int) -> None:
     """
-    Serialise the two independent writers of a subscription payment — the
-    invoice.payment_succeeded webhook and the frontend's /confirm-subscription
-    call — per user. Both check "was this payment already recorded?" and then
-    insert; run concurrently (or back-to-back before either commits) they each
-    see nothing and each insert, which double-recorded one $1 payment as two
-    subscriptions, two commissions and two Flutterwave payouts.
+    Make sure only one process records a payment for this user at a time.
 
-    A transaction-level advisory lock makes the second one wait until the first
-    has committed, so its "already recorded?" check (run after taking the lock)
-    sees the first one's row. Released automatically on commit/rollback.
+    Two things record every subscription payment: the Stripe webhook and the
+    website's confirm call. Both first ask "is this payment already saved?"
+    and, if not, save it. When they ran at the same moment, both answered
+    "no" and both saved, so one payment was recorded twice.
+
+    This takes a lock named after the user. The second process waits until the
+    first has finished saving, so when it asks "is it already saved?" the
+    answer is correctly "yes". The lock frees itself when the transaction ends.
     """
     db.execute(
         text("SELECT pg_advisory_xact_lock(:ns, :uid)"),
@@ -1922,16 +1922,12 @@ async def confirm_subscription(
         amount = real_amount if real_amount > 0 else price_map.get(plan_type, 29.95)
         start_date, end_date = get_subscription_dates_from_stripe(subscription_details, plan_type)
 
-        # This payment may already have been recorded by the
-        # invoice.payment_succeeded webhook — which normally lands FIRST, the
-        # moment Stripe takes the payment, before the frontend's confirm call
-        # returns — and the webhook keys its row by the payment_intent /
-        # charge / *invoice* id, never the subscription id. Looking only for
-        # transaction_id == subscription_id therefore never found it, and
-        # this endpoint recorded the same payment a second time (with a
-        # second commission and a second payout). Take the same per-user lock
-        # the webhook takes, then look under every id the webhook could have
-        # used.
+        # The Stripe webhook usually saves this payment first (it arrives the
+        # moment Stripe takes the money), and it saves it under the invoice id,
+        # not the subscription id. So we take the same lock as the webhook and
+        # then look for the payment under every id it could have used. If we
+        # only looked under the subscription id we would miss it and save the
+        # same payment a second time.
         _lock_user_billing(db, user_id)
         related_ids = {
             request.subscription_id,

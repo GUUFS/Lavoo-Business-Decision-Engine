@@ -770,6 +770,28 @@ async def run_stripe_commission_settlement_job():
             logger.error("[stripe-settle-job] error: %s", exc)
 
 
+async def run_stripe_payout_reconcile_job():
+    """
+    Runs every 30 minutes. Checks our recent Stripe payouts against Stripe and
+    fixes any transfer that Stripe has reversed (see
+    PayoutService.reconcile_stripe_payouts).
+    """
+    from fastapi import BackgroundTasks
+    while True:
+        await asyncio.sleep(30 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.payout_service import PayoutService
+            bg = BackgroundTasks()
+            with SessionLocal() as db:
+                counts = await asyncio.to_thread(PayoutService.reconcile_stripe_payouts, db, bg)
+            if counts["checked"]:
+                logger.info("[stripe-reconcile-job] %s", counts)
+            await bg()
+        except Exception as exc:
+            logger.error("[stripe-reconcile-job] error: %s", exc)
+
+
 def run_heavy_schema_migrations():
     """
     Background task that performs all non-critical, potentially slow schema
@@ -1325,6 +1347,7 @@ async def startup_event():
     asyncio.create_task(run_scheduled_voo_bot_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_stripe_commission_settlement_job())
+    asyncio.create_task(run_stripe_payout_reconcile_job())
 
     try:
         # --- MINIMAL WORK REQUIRED FOR "Application startup complete" ---
