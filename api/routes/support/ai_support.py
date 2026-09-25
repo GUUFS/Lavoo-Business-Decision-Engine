@@ -137,9 +137,16 @@ def _generate_humanized_support_reply(
     conversation_history: Optional[str] = None
 ) -> str:
     """
-    Generates a human-written, warm, and accurate support answer using xAI Grok.
+    Generates a human-written, warm, and accurate support answer using NVIDIA NIM LLM
+    (or xAI Grok as configurable toggle/fallback).
     """
-    api_key = os.getenv("XAI_API_KEY")
+    nvidia_key = os.getenv("NVIDIA_API_KEY")
+    xai_key = os.getenv("XAI_API_KEY")
+    preferred_provider = os.getenv("CUSTOMER_SERVICE_LLM_PROVIDER", os.getenv("VOO_LLM_PROVIDER", "")).strip().lower()
+
+    if not preferred_provider:
+        preferred_provider = "nvidia" if nvidia_key else "grok"
+
     display_name = user_name.strip() if user_name else "there"
 
     fallback_reply = (
@@ -149,49 +156,52 @@ def _generate_humanized_support_reply(
         f"Please let me know if this helps or if you need any further assistance. We are happy to help!"
     )
 
-    if not api_key:
+    if not nvidia_key and not xai_key:
         return _normalize_support_paragraphs(fallback_reply)
 
-    try:
-        from openai import OpenAI
+    system_prompt = (
+        "You are a helpful, empathetic, and knowledgeable Senior Support Specialist on the Lavoo team replying to a user support ticket. "
+        "Your replies must sound 100% human, personal, and authentic.\n\n"
+        "STRICT RULES:\n"
+        "1. NEVER identify as an AI, bot, or language model. Write as an actual human team member on the Lavoo engineering & support team.\n"
+        "2. Never use generic robotic intros like 'Certainly!', 'I understand your concern', or 'I hope this message finds you well'.\n"
+        "3. Strictly NEVER use em-dashes (—), en-dashes (–), or hyphens for pauses. Use commas, colons, or clean sentences instead.\n"
+        "4. Separate all paragraphs and greeting with clean blank lines so there is generous breathing room. Never output literal backslash-n or slash-n tokens.\n"
+        "5. Keep the reply concise (2-3 paragraphs), direct, helpful, and polite.\n"
+        "6. Reference actual Lavoo pages and concepts (/l/decision-engine, /l/thebuildroom, /l/earnings, /l/thesignal, Chops, Missions) accurately."
+    )
+
+    history_section = f"--- PREVIOUS CONVERSATION THREAD ---\n{conversation_history}\n\n" if conversation_history else ""
+
+    user_prompt = (
+        f"Here is the Lavoo Platform Master Knowledge:\n"
+        f"{LAVOO_KNOWLEDGE_BASE}\n\n"
+        f"--- USER TICKET DETAILS ---\n"
+        f"Ticket ID: #{ticket_id}\n"
+        f"User Name: {display_name}\n"
+        f"User Email: {user_email}\n"
+        f"Category: {category}\n\n"
+        f"{history_section}"
+        f"--- LATEST USER MESSAGE TO ANSWER ---\n"
+        f"{issue_text}\n\n"
+        f"Please write a warm, expert, human response directly answering {display_name}'s latest message using Lavoo platform specifics.\n"
+        f"Start with 'Hi {display_name},' and end with a friendly sign-off like 'Let me know if you need anything else, and I will be glad to assist!'."
+    )
+
+    from openai import OpenAI
+
+    def _call_nvidia():
+        if not nvidia_key:
+            return None
+        model_name = os.getenv("CUSTOMER_SERVICE_NVIDIA_MODEL", os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct"))
         client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.x.ai/v1",
+            api_key=nvidia_key,
+            base_url="https://integrate.api.nvidia.com/v1",
             timeout=30.0,
             max_retries=2,
         )
-
-        system_prompt = (
-            "You are a helpful, empathetic, and knowledgeable Senior Support Specialist on the Lavoo team replying to a user support ticket. "
-            "Your replies must sound 100% human, personal, and authentic.\n\n"
-            "STRICT RULES:\n"
-            "1. NEVER identify as an AI, bot, or language model. Write as an actual human team member on the Lavoo engineering & support team.\n"
-            "2. Never use generic robotic intros like 'Certainly!', 'I understand your concern', or 'I hope this message finds you well'.\n"
-            "3. Strictly NEVER use em-dashes (—). Use commas, colons, or clean sentences instead.\n"
-            "4. Separate all paragraphs and greeting with exactly two line breaks (\\n\\n) so there is generous breathing room.\n"
-            "5. Keep the reply concise (2-3 paragraphs), direct, helpful, and polite.\n"
-            "6. Reference actual Lavoo pages and concepts (/l/decision-engine, /l/thebuildroom, /l/earnings, /l/thesignal, Chops, Missions) accurately."
-        )
-
-        history_section = f"--- PREVIOUS CONVERSATION THREAD ---\n{conversation_history}\n\n" if conversation_history else ""
-
-        user_prompt = (
-            f"Here is the Lavoo Platform Master Knowledge:\n"
-            f"{LAVOO_KNOWLEDGE_BASE}\n\n"
-            f"--- USER TICKET DETAILS ---\n"
-            f"Ticket ID: #{ticket_id}\n"
-            f"User Name: {display_name}\n"
-            f"User Email: {user_email}\n"
-            f"Category: {category}\n\n"
-            f"{history_section}"
-            f"--- LATEST USER MESSAGE TO ANSWER ---\n"
-            f"{issue_text}\n\n"
-            f"Please write a warm, expert, human response directly answering {display_name}'s latest message using Lavoo platform specifics.\n"
-            f"Start with 'Hi {display_name},' and end with a friendly sign-off like 'Let me know if you need anything else, and I will be glad to assist!'."
-        )
-
         completion = client.chat.completions.create(
-            model="grok-4-1-fast-reasoning",
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -199,14 +209,43 @@ def _generate_humanized_support_reply(
             temperature=0.35,
             max_tokens=450,
         )
-
         if completion and completion.choices:
-            raw_text = completion.choices[0].message.content.strip()
+            return completion.choices[0].message.content.strip()
+        return None
+
+    def _call_grok():
+        if not xai_key:
+            return None
+        model_name = os.getenv("CUSTOMER_SERVICE_GROK_MODEL", os.getenv("VOO_GROK_MODEL", "grok-4-1-fast-reasoning"))
+        client = OpenAI(
+            api_key=xai_key,
+            base_url="https://api.x.ai/v1",
+            timeout=30.0,
+            max_retries=2,
+        )
+        completion = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.35,
+            max_tokens=450,
+        )
+        if completion and completion.choices:
+            return completion.choices[0].message.content.strip()
+        return None
+
+    order = [_call_nvidia, _call_grok] if preferred_provider == "nvidia" else [_call_grok, _call_nvidia]
+
+    for call_fn in order:
+        try:
+            raw_text = call_fn()
             if raw_text:
                 return _normalize_support_paragraphs(raw_text)
-
-    except Exception as e:
-        logger.error(f"[AI Support] Grok generation failed: {e}")
+        except Exception as e:
+            provider_name = "NVIDIA" if call_fn == _call_nvidia else "Grok"
+            logger.warning(f"[AI Support] {provider_name} generation failed, attempting next provider: {e}")
 
     return _normalize_support_paragraphs(fallback_reply)
 
@@ -326,6 +365,17 @@ async def async_process_ticket_support_ai(ticket_id: int):
                         "sender_id": admin_id,
                         "sender_role": "admin",
                         "sender_name": admin_name,
+                        "message": support_msg.message,
+                        "content": support_msg.message,
+                        "created_at": created_iso
+                    },
+                    "message": {
+                        "id": support_msg.id,
+                        "ticket_id": ticket.id,
+                        "sender_id": admin_id,
+                        "sender_role": "admin",
+                        "sender_name": admin_name,
+                        "message": support_msg.message,
                         "content": support_msg.message,
                         "created_at": created_iso
                     }
