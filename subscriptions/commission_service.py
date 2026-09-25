@@ -21,6 +21,9 @@ COMMISSION_RATE = COMMISSION_RATE_STANDARD
 
 class CommissionService:
 
+    # When the settlement job last emailed about commissions stuck waiting.
+    _last_waiting_alert: "datetime | None" = None
+
     @staticmethod
     def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
         """Return the actual payout rate for a referrer.
@@ -172,7 +175,7 @@ class CommissionService:
             raise
 
     @staticmethod
-    def _attempt_immediate_payout(commission: "Commission", db: Session) -> "int | None":
+    def _attempt_immediate_payout(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
         """Pay a freshly-created commission out immediately, no admin
         approval step, when the referrer's only usable payout method is a
         verified Flutterwave bank account — covering exactly the case a
@@ -212,12 +215,12 @@ class CommissionService:
                 .first()
             )
             if not payout_account:
-                logger.info(
-                    f"[BUILDER BONUS] immediate payout skipped | commission={commission.id} "
-                    f"referrer={commission.user_id} has no verified Flutterwave bank account on file — "
-                    f"leaving pending for manual payout"
-                )
-                return None
+                # No Flutterwave bank account — the referrer may be paid
+                # through Stripe Connect instead (e.g. a UK referrer whose
+                # referred user paid in NGN via Flutterwave). Previously this
+                # direction simply didn't exist and the commission sat
+                # 'pending' until someone paid it by hand.
+                return CommissionService._attempt_stripe_immediate_payout(commission, db, notify_admin=notify_admin)
 
             logger.info(
                 f"[BUILDER BONUS] immediate payout method found | commission={commission.id} "
@@ -321,6 +324,291 @@ class CommissionService:
             except Exception as alert_err:
                 logger.error(f"[BUILDER BONUS] Failed to send payout-failure alert email: {alert_err}")
             return None
+
+    @staticmethod
+    def _alert_admin(subject: str, body: str) -> None:
+        """Best-effort email to the admin; never raises."""
+        try:
+            admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
+            email_service._send_email(
+                to_email=admin_email, to_name="Lavoo Admin",
+                subject=subject, html_content=f"<p>{body}</p>", text_content=body,
+            )
+        except Exception as alert_err:
+            logger.error(f"[BUILDER BONUS] Failed to send admin alert '{subject}': {alert_err}")
+
+    @staticmethod
+    def _attempt_stripe_immediate_payout(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
+        """
+        Pay a commission to a referrer who is paid through Stripe Connect.
+        Example: a UK referrer whose referred user paid in Naira.
+
+        Steps: convert the amount to the referrer's Stripe currency, check we
+        have enough Stripe balance, then send one Stripe transfer.
+
+        Returns the payout id if it worked, or None if not. It never raises.
+        On None the commission stays 'pending', and the retry job tries it
+        again later (for example once the Stripe balance has been topped up).
+        """
+        try:
+            from sqlalchemy import text
+            import stripe
+            from database.pg_models import Payout, PayoutAccount
+            from subscriptions.flutterwave_split import get_flutterwave_fx_rate
+            from subscriptions.payout_service import PayoutService
+
+            stripe_account = (
+                db.query(PayoutAccount)
+                .filter(
+                    PayoutAccount.user_id == commission.user_id,
+                    PayoutAccount.stripe_account_id.isnot(None),
+                    PayoutAccount.is_verified.is_(True),
+                )
+                .first()
+            )
+            if not stripe_account:
+                logger.info(
+                    f"[BUILDER BONUS] immediate payout skipped | commission={commission.id} "
+                    f"referrer={commission.user_id} has neither a Flutterwave bank account nor a "
+                    f"verified Stripe Connect account — leaving pending for manual payout"
+                )
+                return None
+
+            # LOCK: only one process may pay this commission at a time.
+            # Two things can try to pay the same commission together, for
+            # example a web request and the 10-minute retry job (or two copies
+            # of the server). The lock makes the second one wait. By the time
+            # it gets its turn, the first has finished and the commission is
+            # already paid, so the second sees that below and stops.
+            # 7302 = our "commission payout" lock group. The commission id
+            # picks the exact lock inside that group. The lock frees itself
+            # when this database transaction ends.
+            db.execute(text("SELECT pg_advisory_xact_lock(7302, :cid)"), {"cid": int(commission.id)})
+            # Reload the commission: another process may have paid it while we waited.
+            db.refresh(commission)
+            if commission.payout_id is not None or (commission.status or "").lower() != "pending":
+                logger.info(f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} already handled (status={commission.status})")
+                return None
+
+            account = stripe.Account.retrieve(stripe_account.stripe_account_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
+            account = account.to_dict() if hasattr(account, "to_dict") else dict(account)
+            transfers_active = (account.get("capabilities") or {}).get("transfers") == "active"
+            if not transfers_active:
+                logger.warning(
+                    f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} connected account "
+                    f"{stripe_account.stripe_account_id} cannot receive transfers yet — leaving pending"
+                )
+                return None
+            target_currency = (account.get("default_currency") or "gbp").upper()
+
+            commission_currency = (commission.currency or "USD").upper()
+            commission_amount = Decimal(str(commission.amount))
+            fx_rate = None
+            if commission_currency == target_currency:
+                payout_amount = commission_amount
+            else:
+                fx_rate = get_flutterwave_fx_rate(commission_currency, target_currency)
+                if fx_rate is None:
+                    logger.warning(
+                        f"[BUILDER BONUS] Could not fetch {commission_currency}->{target_currency} rate for "
+                        f"commission {commission.id} — leaving pending"
+                    )
+                    return None
+                payout_amount = (commission_amount * fx_rate).quantize(Decimal("0.01"))
+            logger.info(
+                f"[BUILDER BONUS] stripe payout amount | commission={commission.id} "
+                f"{commission_amount} {commission_currency} -> {payout_amount} {target_currency}"
+                + (f" @ {fx_rate}" if fx_rate else "")
+            )
+
+            amount_minor = int(payout_amount * 100)
+            if amount_minor < 1:
+                logger.warning(f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} converts to less than 0.01 {target_currency}")
+                return None
+
+            # Ask Stripe if this commission was already paid, before sending.
+            # Our own database can be behind Stripe (for example the money was
+            # sent but saving it here failed), so we trust Stripe's record.
+            transfer_group = f"LAVOO-COMMISSION-{commission.id}"
+            prior_transfer = None      # a transfer that is still in place
+            reversed_transfer = None   # a transfer Stripe took back
+            try:
+                found = stripe.Transfer.list(
+                    destination=stripe_account.stripe_account_id, transfer_group=transfer_group,
+                    limit=5, api_key=os.getenv("STRIPE_SECRET_KEY"),
+                )
+                for t in found.data:
+                    t = t.to_dict() if hasattr(t, "to_dict") else dict(t)
+                    if t.get("reversed"):
+                        reversed_transfer = reversed_transfer or t
+                    else:
+                        prior_transfer = t
+                        break
+            except Exception as lookup_err:
+                # If we can't check, we can't be sure it wasn't paid, so don't send.
+                logger.warning(f"[BUILDER BONUS] could not check Stripe for an existing transfer for commission {commission.id}: {lookup_err} — leaving pending")
+                return None
+
+            if reversed_transfer and not prior_transfer:
+                # It was paid once and then taken back (by a person, usually on
+                # purpose). Do NOT send it again automatically. A human decides.
+                logger.warning(
+                    f"[BUILDER BONUS] commission {commission.id} was already sent (transfer "
+                    f"{reversed_transfer.get('id')}) and Stripe reversed it — not sending again. "
+                    f"Review it and pay manually if it is still owed."
+                )
+                return None
+
+            available = None if prior_transfer else PayoutService.get_platform_stripe_available(target_currency)
+            if available is not None and available < amount_minor:
+                msg = (
+                    f"Commission #{commission.id} ({payout_amount} {target_currency}) is waiting: the platform's "
+                    f"available Stripe {target_currency} balance is {available / 100:.2f}. Add funds to the Stripe "
+                    f"balance (Dashboard > Balances > Add to balance) or wait for pending funds to settle; it will "
+                    f"then be paid automatically."
+                )
+                logger.warning(f"[BUILDER BONUS] stripe payout waiting for balance | {msg}")
+                if notify_admin:
+                    CommissionService._alert_admin(f"⚠️ Referral payout waiting for Stripe balance — commission #{commission.id}", msg)
+                return None
+
+            payout = Payout(
+                user_id=commission.user_id,
+                amount=payout_amount,
+                currency=target_currency,
+                status="pending",
+                provider="stripe",
+                payment_method="stripe",
+                recipient_email=None,
+                account_details=f"Stripe Connect: {stripe_account.stripe_account_id}",
+                original_currency=commission_currency if commission_currency != target_currency else None,
+                original_amount=commission_amount if commission_currency != target_currency else None,
+                fx_rate=fx_rate,
+                requested_at=datetime.now(timezone.utc),
+            )
+            if prior_transfer:
+                # Record what Stripe actually sent, not what we'd compute today.
+                payout.amount = (Decimal(str(prior_transfer.get("amount", amount_minor))) / 100).quantize(Decimal("0.01"))
+                payout.currency = str(prior_transfer.get("currency") or target_currency).upper()
+            db.add(payout)
+            db.flush()
+
+            PayoutService.process_stripe_transfer_payout(
+                payout, db, manage_transaction=False,
+                transfer_group=transfer_group,
+                idempotency_key=f"lavoo-commission-{commission.id}",
+                existing_transfer=prior_transfer,
+            )
+
+            try:
+                NotificationService.create_notification(
+                    db=db, user_id=commission.user_id,
+                    type=NotificationType.PAYOUT_COMPLETED.value,
+                    title="💸 Builder Bonus sent",
+                    message=(
+                        f"{payout_amount} {target_currency} from your referral was sent to your Stripe account. "
+                        f"Stripe will pay it out to your bank on your account's payout schedule."
+                    ),
+                    link="/l/earnings",
+                )
+            except Exception as notif_err:
+                logger.warning(f"[BUILDER BONUS] payout notification failed (payout itself succeeded): {notif_err}")
+
+            logger.info(f"[BUILDER BONUS] stripe payout complete | commission={commission.id} payout={payout.id}")
+            return payout.id
+
+        except Exception as e:
+            logger.error(f"[BUILDER BONUS] Stripe payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            if notify_admin:
+                CommissionService._alert_admin(
+                    f"⚠️ Referral payout via Stripe failed — commission #{commission.id}",
+                    f"Commission #{commission.id} (referrer user_id={commission.user_id}, {commission.amount} "
+                    f"{commission.currency}) could not be sent via Stripe: {e}. It is still pending and will be "
+                    f"retried automatically.",
+                )
+            return None
+
+    @staticmethod
+    def settle_pending_commission(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
+        """
+        Pay an EXISTING pending commission now (through whichever route the
+        referrer has) and do the bookkeeping the create-time path does
+        implicitly: link it to the payout, mark it auto_settled, and move it
+        from pending to paid in the monthly summary (which had counted it as
+        pending when it was created). Commits on success, rolls back otherwise.
+        Returns the payout id or None.
+        """
+        from database.pg_models import Payout
+        from subscriptions.payout_service import PayoutService
+        try:
+            payout_id = CommissionService._attempt_immediate_payout(commission, db, notify_admin=notify_admin)
+            if not payout_id:
+                db.rollback()
+                return None
+            commission.status = 'auto_settled'
+            commission.paid_at = datetime.now(timezone.utc)
+            commission.payout_id = payout_id
+            db.flush()  # session has autoflush off; the summary update reads by payout_id
+            PayoutService._update_summary_on_payout(db.get(Payout, payout_id), db)
+            db.commit()
+            return payout_id
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[BUILDER BONUS] settle_pending_commission failed for {commission.id}: {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    def settle_pending_stripe_commissions(db: Session, lookback_days: int = 30, limit: int = 25) -> dict:
+        """
+        Retry commissions that are waiting to be paid through Stripe Connect —
+        typically because the platform's Stripe balance was empty when they
+        were earned. Runs from a background job; with an empty balance a cycle
+        makes no Stripe transfer and creates no payout rows (the balance is
+        checked before anything is created), so it is safe to run often.
+        """
+        from database.pg_models import PayoutAccount
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        rows = (
+            db.query(Commission)
+            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .filter(
+                Commission.status == 'pending',
+                Commission.payout_id.is_(None),
+                Commission.created_at >= cutoff,
+                PayoutAccount.stripe_account_id.isnot(None),
+                PayoutAccount.is_verified.is_(True),
+                # leave anyone with a usable Flutterwave bank account to that route
+                (PayoutAccount.bank_code.is_(None)) | (PayoutAccount.payment_method != 'flutterwave'),
+            )
+            .order_by(Commission.created_at)
+            .limit(limit)
+            .all()
+        )
+        counts = {"checked": len(rows), "settled": 0, "waiting": 0}
+        for commission in rows:
+            cid = commission.id
+            if CommissionService.settle_pending_commission(commission, db, notify_admin=False):
+                counts["settled"] += 1
+                logger.info(f"[settle-job] commission {cid} paid via Stripe")
+            else:
+                counts["waiting"] += 1
+
+        # One reminder per 6 hours at most — the job runs every 10 minutes and
+        # a persistently empty balance must not become an email every cycle.
+        if counts["waiting"]:
+            now = datetime.now(timezone.utc)
+            last = CommissionService._last_waiting_alert
+            if last is None or now - last > timedelta(hours=6):
+                CommissionService._last_waiting_alert = now
+                CommissionService._alert_admin(
+                    f"⏳ {counts['waiting']} referral payout(s) waiting to be sent via Stripe",
+                    f"{counts['waiting']} pending commission(s) could not be paid to Stripe-connected referrers. "
+                    f"Most often the available Stripe balance is too low (Dashboard > Balances > Add to balance). "
+                    f"They are retried every 10 minutes and paid automatically once the cause clears. "
+                    f"One exception: a transfer that Stripe reversed is never re-sent automatically, so it "
+                    f"needs a manual decision. The [BUILDER BONUS] log lines say which case each one is.",
+                )
+        return counts
 
     @staticmethod
     def _update_monthly_summary(user_id: int, amount: Decimal, db: Session, already_settled: bool = False):

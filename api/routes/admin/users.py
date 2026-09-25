@@ -208,9 +208,11 @@ async def get_users(
                 "lastActive": last_active,
                 "last_active": last_active,
                 "analyses": analysis_count,
-                "avatar": "".join(
-                    [n[0] for n in (user.name or "U").split(" ")[:2]]
-                ).upper(),
+                # split() with no argument ignores extra spaces. The old
+                # split(" ") gave an empty piece for a name like "Ann  Lee",
+                # and n[0] on it crashed the WHOLE user list (shown in the
+                # admin panel as "Failed to fetch").
+                "avatar": "".join(n[0] for n in (user.name or "").split()[:2]).upper() or "U",
             }
         )
 
@@ -270,7 +272,7 @@ async def get_user_details(
         "id": user.id,
         "name": user.name,
         "email": user.email,
-        "avatar": "".join([n[0] for n in user.name.split(" ")[:2]]).upper(),
+        "avatar": "".join(n[0] for n in (user.name or "").split()[:2]).upper() or "U",
         "joinDate": user.created_at.isoformat() if user.created_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "lastActive": last_active,

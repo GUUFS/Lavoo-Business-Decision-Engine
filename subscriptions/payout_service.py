@@ -73,7 +73,113 @@ class PayoutService:
             logger.error(f"Could not send payout success email for payout {payout_id}: {e}")
     
     @staticmethod
-    def create_payout_request(user_id: int, amount: Decimal, payment_method: str,  # 'stripe' or 'flutterwave'   
+    def get_platform_stripe_available(currency: str) -> Optional[int]:
+        """
+        How much Stripe money Lavoo can spend right now, in pence/cents.
+        Returns None if Stripe can't be reached.
+
+        A Stripe transfer can only use "available" money. Money that is still
+        "pending" (not yet settled) can't be sent, so we check first instead
+        of trying a payout that is bound to fail.
+        """
+        try:
+            balance = stripe.Balance.retrieve(api_key=os.getenv("STRIPE_SECRET_KEY"))
+            for entry in balance.available:
+                if str(entry.currency).lower() == currency.lower():
+                    return int(entry.amount)
+            return 0
+        except Exception as e:
+            logger.warning(f"[Stripe payout] could not read platform balance: {e}")
+            return None
+
+    @staticmethod
+    def process_stripe_transfer_payout(
+        payout: Payout, db: Session, manage_transaction: bool = True,
+        transfer_group: Optional[str] = None, idempotency_key: Optional[str] = None,
+        existing_transfer: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Send a referrer their money with one Stripe transfer into their
+        Stripe Connect account. Stripe then pays it on to their bank on the
+        account's normal payout schedule.
+
+        We do this in one step on purpose. The older process_stripe_payout()
+        makes a transfer and then a second "payout". If that second step
+        failed, the money had already moved but we recorded "failed", and a
+        retry would pay the person twice.
+
+        The idempotency key means: if this exact request is sent again,
+        Stripe returns the first result instead of sending money again.
+
+        manage_transaction: same meaning as in process_flutterwave_payout.
+        """
+        try:
+            payout_account = db.query(PayoutAccount).filter(
+                PayoutAccount.user_id == payout.user_id
+            ).first()
+            if not payout_account or not payout_account.stripe_account_id or not payout_account.is_verified:
+                raise ValueError("Verified Stripe account not configured")
+
+            amount_minor = int((Decimal(str(payout.amount)) * 100).to_integral_value())
+            if amount_minor < 1:
+                raise ValueError("Amount is below the smallest transferable unit")
+
+            logger.info(
+                f"[Stripe payout] START | payout={payout.id} user={payout.user_id} "
+                f"{payout.amount} {payout.currency} -> {payout_account.stripe_account_id}"
+                + (f" (converted from {payout.original_amount} {payout.original_currency} @ {payout.fx_rate})"
+                   if payout.original_currency else "")
+            )
+
+            if existing_transfer:
+                # Stripe already holds a transfer for this commission (an earlier
+                # attempt sent it but our records never caught up) — adopt it
+                # rather than send the money a second time.
+                transfer_dict = existing_transfer
+                logger.warning(f"[Stripe payout] ADOPTING existing transfer {transfer_dict.get('id')} | payout={payout.id}")
+            else:
+                transfer = stripe.Transfer.create(
+                    amount=amount_minor,
+                    currency=payout.currency.lower(),
+                    destination=payout_account.stripe_account_id,
+                    description=f"Lavoo Builder Bonus payout #{payout.id}",
+                    metadata={"lavoo_payout_id": str(payout.id), "user_id": str(payout.user_id)},
+                    **({"transfer_group": transfer_group} if transfer_group else {}),
+                    idempotency_key=idempotency_key or f"lavoo-payout-{payout.id}",
+                    api_key=os.getenv("STRIPE_SECRET_KEY"),
+                )
+                transfer_dict = transfer.to_dict() if hasattr(transfer, "to_dict") else dict(transfer)
+
+            now = datetime.now(timezone.utc)
+            payout.status = 'completed'
+            payout.provider_payout_id = transfer_dict.get("id")
+            payout.provider_response = json.dumps({"status": "success", "data": transfer_dict}, default=str)
+            payout.failure_reason = None
+            payout.processed_at = now
+            payout.completed_at = now
+            if manage_transaction:
+                db.commit()
+                db.refresh(payout)
+            else:
+                db.flush()
+
+            logger.info(f"[Stripe payout] SUCCESS | payout={payout.id} transfer={transfer_dict.get('id')} {payout.amount} {payout.currency}")
+            return {"status": "completed", "payout_id": payout.id, "transfer_id": transfer_dict.get("id")}
+
+        except Exception as e:
+            reason = (getattr(e, "user_message", None) or str(e))
+            payout.status = 'failed'
+            payout.failure_reason = reason
+            if manage_transaction:
+                db.commit()
+                db.refresh(payout)
+            else:
+                db.flush()
+            logger.error(f"[Stripe payout] FAILED | payout={payout.id} error={reason}", exc_info=True)
+            raise ValueError(f"Stripe payout failed: {reason}")
+
+    @staticmethod
+    def create_payout_request(user_id: int, amount: Decimal, payment_method: str,  # 'stripe' or 'flutterwave'
         db: Session) -> Payout:
         """
         Create a payout request
@@ -725,6 +831,73 @@ class PayoutService:
                 counts["errors"] += 1
                 db.rollback()
                 logger.error(f"[FLW reconcile] payout={payout_id} error: {e}", exc_info=True)
+
+        return counts
+
+    @staticmethod
+    def reconcile_stripe_payouts(
+        db: Session, background_tasks: BackgroundTasks,
+        lookback_days: int = 30, payout_ids: Optional[list] = None,
+    ) -> Dict[str, int]:
+        """
+        Check our recent Stripe payouts against Stripe and fix any that
+        Stripe has taken back.
+
+        Why: a Stripe transfer succeeds straight away, so we mark the payout
+        "completed". But Stripe (or someone in the Stripe dashboard) can
+        still REVERSE a transfer later, which returns the money to us. Nothing
+        told us when that happened, so we would keep showing the referrer as
+        paid. Now we ask Stripe. If a transfer was reversed, the payout is
+        marked failed and the commission goes back to pending.
+
+        We do not re-send a reversed transfer automatically. A person decides.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        query = db.query(Payout).filter(
+            Payout.payment_method == 'stripe',
+            Payout.status == 'completed',
+            Payout.provider_payout_id.like('tr_%'),   # only transfers made by process_stripe_transfer_payout
+            Payout.completed_at >= cutoff,
+        )
+        if payout_ids is not None:
+            query = query.filter(Payout.id.in_(payout_ids))
+
+        counts = {"checked": 0, "reversed": 0, "partly_reversed": 0, "errors": 0}
+        for payout in query.limit(100).all():
+            counts["checked"] += 1
+            payout_id = payout.id
+            try:
+                transfer = stripe.Transfer.retrieve(payout.provider_payout_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
+                transfer = transfer.to_dict() if hasattr(transfer, "to_dict") else dict(transfer)
+                amount = int(transfer.get("amount") or 0)
+                amount_reversed = int(transfer.get("amount_reversed") or 0)
+
+                if amount and amount_reversed >= amount:
+                    reason = "Stripe reversed this transfer (the money was returned to Lavoo)"
+                    PayoutService.reverse_payout(payout_id, reason, db)
+                    counts["reversed"] += 1
+                    logger.warning(f"[Stripe reconcile] payout={payout_id} transfer={payout.provider_payout_id} REVERSED")
+                    PayoutService._queue_admin_alert(
+                        background_tasks,
+                        subject=f"⚠️ Stripe reversed the transfer for payout #{payout_id}",
+                        body=(
+                            f"Stripe transfer {payout.provider_payout_id} ({payout.amount} {payout.currency}, "
+                            f"user {payout.user_id}) was reversed. The payout is now marked failed and the "
+                            f"commission is back to pending. It will NOT be re-sent automatically. If the "
+                            f"referrer is still owed this money, pay it manually."
+                        ),
+                    )
+                elif amount_reversed > 0:
+                    # Only part of it was taken back. Log it; a person should look.
+                    counts["partly_reversed"] += 1
+                    logger.warning(
+                        f"[Stripe reconcile] payout={payout_id} transfer={payout.provider_payout_id} "
+                        f"PARTLY reversed ({amount_reversed} of {amount}) — needs a manual look"
+                    )
+            except Exception as e:
+                counts["errors"] += 1
+                db.rollback()
+                logger.error(f"[Stripe reconcile] payout={payout_id} error: {e}", exc_info=True)
 
         return counts
 
