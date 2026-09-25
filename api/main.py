@@ -119,14 +119,20 @@ _origins_base = [
     # Production frontend domains — always allowed regardless of ALLOWED_ORIGINS env var
     "https://lavoo.io",
     "https://www.lavoo.io",
-    "https://control.lavooai.com/",
+    "https://lavooai.com",
+    "https://www.lavooai.com",
+    "https://control.lavooai.com",
+    "https://admin.lavooai.com",
+    "https://control.lavoo.io",
+    "https://admin.lavoo.io",
 ]
 # Allow additional origins from environment (comma-separated list)
 _extra_origins = os.getenv("ALLOWED_ORIGINS", "")
 if _extra_origins:
     _origins_base.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
 
-origins = list(dict.fromkeys(_origins_base))  # deduplicate while preserving order
+# Normalize origins: strip trailing slashes and deduplicate while preserving order
+origins = list(dict.fromkeys([o.rstrip("/") for o in _origins_base if o.strip()]))
 
 
 # GZip compression — reduces JSON payload size by ~70% for typical API responses.
