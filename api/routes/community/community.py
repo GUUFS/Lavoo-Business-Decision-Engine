@@ -1177,67 +1177,170 @@ def _get_cached_mission_reflections(db: Session) -> List[dict]:
 
     reflections = []
     try:
-        opted_in_user_ids = db.query(UserSettings.user_id).filter(
-            UserSettings.show_mission_comments_in_community == True
-        ).all()
-        opted_in_ids = [row[0] for row in opted_in_user_ids]
-        if opted_in_ids:
-            analyses = (
-                db.query(BusinessAnalysis, User)
-                .join(User, BusinessAnalysis.user_id == User.id)
-                .filter(BusinessAnalysis.user_id.in_(opted_in_ids))
-                .order_by(BusinessAnalysis.updated_at.desc())
-                .limit(25)
-                .all()
-            )
-            for analysis, author in analyses:
-                up = analysis.user_progress or {}
-                roadmap_comments = up.get('roadmap_comments', {}) if isinstance(up, dict) else {}
-                if not isinstance(roadmap_comments, dict) or not roadmap_comments:
+        # Exclude only users who have explicitly opted out of sharing reflections
+        opted_out_user_ids = {
+            row[0] for row in db.query(UserSettings.user_id).filter(
+                UserSettings.show_mission_comments_in_community == False
+            ).all()
+        }
+        explicit_user_opt_outs = {
+            row[0] for row in db.query(User.id).filter(
+                User.share_reflections == False
+            ).all()
+        }
+        excluded_ids = opted_out_user_ids.union(explicit_user_opt_outs)
+
+        query = db.query(BusinessAnalysis, User).join(User, BusinessAnalysis.user_id == User.id)
+        if excluded_ids:
+            query = query.filter(~BusinessAnalysis.user_id.in_(excluded_ids))
+
+        analyses = (
+            query
+            .filter(BusinessAnalysis.user_progress != None)
+            .order_by(BusinessAnalysis.updated_at.desc())
+            .limit(30)
+            .all()
+        )
+
+        seen_reflection_keys = set()
+
+        for analysis, author in analyses:
+            up_raw = analysis.user_progress
+            if isinstance(up_raw, str):
+                try:
+                    up = json.loads(up_raw)
+                except Exception:
+                    up = {}
+            elif isinstance(up_raw, dict):
+                up = up_raw
+            else:
+                up = {}
+
+            if not isinstance(up, dict) or not up:
+                continue
+
+            roadmap_tasks = _flatten_roadmap_tasks(analysis)
+            task_by_frontend_id = {t.get('frontend_id'): t.get('text') for t in roadmap_tasks if isinstance(t, dict)}
+            task_by_index = {idx + 1: t.get('text') for idx, t in enumerate(roadmap_tasks) if isinstance(t, dict)}
+
+            completion_dates = up.get('completion_dates', {}) if isinstance(up.get('completion_dates'), dict) else {}
+            reflections_dict = up.get('reflections', {}) if isinstance(up.get('reflections'), dict) else {}
+            roadmap_comments = up.get('roadmap_comments', {}) if isinstance(up.get('roadmap_comments'), dict) else {}
+
+            # 1. Primary: Step reflections created on mission step completion
+            for step_id, text in reflections_dict.items():
+                if not text or not isinstance(text, str):
                     continue
-                mission_titles = {
-                    t['frontend_id']: t['text'] for t in _flatten_roadmap_tasks(analysis)
-                }
-                for task_id, comments in roadmap_comments.items():
-                    if not isinstance(comments, list):
+                clean_text = text.strip()
+                if len(clean_text) < 3 or clean_text.lower().strip('.!') in (
+                    'test', 'testing', 'tes', 'tesst', 'text', 'test2', 'tessssst', 'reesss', 'done', 'testtt'
+                ):
+                    continue
+
+                ref_key = f"{analysis.id}_{step_id}"
+                if ref_key in seen_reflection_keys:
+                    continue
+                seen_reflection_keys.add(ref_key)
+
+                # Determine task title
+                full_title = ""
+                if '_action_' in str(step_id):
+                    try:
+                        step_num = int(str(step_id).split('_action_')[-1])
+                        full_title = task_by_index.get(step_num) or ""
+                    except Exception:
+                        full_title = ""
+                if not full_title:
+                    full_title = task_by_frontend_id.get(str(step_id)) or ""
+
+                created_at = completion_dates.get(step_id) or (analysis.updated_at.isoformat() if analysis.updated_at else None)
+
+                reflections.append({
+                    "id": f"mr_{analysis.id}_{step_id}",
+                    "type": "mission_reflection",
+                    "title": full_title if full_title else clean_text[:80],
+                    "mission_task": full_title if full_title else clean_text[:80],
+                    "analysis_goal": analysis.business_goal,
+                    "analysis_id": analysis.id,
+                    "content": clean_text,
+                    "excerpt": clean_text[:160],
+                    "tags": [],
+                    "like_count": 0, "reply_count": 0,
+                    "likes": 0, "replies": 0,
+                    "pinned": False, "is_pinned": False,
+                    "hot": False,
+                    "view_count": 0,
+                    "has_liked": False, "liked_by_user": False,
+                    "chops_gifted": 0,
+                    "author": {
+                        "id": author.id,
+                        "name": author.name or "Member",
+                        "initials": (author.name or "M")[:2].upper(),
+                        "gradient": _AUTHOR_GRADIENTS[author.id % len(_AUTHOR_GRADIENTS)],
+                        "role": getattr(author, 'role', '') or 'Founder',
+                        "total_chops": author.total_chops or 0,
+                    },
+                    "channel": "reflections",
+                    "created_at": created_at,
+                    "timeAgo": created_at,
+                    "updated_at": None,
+                })
+
+            # 2. Secondary: Roadmap comments (if user added legacy or extra task comments)
+            for task_id, comments in roadmap_comments.items():
+                if not isinstance(comments, list):
+                    continue
+                for comment in comments:
+                    if not isinstance(comment, dict):
                         continue
-                    for comment in comments:
-                        text = comment.get('text', '').strip()
-                        if not text or len(text) < 5 or text.lower().strip('.!') in ('test', 'testing', 'tes', 'tesst', 'text', 'test2', 'tessssst', 'reesss', 'done', 'testtt'):
-                            continue
-                        created_at = comment.get('createdAt')
-                        comment_id = comment.get('id', f"rc_{analysis.id}_{task_id}")
-                        full_title = mission_titles.get(task_id) or ""
-                        reflections.append({
-                            "id": f"rc_{comment_id}",
-                            "type": "mission_reflection",
-                            "title": full_title if full_title else text[:80],
-                            "mission_task": full_title if full_title else text[:80],
-                            "analysis_goal": analysis.business_goal,
-                            "content": text,
-                            "excerpt": text[:160],
-                            "tags": [],
-                            "like_count": 0, "reply_count": 0,
-                            "likes": 0, "replies": 0,
-                            "pinned": False, "is_pinned": False,
-                            "hot": False,
-                            "view_count": 0,
-                            "has_liked": False, "liked_by_user": False,
-                            "chops_gifted": 0,
-                            "author": {
-                                "id": author.id,
-                                "name": author.name or "Member",
-                                "initials": (author.name or "M")[:2].upper(),
-                                "gradient": _AUTHOR_GRADIENTS[author.id % len(_AUTHOR_GRADIENTS)],
-                                "role": getattr(author, 'role', '') or 'Founder',
-                                "total_chops": author.total_chops or 0,
-                            },
-                            "channel": "reflections",
-                            "created_at": created_at,
-                            "timeAgo": created_at,
-                            "updated_at": None,
-                        })
-        _MISSION_REFLECTIONS_CACHE["data"] = reflections
+                    text = comment.get('text', '').strip()
+                    if not text or len(text) < 3 or text.lower().strip('.!') in (
+                        'test', 'testing', 'tes', 'tesst', 'text', 'test2', 'tessssst', 'reesss', 'done', 'testtt'
+                    ):
+                        continue
+                    comment_id = comment.get('id', f"rc_{analysis.id}_{task_id}")
+                    ref_key = f"{analysis.id}_{comment_id}"
+                    if ref_key in seen_reflection_keys:
+                        continue
+                    seen_reflection_keys.add(ref_key)
+
+                    created_at = comment.get('createdAt') or (analysis.updated_at.isoformat() if analysis.updated_at else None)
+                    full_title = task_by_frontend_id.get(task_id) or ""
+
+                    reflections.append({
+                        "id": f"rc_{comment_id}",
+                        "type": "mission_reflection",
+                        "title": full_title if full_title else text[:80],
+                        "mission_task": full_title if full_title else text[:80],
+                        "analysis_goal": analysis.business_goal,
+                        "analysis_id": analysis.id,
+                        "content": text,
+                        "excerpt": text[:160],
+                        "tags": [],
+                        "like_count": 0, "reply_count": 0,
+                        "likes": 0, "replies": 0,
+                        "pinned": False, "is_pinned": False,
+                        "hot": False,
+                        "view_count": 0,
+                        "has_liked": False, "liked_by_user": False,
+                        "chops_gifted": 0,
+                        "author": {
+                            "id": author.id,
+                            "name": author.name or "Member",
+                            "initials": (author.name or "M")[:2].upper(),
+                            "gradient": _AUTHOR_GRADIENTS[author.id % len(_AUTHOR_GRADIENTS)],
+                            "role": getattr(author, 'role', '') or 'Founder',
+                            "total_chops": author.total_chops or 0,
+                        },
+                        "channel": "reflections",
+                        "created_at": created_at,
+                        "timeAgo": created_at,
+                        "updated_at": None,
+                    })
+
+        # Sort all reflections by creation date descending
+        reflections.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+        _MISSION_REFLECTIONS_CACHE["data"] = reflections[:30]
         _MISSION_REFLECTIONS_CACHE["expires_at"] = now + 60.0
     except Exception as reflection_err:
         logger.warning(f"Mission reflections fetch error: {reflection_err}")
