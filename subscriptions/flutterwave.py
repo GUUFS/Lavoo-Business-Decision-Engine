@@ -873,7 +873,18 @@ async def flutterwave_payout_callback(
             settled_amount = raw_amount.get("value") if isinstance(raw_amount, dict) else raw_amount
             fee = raw_fee.get("value") if isinstance(raw_fee, dict) else raw_fee
 
-            if event_type == "transfer.completed" or transfer_status == "successful":
+            # Decide from the transfer's own status, not the event name:
+            # Flutterwave's `transfer.completed` fires when a transfer
+            # reaches ANY terminal state, including FAILED — keying success
+            # off the event name alone would have recorded a failed
+            # (e.g. insufficient-funds) transfer as a successful payout.
+            # The event name is only a fallback when no status is present.
+            is_success = transfer_status == "successful"
+            is_failure = transfer_status == "failed" or (
+                not transfer_status and event_type == "transfer.failed"
+            )
+
+            if is_success:
                 PayoutService.complete_flutterwave_payout(
                     payout_id, background_tasks, "successful", db,
                     settled_amount=settled_amount, fee=fee,
@@ -882,7 +893,7 @@ async def flutterwave_payout_callback(
                     "[FLW webhook] payout %s completed | settled_amount=%s fee=%s (per Flutterwave's webhook payload)",
                     payout_id, settled_amount, fee,
                 )
-            elif event_type == "transfer.failed" or transfer_status == "failed":
+            elif is_failure:
                 failure_reason = transfer_data.get("complete_message") or transfer_data.get("narration")
                 PayoutService.complete_flutterwave_payout(
                     payout_id, background_tasks, "failed", db,
@@ -1061,6 +1072,27 @@ async def flutterwave_retry_commission_payout(
         "after": {"status": commission.status, "payout_id": commission.payout_id},
         "payout_id": payout_id,
     }
+
+
+@router.post("/flutterwave/reconcile-payouts")
+async def flutterwave_reconcile_payouts(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin-only: run the same Flutterwave payout reconciliation the background
+    job runs every couple of minutes, right now. Asks Flutterwave for the real
+    status of every payout still at 'processing' and syncs our records to it.
+    """
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from subscriptions.payout_service import PayoutService
+    counts = await asyncio.to_thread(
+        PayoutService.reconcile_flutterwave_payouts, db, background_tasks, 0
+    )
+    return {"status": "success", "result": counts}
 
 
 @router.get("/health")
