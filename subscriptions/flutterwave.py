@@ -849,6 +849,41 @@ async def flutterwave_payout_callback(
 
         logger.info("[FLW webhook] event=%s ref=%s status=%s", event_type, reference, transfer_status)
 
+        # A PAYMENT (charge) notification — Flutterwave's own server-to-server
+        # confirmation that a customer paid, independent of their browser.
+        # Until now this handler only understood transfers, so a customer who
+        # paid and then closed the tab before the frontend's /verify call
+        # completed would have been charged with no subscription recorded.
+        # Reuses /verify itself (it re-checks the transaction directly with
+        # Flutterwave rather than trusting this body, and is idempotent on
+        # tx_ref/transaction_id), so the browser and the webhook can't
+        # double-record a payment.
+        payment_tx_ref = str(transfer_data.get("tx_ref") or "")
+        if event_type == "charge.completed" or (not reference and payment_tx_ref):
+            if transfer_status == "successful" and payment_tx_ref.startswith("LAVOO-"):
+                from sqlalchemy import func
+                customer_email = str((transfer_data.get("customer") or {}).get("email") or "")
+                payer = db.query(User).filter(func.lower(User.email) == customer_email.lower()).first()
+                if not payer:
+                    logger.warning("[FLW webhook] payment %s: no user with email %r — ignoring", payment_tx_ref, customer_email)
+                    return {"status": "success"}
+                plan_from_ref = (payment_tx_ref.split("-")[1] if payment_tx_ref.count("-") >= 1 else "").lower() or None
+                try:
+                    await verify_flutterwave_payment(
+                        PaymentVerifyRequest(
+                            transaction_id=str(transfer_data.get("id")),
+                            user_email=payer.email,
+                            plan_type=plan_from_ref,
+                        ),
+                        background_tasks, db,
+                    )
+                    logger.info("[FLW webhook] payment %s confirmed via webhook (user=%s)", payment_tx_ref, payer.email)
+                except HTTPException as http_err:
+                    logger.warning("[FLW webhook] payment %s not recorded: %s", payment_tx_ref, http_err.detail)
+            else:
+                logger.info("[FLW webhook] ignoring payment event ref=%s status=%s", payment_tx_ref, transfer_status)
+            return {"status": "success"}
+
         if reference and reference.startswith("PAYOUT-"):
             try:
                 payout_id = int(reference.split("-")[1])
@@ -873,7 +908,18 @@ async def flutterwave_payout_callback(
             settled_amount = raw_amount.get("value") if isinstance(raw_amount, dict) else raw_amount
             fee = raw_fee.get("value") if isinstance(raw_fee, dict) else raw_fee
 
-            if event_type == "transfer.completed" or transfer_status == "successful":
+            # Decide from the transfer's own status, not the event name:
+            # Flutterwave's `transfer.completed` fires when a transfer
+            # reaches ANY terminal state, including FAILED — keying success
+            # off the event name alone would have recorded a failed
+            # (e.g. insufficient-funds) transfer as a successful payout.
+            # The event name is only a fallback when no status is present.
+            is_success = transfer_status == "successful"
+            is_failure = transfer_status == "failed" or (
+                not transfer_status and event_type == "transfer.failed"
+            )
+
+            if is_success:
                 PayoutService.complete_flutterwave_payout(
                     payout_id, background_tasks, "successful", db,
                     settled_amount=settled_amount, fee=fee,
@@ -882,7 +928,7 @@ async def flutterwave_payout_callback(
                     "[FLW webhook] payout %s completed | settled_amount=%s fee=%s (per Flutterwave's webhook payload)",
                     payout_id, settled_amount, fee,
                 )
-            elif event_type == "transfer.failed" or transfer_status == "failed":
+            elif is_failure:
                 failure_reason = transfer_data.get("complete_message") or transfer_data.get("narration")
                 PayoutService.complete_flutterwave_payout(
                     payout_id, background_tasks, "failed", db,
@@ -1036,15 +1082,17 @@ async def flutterwave_retry_commission_payout(
 
     before = {"status": commission.status, "payout_id": commission.payout_id}
 
+    if (commission.status or "").lower() != "pending" or commission.payout_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Commission {commission_id} is not awaiting payment (status={commission.status}, payout_id={commission.payout_id})",
+        )
+
     try:
-        payout_id = CommissionService._attempt_immediate_payout(commission, db)
-        if payout_id:
-            commission.status = 'auto_settled'
-            commission.paid_at = datetime.now(timezone.utc)
-            commission.payout_id = payout_id
-            db.commit()
-        else:
-            db.rollback()
+        # Goes through whichever route the referrer has — a Flutterwave bank
+        # account (NGN transfer) or Stripe Connect (converted transfer) — and
+        # does the linking + monthly-summary bookkeeping itself.
+        payout_id = CommissionService.settle_pending_commission(commission, db)
     except Exception as e:
         db.rollback()
         return {
@@ -1061,6 +1109,31 @@ async def flutterwave_retry_commission_payout(
         "after": {"status": commission.status, "payout_id": commission.payout_id},
         "payout_id": payout_id,
     }
+
+
+@router.post("/flutterwave/reconcile-payouts")
+async def flutterwave_reconcile_payouts(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin-only: run both payout checks right now (the background jobs do the
+    same on a timer).
+    - flutterwave: asks Flutterwave for the real status of payouts we sent.
+    - stripe: asks Stripe whether any transfer we sent has been reversed.
+    """
+    if not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from subscriptions.payout_service import PayoutService
+    flutterwave_counts = await asyncio.to_thread(
+        PayoutService.reconcile_flutterwave_payouts, db, background_tasks, 0
+    )
+    stripe_counts = await asyncio.to_thread(
+        PayoutService.reconcile_stripe_payouts, db, background_tasks
+    )
+    return {"status": "success", "result": flutterwave_counts, "stripe": stripe_counts}
 
 
 @router.get("/health")

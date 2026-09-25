@@ -446,11 +446,17 @@ class StripeService:
             metadata = sub_dict.get('metadata') or {}
             plan_type_from_stripe = metadata.get('plan_type')
 
+            latest_invoice = sub_dict.get('latest_invoice')
+            latest_invoice_id = (
+                latest_invoice.get('id') if isinstance(latest_invoice, dict) else latest_invoice
+            )
+
             return {
                 "id": subscription.id,
                 "status": subscription.status,
                 "current_period_start": period_start,
                 "current_period_end": period_end,
+                "latest_invoice_id": latest_invoice_id,
                 "plan_type": plan_type_from_stripe,
                 "cancel_at_period_end": subscription.cancel_at_period_end,
                 "canceled_at": subscription.canceled_at,

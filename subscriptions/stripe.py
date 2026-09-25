@@ -2,6 +2,7 @@
 # pyrefly: ignore [missing-import]
 from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, timedelta, timezone
@@ -262,6 +263,25 @@ def resolve_stripe_subscription_state(user: User, db: Session) -> dict:
         f"stripe_active_no_db (will upsert)"
     )
     return {"case": "stripe_active_no_db", "stripe_sub": stripe_sub, "stripe_sub_id": sub_id}
+
+
+def _lock_user_billing(db: Session, user_id: int) -> None:
+    """
+    Make sure only one process records a payment for this user at a time.
+
+    Two things record every subscription payment: the Stripe webhook and the
+    website's confirm call. Both first ask "is this payment already saved?"
+    and, if not, save it. When they ran at the same moment, both answered
+    "no" and both saved, so one payment was recorded twice.
+
+    This takes a lock named after the user. The second process waits until the
+    first has finished saving, so when it asks "is it already saved?" the
+    answer is correctly "yes". The lock frees itself when the transaction ends.
+    """
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :uid)"),
+        {"ns": 7301, "uid": int(user_id)},
+    )
 
 
 def get_subscription_dates_from_stripe(subscription_result: dict, plan_type: str):
@@ -1344,6 +1364,7 @@ async def stripe_webhook(
             # payment_intent exists. Check all three identifiers so that
             # a subscription created by the API and then confirmed by the
             # webhook does not produce a second row.
+            _lock_user_billing(db, user.id)  # wait out an in-flight /confirm-subscription
             ident_checks = [payment_intent_id]
             if subscription_id:
                 ident_checks.append(subscription_id)
@@ -1378,10 +1399,17 @@ async def stripe_webhook(
             amount_paid = _invoice_val(invoice, 'amount_paid', 'total', 'amount_due')
             currency = getattr(invoice, 'currency', None) or 'usd'
 
+            # Stripe states which this is: 'subscription_create' is the
+            # customer's first-ever invoice on this subscription; anything
+            # else ('subscription_cycle', 'subscription_update', ...) is a
+            # later charge. Previously every paid invoice was recorded and
+            # announced as a "renewal", including the very first payment.
+            is_initial_payment = getattr(invoice, 'billing_reason', None) == 'subscription_create'
+
             new_sub = Subscriptions(
                 user_id=user.id, subscription_plan=plan_type,
                 transaction_id=payment_intent_id,
-                tx_ref=f"RENEW-{user.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+                tx_ref=f"{'STRIPE-INITIAL' if is_initial_payment else 'RENEW'}-{user.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
                 amount=Decimal(str(amount_paid / 100)),
                 currency=currency.upper(),
                 status="completed", subscription_status="active",
@@ -1393,14 +1421,25 @@ async def stripe_webhook(
             from subscriptions.commission_service import CommissionService
             CommissionService.calculate_commission(subscription=new_sub, db=db)
             db.commit()
-            logger.info(f"✅ Renewal recorded: user={user.email} (id={user.id}), plan={plan_type}, {start_date.date()} → {end_date.date()}")
-
-            NotificationService.create_notification(
-                db=db, user_id=user.id, type="subscription_renewed",
-                title="✅ Subscription Renewed",
-                message=f"Your {plan_type} subscription has been renewed until {end_date.strftime('%B %d, %Y')}.",
-                link="/dashboard"
+            logger.info(
+                f"✅ {'First payment' if is_initial_payment else 'Renewal'} recorded: user={user.email} "
+                f"(id={user.id}), plan={plan_type}, {start_date.date()} → {end_date.date()}"
             )
+
+            if is_initial_payment:
+                NotificationService.create_notification(
+                    db=db, user_id=user.id, type="subscription_activated",
+                    title="🎉 Subscription Activated",
+                    message=f"Your {plan_type} subscription is active until {end_date.strftime('%B %d, %Y')}.",
+                    link="/dashboard"
+                )
+            else:
+                NotificationService.create_notification(
+                    db=db, user_id=user.id, type="subscription_renewed",
+                    title="✅ Subscription Renewed",
+                    message=f"Your {plan_type} subscription has been renewed until {end_date.strftime('%B %d, %Y')}.",
+                    link="/dashboard"
+                )
             db.commit()
 
         elif event.type == "invoice.payment_failed":
@@ -1883,8 +1922,20 @@ async def confirm_subscription(
         amount = real_amount if real_amount > 0 else price_map.get(plan_type, 29.95)
         start_date, end_date = get_subscription_dates_from_stripe(subscription_details, plan_type)
 
+        # The Stripe webhook usually saves this payment first (it arrives the
+        # moment Stripe takes the money), and it saves it under the invoice id,
+        # not the subscription id. So we take the same lock as the webhook and
+        # then look for the payment under every id it could have used. If we
+        # only looked under the subscription id we would miss it and save the
+        # same payment a second time.
+        _lock_user_billing(db, user_id)
+        related_ids = {
+            request.subscription_id,
+            request.payment_intent_id,
+            subscription_details.get("latest_invoice_id"),
+        }
         existing = db.query(Subscriptions).filter(
-            Subscriptions.transaction_id == request.subscription_id
+            Subscriptions.transaction_id.in_([i for i in related_ids if i])
         ).first()
 
         if existing:
@@ -2195,4 +2246,4 @@ async def payment_failed_notify(
     except Exception as e:
         db.rollback()
         logger.error(f"❌ payment-failed-notify error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
