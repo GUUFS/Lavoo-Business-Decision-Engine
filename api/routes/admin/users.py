@@ -9,6 +9,21 @@ from api.routes.dependencies import admin_required
 
 router = APIRouter(prefix="/control/users", tags=["admin-users"])
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def get_user_avatar(name: str = None) -> str:
+    """Safely extract up to 2 uppercase initials without crashing on spaces or empty names."""
+    if not name or not isinstance(name, str):
+        return "U"
+    parts = [part for part in name.strip().split() if part]
+    if not parts:
+        return "U"
+    return "".join(p[0] for p in parts[:2]).upper()
+
+
 
 def format_relative_time(dt: datetime) -> str:
     """Format datetime as relative time (e.g., '2 hours ago')"""
@@ -115,112 +130,114 @@ async def get_users(
     db: Session = Depends(get_db),
 ):
     """Get users with server-side pagination and filtering"""
-    offset = (page - 1) * limit
+    try:
+        offset = (page - 1) * limit
 
-    query = db.query(User)
+        query = db.query(User)
 
-    if search:
-        search_term = f"%{search}%"
-        query = query.filter(
-            (User.name.ilike(search_term)) | (User.email.ilike(search_term))
-        )
-
-    # ✅ naive UTC — matches DB column type, avoids offset-naive/aware crash
-    cutoff_date = datetime.utcnow() - timedelta(days=30)
-
-    if status and status != "all":
-        if status == "active":
+        if search:
+            search_term = f"%{search}%"
             query = query.filter(
-                User.is_active == True,
-                or_(
-                    User.last_login >= cutoff_date,
-                    User.last_login.is_(None),
-                ),
+                (User.name.ilike(search_term)) | (User.email.ilike(search_term))
             )
-        elif status == "inactive":
-            query = query.filter(
-                User.is_active == True,
-                or_(
-                    User.last_login < cutoff_date,
-                    User.last_login.is_(None),
-                ),
-            )
-        elif status in ("suspended", "deactivated"):
-            query = query.filter(User.is_active == False)
-        elif status == "free":
-            query = query.filter(
-                or_(
-                    User.subscription_status != "active",
-                    User.subscription_status.is_(None),
+
+        # ✅ naive UTC — matches DB column type, avoids offset-naive/aware crash
+        cutoff_date = datetime.utcnow() - timedelta(days=30)
+
+        if status and status != "all":
+            if status == "active":
+                query = query.filter(
+                    User.is_active == True,
+                    or_(
+                        User.last_login >= cutoff_date,
+                        User.last_login.is_(None),
+                    ),
                 )
+            elif status == "inactive":
+                query = query.filter(
+                    User.is_active == True,
+                    or_(
+                        User.last_login < cutoff_date,
+                        User.last_login.is_(None),
+                    ),
+                )
+            elif status in ("suspended", "deactivated"):
+                query = query.filter(User.is_active == False)
+            elif status == "free":
+                query = query.filter(
+                    or_(
+                        User.subscription_status != "active",
+                        User.subscription_status.is_(None),
+                    )
+                )
+            elif status == "pro":
+                query = query.filter(User.subscription_status == "active")
+
+        total = query.count()
+
+        # ✅ Single joined query — eliminates the N+1 per-user DB hit
+        analysis_counts = (
+            db.query(
+                BusinessAnalysis.user_id,
+                func.count(BusinessAnalysis.id).label("count"),
             )
-        elif status == "pro":
-            query = query.filter(User.subscription_status == "active")
-
-    total = query.count()
-
-    # ✅ Single joined query — eliminates the N+1 per-user DB hit
-    analysis_counts = (
-        db.query(
-            BusinessAnalysis.user_id,
-            func.count(BusinessAnalysis.id).label("count"),
-        )
-        .group_by(BusinessAnalysis.user_id)
-        .subquery()
-    )
-
-    rows = (
-        query.outerjoin(analysis_counts, User.id == analysis_counts.c.user_id)
-        .add_columns(func.coalesce(analysis_counts.c.count, 0).label("analysis_count"))
-        .order_by(desc(User.created_at))
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
-    result = []
-    for row in rows:
-        user = row[0]
-        analysis_count = row[1]
-
-        if not user.is_active:
-            user_status = "suspended"
-        elif is_user_inactive(user):
-            user_status = "inactive"
-        else:
-            user_status = "active"
-
-        last_active_dt = user.last_login or user.updated_at
-        last_active = format_relative_time(last_active_dt)
-
-        result.append(
-            {
-                "id": user.id,
-                "name": user.name,
-                "email": user.email,
-                "role": "admin" if user.is_admin else "user",
-                "plan": user.subscription_plan or "Free",
-                "subscription_status": user.subscription_status or "none",
-                "status": user_status,
-                "is_active": user.is_active,
-                "created_at": user.created_at.isoformat() if user.created_at else None,
-                "joinDate": user.created_at.strftime("%Y-%m-%d") if user.created_at else None,
-                "lastActive": last_active,
-                "last_active": last_active,
-                "analyses": analysis_count,
-                "avatar": "".join(
-                    [n[0] for n in (user.name or "U").split(" ")[:2]]
-                ).upper(),
-            }
+            .group_by(BusinessAnalysis.user_id)
+            .subquery()
         )
 
-    return {
-        "users": result,
-        "total": total,
-        "page": page,
-        "limit": limit,
-        "totalPages": (total + limit - 1) // limit,
-    }
+        rows = (
+            query.outerjoin(analysis_counts, User.id == analysis_counts.c.user_id)
+            .add_columns(func.coalesce(analysis_counts.c.count, 0).label("analysis_count"))
+            .order_by(desc(User.created_at))
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        result = []
+        for row in rows:
+            user = row[0]
+            analysis_count = row[1]
+
+            if not user.is_active:
+                user_status = "suspended"
+            elif is_user_inactive(user):
+                user_status = "inactive"
+            else:
+                user_status = "active"
+
+            last_active_dt = user.last_login or user.updated_at
+            last_active = format_relative_time(last_active_dt)
+
+            result.append(
+                {
+                    "id": user.id,
+                    "name": user.name or "",
+                    "email": user.email,
+                    "role": "admin" if user.is_admin else "user",
+                    "plan": user.subscription_plan or "Free",
+                    "subscription_status": user.subscription_status or "none",
+                    "status": user_status,
+                    "is_active": user.is_active,
+                    "created_at": user.created_at.isoformat() if user.created_at else None,
+                    "joinDate": user.created_at.strftime("%Y-%m-%d") if user.created_at else None,
+                    "lastActive": last_active,
+                    "last_active": last_active,
+                    "analyses": analysis_count,
+                    "avatar": get_user_avatar(user.name),
+                }
+            )
+
+        return {
+            "users": result,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "totalPages": (total + limit - 1) // limit if limit else 1,
+        }
+    except Exception as e:
+        logger.error(f"Error in get_users: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch users: {str(e)}")
 
 
 # ── Dynamic route AFTER static routes (/stats must not be shadowed) ───────────
@@ -270,7 +287,7 @@ async def get_user_details(
         "id": user.id,
         "name": user.name,
         "email": user.email,
-        "avatar": "".join([n[0] for n in user.name.split(" ")[:2]]).upper(),
+        "avatar": get_user_avatar(user.name),
         "joinDate": user.created_at.isoformat() if user.created_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "lastActive": last_active,

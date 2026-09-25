@@ -6,6 +6,7 @@ from datetime import datetime
 from database.pg_connections import get_db
 from database.pg_models import User, UserRole
 from api.routes.dependencies import admin_required
+from api.routes.admin.users import get_user_avatar
 
 router = APIRouter(prefix="/control/permissions", tags=["admin-permissions"])
 
@@ -57,9 +58,7 @@ async def get_users_for_permissions(
             "role": user.role or UserRole.NORMAL.value,
             "subscription_status": user.subscription_status or "none",
             "created_at": user.created_at.isoformat() if user.created_at else None,
-            "avatar": "".join(
-                [n[0] for n in (user.name or "U").split(" ")[:2]]
-            ).upper(),
+            "avatar": get_user_avatar(user.name),
         })
 
     return {
