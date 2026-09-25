@@ -57,9 +57,7 @@ async def get_users_for_permissions(
             "role": user.role or UserRole.NORMAL.value,
             "subscription_status": user.subscription_status or "none",
             "created_at": user.created_at.isoformat() if user.created_at else None,
-            "avatar": "".join(
-                [n[0] for n in (user.name or "U").split(" ")[:2]]
-            ).upper(),
+            "avatar": "".join(n[0] for n in (user.name or "").split()[:2]).upper() or "U",
         })
 
     return {
