@@ -73,7 +73,113 @@ class PayoutService:
             logger.error(f"Could not send payout success email for payout {payout_id}: {e}")
     
     @staticmethod
-    def create_payout_request(user_id: int, amount: Decimal, payment_method: str,  # 'stripe' or 'flutterwave'   
+    def get_platform_stripe_available(currency: str) -> Optional[int]:
+        """
+        The platform's AVAILABLE Stripe balance in `currency`, in minor units
+        (pence/cents), or None when it can't be read. A Stripe Transfer can
+        only draw on available funds — money still "pending" settlement
+        doesn't count — so paying a referrer from a platform whose balance is
+        empty just fails; check first instead of creating a doomed payout.
+        """
+        try:
+            balance = stripe.Balance.retrieve(api_key=os.getenv("STRIPE_SECRET_KEY"))
+            for entry in balance.available:
+                if str(entry.currency).lower() == currency.lower():
+                    return int(entry.amount)
+            return 0
+        except Exception as e:
+            logger.warning(f"[Stripe payout] could not read platform balance: {e}")
+            return None
+
+    @staticmethod
+    def process_stripe_transfer_payout(
+        payout: Payout, db: Session, manage_transaction: bool = True,
+        transfer_group: Optional[str] = None, idempotency_key: Optional[str] = None,
+        existing_transfer: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Pay a referrer by moving `payout.amount` into their Stripe Connect
+        account with ONE idempotent Transfer. Used for the automatic
+        commission payout (Flutterwave/NGN revenue -> a Stripe-only referrer).
+
+        Deliberately not process_stripe_payout(): that one creates a Transfer
+        and then a second, manual Payout on the connected account, so if the
+        Payout step failed (e.g. under a bank's minimum) the money had ALREADY
+        moved while our record said "failed" — a retry would then pay twice.
+        Here the Transfer is the whole operation: from the connected account's
+        Stripe balance, Stripe pays the referrer's bank on its own payout
+        schedule. The idempotency key is derived from our payout id, so
+        repeating this call for the same payout can never send money twice.
+
+        manage_transaction: same meaning as process_flutterwave_payout.
+        """
+        try:
+            payout_account = db.query(PayoutAccount).filter(
+                PayoutAccount.user_id == payout.user_id
+            ).first()
+            if not payout_account or not payout_account.stripe_account_id or not payout_account.is_verified:
+                raise ValueError("Verified Stripe account not configured")
+
+            amount_minor = int((Decimal(str(payout.amount)) * 100).to_integral_value())
+            if amount_minor < 1:
+                raise ValueError("Amount is below the smallest transferable unit")
+
+            logger.info(
+                f"[Stripe payout] START | payout={payout.id} user={payout.user_id} "
+                f"{payout.amount} {payout.currency} -> {payout_account.stripe_account_id}"
+                + (f" (converted from {payout.original_amount} {payout.original_currency} @ {payout.fx_rate})"
+                   if payout.original_currency else "")
+            )
+
+            if existing_transfer:
+                # Stripe already holds a transfer for this commission (an earlier
+                # attempt sent it but our records never caught up) — adopt it
+                # rather than send the money a second time.
+                transfer_dict = existing_transfer
+                logger.warning(f"[Stripe payout] ADOPTING existing transfer {transfer_dict.get('id')} | payout={payout.id}")
+            else:
+                transfer = stripe.Transfer.create(
+                    amount=amount_minor,
+                    currency=payout.currency.lower(),
+                    destination=payout_account.stripe_account_id,
+                    description=f"Lavoo Builder Bonus payout #{payout.id}",
+                    metadata={"lavoo_payout_id": str(payout.id), "user_id": str(payout.user_id)},
+                    **({"transfer_group": transfer_group} if transfer_group else {}),
+                    idempotency_key=idempotency_key or f"lavoo-payout-{payout.id}",
+                    api_key=os.getenv("STRIPE_SECRET_KEY"),
+                )
+                transfer_dict = transfer.to_dict() if hasattr(transfer, "to_dict") else dict(transfer)
+
+            now = datetime.now(timezone.utc)
+            payout.status = 'completed'
+            payout.provider_payout_id = transfer_dict.get("id")
+            payout.provider_response = json.dumps({"status": "success", "data": transfer_dict}, default=str)
+            payout.failure_reason = None
+            payout.processed_at = now
+            payout.completed_at = now
+            if manage_transaction:
+                db.commit()
+                db.refresh(payout)
+            else:
+                db.flush()
+
+            logger.info(f"[Stripe payout] SUCCESS | payout={payout.id} transfer={transfer_dict.get('id')} {payout.amount} {payout.currency}")
+            return {"status": "completed", "payout_id": payout.id, "transfer_id": transfer_dict.get("id")}
+
+        except Exception as e:
+            reason = (getattr(e, "user_message", None) or str(e))
+            payout.status = 'failed'
+            payout.failure_reason = reason
+            if manage_transaction:
+                db.commit()
+                db.refresh(payout)
+            else:
+                db.flush()
+            logger.error(f"[Stripe payout] FAILED | payout={payout.id} error={reason}", exc_info=True)
+            raise ValueError(f"Stripe payout failed: {reason}")
+
+    @staticmethod
+    def create_payout_request(user_id: int, amount: Decimal, payment_method: str,  # 'stripe' or 'flutterwave'
         db: Session) -> Payout:
         """
         Create a payout request
