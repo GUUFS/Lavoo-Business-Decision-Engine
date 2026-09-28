@@ -1,5 +1,6 @@
 
 import os
+import re
 import json
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
@@ -1143,3 +1144,164 @@ async def save_voice_transcript(
     }), ticket.user_id)
 
     return {"status": "success", "message_id": new_msg.id}
+
+
+class VoiceChatRequest(BaseModel):
+    ticket_id: Optional[int] = None
+    user_speech: str
+    conversation_history: Optional[List[Dict[str, str]]] = []
+
+@router.post("/voice/chat")
+async def process_voice_chat(
+    payload: VoiceChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Process spoken input from the user, query NVIDIA NIM (meta/llama-3.2-11b-vision-instruct),
+    and return a natural voice-ready response while syncing to the ticket conversation in real time.
+    """
+    user_text = payload.user_speech.strip()
+    if not user_text:
+        raise HTTPException(status_code=400, detail="User speech cannot be empty")
+
+    user_msg_id = None
+    ticket = None
+    if payload.ticket_id:
+        ticket = db.query(Ticket).filter(Ticket.id == payload.ticket_id).first()
+        if ticket:
+            user_msg = TicketMessage(
+                ticket_id=ticket.id,
+                sender_id=current_user.id,
+                sender_role="user",
+                message=user_text,
+                is_read=True,
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(user_msg)
+            ticket.updated_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(user_msg)
+            user_msg_id = user_msg.id
+
+            u_payload = {
+                "id": user_msg.id,
+                "ticket_id": ticket.id,
+                "sender_id": current_user.id,
+                "sender_role": "user",
+                "sender_name": current_user.name or "User",
+                "message": user_text,
+                "content": user_text,
+                "is_read": True,
+                "created_at": user_msg.created_at.isoformat()
+            }
+            await manager.broadcast(json.dumps({"type": "new_message", "payload": u_payload}))
+
+    voice_prompt = (
+        "You are the official Lavoo Voice Support Assistant having a real-time spoken voice conversation with a founder.\n\n"
+        "SPOKEN VOICE CONVERSATION RULES:\n"
+        "1. Speak naturally, warmly, and concisely. Keep responses between 1 and 3 conversational sentences so they sound natural when spoken aloud.\n"
+        "2. STRICTLY DO NOT use markdown symbols, asterisks, hashtags, bullet points, or raw URLs. Format everything as clean spoken text.\n"
+        "3. Core Lavoo platform context:\n"
+        "   - Decision Engine: Evaluates business viability across 4 pillars (Viability, Monetization, Execution, Scalability) and generates execution roadmaps.\n"
+        "   - The Build Room: Collaborative founder community where builders share reflections and solve problems.\n"
+        "   - The Signal: Curated operator teardowns and market opportunities.\n"
+        "   - Earnings: 40% recurring affiliate commissions with automated 24-hour settlements.\n"
+        "   - Subscriptions: Pro at $29/mo or $290/yr and Premium at $79/mo or $790/yr.\n"
+        "4. Escalations: If the user requests a refund or reports billing disputes or payout errors, reassure them warmly that their ticket is flagged for human administrative resolution within 24 hours.\n"
+    )
+
+    messages = [{"role": "system", "content": voice_prompt}]
+
+    if payload.conversation_history:
+        for turn in payload.conversation_history[-6:]:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            if role in ["user", "assistant"] and content:
+                messages.append({"role": role, "content": content})
+
+    messages.append({"role": "user", "content": user_text})
+
+    nvidia_api_key = os.getenv("NVIDIA_API_KEY", "")
+    grok_api_key = os.getenv("XAI_API_KEY", "")
+
+    ai_reply_text = ""
+    # 1. Primary NVIDIA NIM
+    if nvidia_api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                base_url="https://integrate.api.nvidia.com/v1",
+                api_key=nvidia_api_key,
+                timeout=12.0
+            )
+            model_name = os.getenv("CUSTOMER_SERVICE_NVIDIA_MODEL", "meta/llama-3.2-11b-vision-instruct")
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=250
+            )
+            ai_reply_text = completion.choices[0].message.content or ""
+        except Exception as e:
+            print(f"NVIDIA voice call error: {e}")
+
+    # 2. Fallback to Grok
+    if not ai_reply_text and grok_api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(
+                base_url="https://api.x.ai/v1",
+                api_key=grok_api_key,
+                timeout=12.0
+            )
+            completion = client.chat.completions.create(
+                model=os.getenv("CUSTOMER_SERVICE_GROK_MODEL", "grok-4-1-fast-reasoning"),
+                messages=messages,
+                temperature=0.7,
+                max_tokens=250
+            )
+            ai_reply_text = completion.choices[0].message.content or ""
+        except Exception as e:
+            print(f"Grok voice fallback error: {e}")
+
+    if not ai_reply_text:
+        ai_reply_text = "I received your message. I am noting this in your support ticket so our team can help you promptly."
+
+    ai_reply_text = re.sub(r"[*#`_]", "", ai_reply_text).strip()
+
+    reply_msg_id = None
+    if ticket:
+        ai_msg = TicketMessage(
+            ticket_id=ticket.id,
+            sender_id=None,
+            sender_role="admin",
+            message=ai_reply_text,
+            is_read=True,
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(ai_msg)
+        ticket.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(ai_msg)
+        reply_msg_id = ai_msg.id
+
+        ai_payload = {
+            "id": ai_msg.id,
+            "ticket_id": ticket.id,
+            "sender_id": None,
+            "sender_role": "admin",
+            "sender_name": "Lavoo Support AI",
+            "message": ai_reply_text,
+            "content": ai_reply_text,
+            "is_read": True,
+            "created_at": ai_msg.created_at.isoformat()
+        }
+        await manager.broadcast(json.dumps({"type": "new_message", "payload": ai_payload}))
+        await notification_manager.send_personal_message(json.dumps({"type": "new_message", "payload": ai_payload}), ticket.user_id)
+
+    return {
+        "reply": ai_reply_text,
+        "message_id": reply_msg_id,
+        "user_message_id": user_msg_id
+    }
