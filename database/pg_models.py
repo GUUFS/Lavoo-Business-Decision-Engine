@@ -2117,6 +2117,7 @@ class SignalComment(Base):
 class SignalCreate(BaseModel):
     """Request body for creating a new Signal post."""
     title: str
+    slug: Optional[str] = None
     content: str
     excerpt: Optional[str] = None
     cover_image_url: Optional[str] = None
@@ -2131,6 +2132,7 @@ class SignalCreate(BaseModel):
 class SignalUpdate(BaseModel):
     """Request body for updating an existing Signal post (all fields optional)."""
     title: Optional[str] = None
+    slug: Optional[str] = None
     content: Optional[str] = None
     excerpt: Optional[str] = None
     cover_image_url: Optional[str] = None

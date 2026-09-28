@@ -1,18 +1,20 @@
 
+import os
+import json
+from typing import List, Dict, Optional
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Cookie, BackgroundTasks
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
-from typing import List, Dict
 from jose import jwt, JWTError
-from api.routes.auth.login import SECRET_KEY, ALGORITHM
+from pydantic import BaseModel
 
+from livekit.api import AccessToken, VideoGrants
+
+from api.routes.auth.login import SECRET_KEY, ALGORITHM, get_current_user
 from database.pg_connections import get_db
 from database.pg_models import User, Ticket, TicketMessage, TicketCreate, MessageCreate, TicketResponse, MessageResponse, UserNotification
-from api.routes.auth.login import get_current_user
 from api.routes.support.ai_support import async_process_ticket_support_ai
-
-from typing import Optional
-import json
 
 router = APIRouter(prefix="/customer-service", tags=["customer-service"])
 
@@ -1033,3 +1035,111 @@ async def resolve_all_user_tickets(
         db.rollback()
         print(f"Error in resolve_all_user_tickets: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── LiveKit Real-Time Voice Support Endpoints ─────────────────────────────────
+
+class VoiceTokenRequest(BaseModel):
+    ticket_id: Optional[int] = None
+    room_name: Optional[str] = None
+
+class VoiceTranscriptRequest(BaseModel):
+    ticket_id: int
+    transcript: str
+
+@router.post("/voice/token")
+async def get_voice_room_token(
+    payload: VoiceTokenRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate a secure LiveKit JWT access token for real-time voice support.
+    """
+    livekit_url = os.getenv("LIVEKIT_URL", "wss://car-service-provider-3lj5cuhr.livekit.cloud")
+    livekit_api_key = os.getenv("LIVEKIT_API_KEY", "APIeLDUXJAVzbFq")
+    livekit_api_secret = os.getenv("LIVEKIT_API_SECRET", "uyExBRIXqf9D2euQfZl3UKeZIUcIoewVq5nsqHNSthqH")
+
+    if not livekit_api_key or not livekit_api_secret:
+        raise HTTPException(status_code=500, detail="LiveKit credentials are not configured.")
+
+    room_name = payload.room_name or (f"support-ticket-{payload.ticket_id}" if payload.ticket_id else f"support-user-{current_user.id}")
+    participant_identity = f"user-{current_user.id}"
+    participant_name = current_user.name or f"User #{current_user.id}"
+
+    token = (
+        AccessToken(livekit_api_key, livekit_api_secret)
+        .with_identity(participant_identity)
+        .with_name(participant_name)
+        .with_grants(VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+        ))
+        .to_jwt()
+    )
+
+    return {
+        "server_url": livekit_url,
+        "token": token,
+        "room_name": room_name,
+        "identity": participant_identity,
+        "participant_name": participant_name
+    }
+
+@router.post("/voice/transcript")
+async def save_voice_transcript(
+    payload: VoiceTranscriptRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Save the transcript of a completed voice call to the active support ticket.
+    """
+    if not payload.transcript or not payload.transcript.strip():
+        return {"status": "skipped", "message": "Empty transcript"}
+
+    ticket = db.query(Ticket).filter(Ticket.id == payload.ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    if ticket.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized to update this ticket")
+
+    formatted_message = f"🎙️ [Voice Support Call Transcript]\n\n{payload.transcript.strip()}"
+
+    new_msg = TicketMessage(
+        ticket_id=payload.ticket_id,
+        sender_id=current_user.id,
+        sender_role="system",
+        message=formatted_message,
+        is_read=True,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(new_msg)
+    ticket.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(new_msg)
+
+    # Broadcast via WebSocket & personal notification so chat updates immediately
+    msg_payload = {
+        "id": new_msg.id,
+        "ticket_id": new_msg.ticket_id,
+        "sender_id": new_msg.sender_id,
+        "sender_role": "system",
+        "sender_name": "Lavoo Voice Assistant",
+        "message": new_msg.message,
+        "content": new_msg.message,
+        "is_read": new_msg.is_read,
+        "created_at": new_msg.created_at.isoformat()
+    }
+    await manager.broadcast(json.dumps({
+        "type": "new_message",
+        "payload": msg_payload
+    }))
+    await notification_manager.send_personal_message(json.dumps({
+        "type": "new_message",
+        "payload": msg_payload
+    }), ticket.user_id)
+
+    return {"status": "success", "message_id": new_msg.id}

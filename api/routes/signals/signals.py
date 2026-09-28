@@ -93,13 +93,15 @@ def _check_cover_image_size(cover_image_data: Optional[str]) -> None:
 
 def _generate_slug(title: str) -> str:
     """
-    Convert a post title to a lowercase, URL-safe slug.
+    Convert a post title or custom slug string to a lowercase, URL-safe slug.
     Example: "Hello World! (2026)" → "hello-world-2026"
     """
+    if not title:
+        return "post"
     value = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
     value = re.sub(r"[^\w\s-]", "", value).strip().lower()
-    value = re.sub(r"[-\s]+", "-", value)
-    return value
+    value = re.sub(r"[-\s]+", "-", value).strip("-")
+    return value or "post"
 
 
 def _unique_slug(base_slug: str, db: Session, exclude_id: int = None) -> str:
@@ -390,6 +392,40 @@ async def list_signals(
     }
 
 
+@router.get("/validate-slug")
+async def validate_slug(
+    slug:         str           = Query(..., min_length=1),
+    exclude_id:   Optional[int] = Query(default=None),
+    db:           Session       = Depends(get_db),
+    current_user: User          = Depends(get_current_user),
+):
+    """
+    Validate whether a proposed URL slug is valid and available.
+    Restricted to moderators and admins.
+    """
+    _require_moderator(current_user)
+    sanitized = _generate_slug(slug)
+    if not sanitized:
+        return {
+            "valid": False,
+            "available": False,
+            "slug": "",
+            "message": "Slug cannot be empty or contain only special characters."
+        }
+
+    query = db.query(Signal).filter(Signal.slug == sanitized)
+    if exclude_id is not None:
+        query = query.filter(Signal.id != exclude_id)
+    exists = query.first() is not None
+
+    return {
+        "valid": True,
+        "available": not exists,
+        "slug": sanitized,
+        "message": "Slug is available" if not exists else "Slug is already taken by another post"
+    }
+
+
 @router.get("/{identifier}")
 async def get_signal(
     identifier: str,
@@ -462,8 +498,11 @@ async def create_signal(
 
     _check_cover_image_size(payload.cover_image_data)
 
-    base_slug = _generate_slug(payload.title)
-    slug      = _unique_slug(base_slug, db)
+    if payload.slug and payload.slug.strip():
+        base_slug = _generate_slug(payload.slug)
+    else:
+        base_slug = _generate_slug(payload.title)
+    slug = _unique_slug(base_slug, db)
 
     published_at = None
     if payload.status == "published":
@@ -506,7 +545,7 @@ async def update_signal(
 
     - Restricted to the post's author or an admin.
     - Only supplied (non-None) fields are applied — others are left unchanged.
-    - Slug is regenerated if the title changes, preserving uniqueness.
+    - Slug is updated if custom slug is provided, or regenerated if title changes.
     - published_at is set when status changes to "published" for the first time.
     """
     _require_moderator(current_user)
@@ -530,9 +569,14 @@ async def update_signal(
 
     _check_cover_image_size(payload.cover_image_data)
 
+    if payload.slug is not None and payload.slug.strip():
+        base_slug   = _generate_slug(payload.slug)
+        signal.slug = _unique_slug(base_slug, db, exclude_id=signal_id)
+    elif payload.title is not None and (not signal.slug or signal.slug == _generate_slug(signal.title)):
+        base_slug   = _generate_slug(payload.title)
+        signal.slug = _unique_slug(base_slug, db, exclude_id=signal_id)
+
     if payload.title is not None:
-        base_slug    = _generate_slug(payload.title)
-        signal.slug  = _unique_slug(base_slug, db, exclude_id=signal_id)
         signal.title = payload.title
 
     if payload.content is not None:
