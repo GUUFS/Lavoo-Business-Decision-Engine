@@ -902,6 +902,100 @@ class PayoutService:
         return counts
 
     @staticmethod
+    def mark_stripe_bank_settlement(
+        connected_account_id: str, bank_payout_created: int, bank_payout_status: str, db: Session,
+    ) -> int:
+        """
+        Record that Stripe swept a referrer's Stripe balance to their real
+        bank account (a Stripe "Payout" object on their connected account —
+        not to be confused with our own Payout table).
+
+        Stripe bundles ALL of a connected account's available balance into
+        one bank payout, not one per commission, so this isn't a 1:1 match.
+        Instead: any of our Payout rows for that referrer which (a) already
+        completed as a Transfer and (b) completed BEFORE this bank payout was
+        created, must have been part of the money it just swept — mark them
+        settled together. Rows that completed after stay untouched; Stripe's
+        next bank payout will cover those.
+
+        Returns how many of our rows were marked. Only acts on
+        bank_payout_status == 'paid'; 'failed' is left to the caller to just
+        log/alert (the money is still safe in the referrer's Stripe balance,
+        nothing to undo on our side).
+        """
+        if bank_payout_status != "paid":
+            return 0
+        payout_account = db.query(PayoutAccount).filter(
+            PayoutAccount.stripe_account_id == connected_account_id
+        ).first()
+        if not payout_account:
+            logger.warning(f"[Stripe bank-settle] no PayoutAccount on file for connected account {connected_account_id}")
+            return 0
+
+        cutoff = datetime.fromtimestamp(bank_payout_created, tz=timezone.utc)
+        rows = db.query(Payout).filter(
+            Payout.user_id == payout_account.user_id,
+            Payout.payment_method == 'stripe',
+            Payout.status == 'completed',
+            Payout.bank_settled_at.is_(None),
+            Payout.completed_at.isnot(None),
+            Payout.completed_at <= cutoff,
+        ).all()
+        for row in rows:
+            row.bank_settled_at = datetime.now(timezone.utc)
+        db.commit()
+        if rows:
+            logger.info(f"[Stripe bank-settle] user={payout_account.user_id} marked {len(rows)} payout(s) bank-settled: {[r.id for r in rows]}")
+        return len(rows)
+
+    @staticmethod
+    def reconcile_stripe_bank_settlements(db: Session, background_tasks: BackgroundTasks, lookback_days: int = 60) -> Dict[str, int]:
+        """
+        Fallback for mark_stripe_bank_settlement in case the payout.paid
+        webhook is ever missed: for every referrer with an unsettled
+        completed Stripe payout, ask Stripe directly whether a bank payout
+        has since gone out on their connected account, and a failed one too.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        accounts = db.query(PayoutAccount.stripe_account_id, PayoutAccount.user_id).join(
+            Payout, Payout.user_id == PayoutAccount.user_id
+        ).filter(
+            PayoutAccount.stripe_account_id.isnot(None),
+            Payout.payment_method == 'stripe',
+            Payout.status == 'completed',
+            Payout.bank_settled_at.is_(None),
+            Payout.completed_at >= cutoff,
+        ).distinct().all()
+
+        counts = {"accounts_checked": 0, "payouts_settled": 0, "bank_payout_failed": 0, "errors": 0}
+        for stripe_account_id, user_id in accounts:
+            counts["accounts_checked"] += 1
+            try:
+                bank_payouts = stripe.Payout.list(stripe_account=stripe_account_id, limit=10, api_key=os.getenv("STRIPE_SECRET_KEY"))
+                for bp in bank_payouts.data:
+                    if bp.status == "paid":
+                        counts["payouts_settled"] += PayoutService.mark_stripe_bank_settlement(
+                            stripe_account_id, bp.created, "paid", db
+                        )
+                    elif bp.status == "failed":
+                        counts["bank_payout_failed"] += 1
+                        PayoutService._queue_admin_alert(
+                            background_tasks,
+                            subject=f"⚠️ A referrer's bank payout failed on Stripe (user {user_id})",
+                            body=(
+                                f"Stripe could not pay out {bp.amount / 100:.2f} {bp.currency.upper()} from "
+                                f"connected account {stripe_account_id}'s balance to their bank: "
+                                f"{getattr(bp, 'failure_message', None) or 'no reason given'}. The money is still "
+                                f"safe in their Stripe balance — they likely need to fix their bank details."
+                            ),
+                        )
+            except Exception as e:
+                counts["errors"] += 1
+                logger.error(f"[Stripe bank-settle reconcile] account={stripe_account_id} error: {e}", exc_info=True)
+
+        return counts
+
+    @staticmethod
     def complete_stripe_payout(payout_id: int, background_tasks: BackgroundTasks, status: str, db: Session) -> None:
         """
         Complete Stripe payout (simulated or via potential webhook)

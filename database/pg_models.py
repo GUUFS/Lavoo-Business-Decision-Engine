@@ -850,6 +850,17 @@ class Payout(Base):
     provider_settled_amount = Column(Numeric(precision=10, scale=2), nullable=True)
     provider_fee = Column(Numeric(precision=10, scale=2), nullable=True)
 
+    # When the money actually reached the referrer's real bank account.
+    # Stripe only: completed_at/status='completed' already mean the money
+    # left Lavoo's balance and reached the referrer's STRIPE balance (a
+    # Transfer) — a separate step, on the referrer's own schedule, then
+    # sweeps their Stripe balance to their bank (a Payout). This column
+    # records that second step, once Stripe's payout.paid webhook (or the
+    # reconciler) confirms it. NULL until then; stays NULL forever for
+    # Flutterwave, where a transfer's destination IS the bank account
+    # directly, so there is no separate step to record.
+    bank_settled_at = Column(DateTime(timezone=True), nullable=True)
+
     # Relationships
     user = relationship("User", foreign_keys=[user_id])
 

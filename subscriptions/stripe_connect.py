@@ -674,6 +674,37 @@ async def stripe_connect_webhook(
                         detail=f"DB commit failed for account {account_id}: {db_err}",
                     )
 
+        elif event.type in ("payout.paid", "payout.failed"):
+            # This is the SECOND step for a referrer's money, distinct from
+            # account.updated above. A "Transfer" already moved commission
+            # money from Lavoo's balance into the referrer's own Stripe
+            # balance (that's what our Payout.status='completed' records).
+            # This event is Stripe sweeping THEIR balance to THEIR bank — a
+            # different Stripe object ("Payout", on their connected account),
+            # on their own payout schedule, nothing to do with us triggering
+            # it. This webhook is already subscribed to both events; nothing
+            # previously handled them, so we had no record of money actually
+            # reaching a referrer's bank versus just their Stripe balance.
+            connected_account_id = event.account
+            bank_payout = event.data.object
+            if not connected_account_id:
+                logger.warning("[Stripe Connect /webhook] payout event with no connected account id — skipping")
+            elif event.type == "payout.paid":
+                from subscriptions.payout_service import PayoutService
+                settled = PayoutService.mark_stripe_bank_settlement(
+                    connected_account_id, bank_payout.created, "paid", db
+                )
+                logger.info(f"[Stripe Connect /webhook] bank payout.paid for {connected_account_id} — settled {settled} of our payout row(s)")
+            else:
+                payout_account = db.query(PayoutAccount).filter(
+                    PayoutAccount.stripe_account_id == connected_account_id
+                ).first()
+                logger.warning(
+                    f"[Stripe Connect /webhook] bank payout.failed for {connected_account_id} "
+                    f"(user_id={payout_account.user_id if payout_account else 'unknown'}): "
+                    f"{getattr(bank_payout, 'failure_message', None) or 'no reason given'}"
+                )
+
         return {"status": "success", "event": event.type}
 
     except HTTPException:
