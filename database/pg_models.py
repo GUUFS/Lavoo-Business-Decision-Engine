@@ -760,8 +760,35 @@ class Referral(Base):
     chops_awarded = Column(Integer, default=0)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+    # True when this referral wasn't a real referral link — the user signed
+    # up with no referral code at all and was auto-assigned to a staff
+    # member from the pool (see StaffReferralPool) so every signup has
+    # someone attributed. commission_service.py reads this to apply the
+    # flat 30% staff rate instead of the normal 40/15/50% logic.
+    via_staff_pool = Column(Boolean, default=False, server_default="false")
+
     referrer = relationship("User", foreign_keys=[referrer_id], back_populates="referrals")
     referred_user = relationship("User",foreign_keys=[referred_user_id], back_populates="referred_by")
+
+
+class StaffReferralPool(Base):
+    """
+    Staff emails an admin has added to receive referral-less signups. See
+    api.services.staff_referral_service.assign_next_staff_referrer for the
+    fair-rotation pick, and Referral.via_staff_pool for how a resulting
+    commission is rated differently from a real referral.
+    """
+    __tablename__ = "staff_referral_pool"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    email = Column(String(255), nullable=False)  # kept for admin display even if the user's email later changes
+    is_active = Column(Boolean, default=True, server_default="true")
+    assigned_count = Column(Integer, default=0, server_default="0")
+    last_assigned_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", foreign_keys=[user_id])
 
 
 '''Pending Signups Table — holds a not-yet-real account until its email is

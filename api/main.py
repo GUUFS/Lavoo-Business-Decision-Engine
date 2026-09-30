@@ -79,7 +79,7 @@ from api.routes.auth import login, signup, forgot_password, google_oauth
 from api.routes.decision_engine import analyzer as business_analyzer
 from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions, profile as user_profile
 from api.routes.support import customer_service, reviews, contact as support_contact
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact, staff_referrals
 
 # Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
@@ -1255,6 +1255,16 @@ def run_heavy_schema_migrations():
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS original_amount NUMERIC(10,2)",
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS fx_rate NUMERIC(18,6)",
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS bank_settled_at TIMESTAMPTZ",
+            "ALTER TABLE referrals ADD COLUMN IF NOT EXISTS via_staff_pool BOOLEAN DEFAULT FALSE",
+            """CREATE TABLE IF NOT EXISTS staff_referral_pool (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) UNIQUE,
+                email VARCHAR(255) NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                assigned_count INTEGER DEFAULT 0,
+                last_assigned_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )""",
             "UPDATE users SET username = LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]', '', 'g')) WHERE username IS NULL OR username = ''",
             "CREATE TABLE IF NOT EXISTS founder_insight_cards (id SERIAL PRIMARY KEY, highlight_stat VARCHAR(50), insight_text TEXT NOT NULL, source VARCHAR(255) NOT NULL, category VARCHAR(50) DEFAULT 'african_tech', accent_color VARCHAR(20) DEFAULT '#e87a02', is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)"
         ]
@@ -1509,6 +1519,7 @@ app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(permissions.router, prefix="/api")
+app.include_router(staff_referrals.router, prefix="/api")
 app.include_router(admin_contact.router, prefix="/api")
 app.include_router(signals.router, prefix="/api")
 
