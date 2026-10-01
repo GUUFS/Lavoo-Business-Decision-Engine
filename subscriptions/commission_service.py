@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 COMMISSION_RATE_STANDARD = Decimal("0.40")   # 40% — shown on screen, paid to subscribed regular users
 COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff (screen still shows 40%)
 COMMISSION_RATE_FREE     = Decimal("0.15")   # 15% — paid to a referrer who is on the free plan themselves
+COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides the normal 40/15/50% logic regardless of that staff member's own plan
 
 # Keep legacy alias so any other callsite referencing COMMISSION_RATE still works
 COMMISSION_RATE = COMMISSION_RATE_STANDARD
@@ -81,8 +82,13 @@ class CommissionService:
                 logger.info(f"Commission already exists for subscription {subscription.id}")
                 return existing
 
-            # Determine rate: partners get 50%, everyone else 40%
-            actual_rate = CommissionService._get_rate_for_referrer(referral.referrer_id, db)
+            # Determine rate: a staff-pool auto-assignment is a flat 30%
+            # regardless of that staff member's own plan; otherwise partners
+            # get 50%, everyone else 40% (15% if the referrer is on the free plan).
+            if referral.via_staff_pool:
+                actual_rate = COMMISSION_RATE_STAFF_POOL
+            else:
+                actual_rate = CommissionService._get_rate_for_referrer(referral.referrer_id, db)
 
             # Calculate commission amount
             original_amount = Decimal(str(subscription.amount))

@@ -1118,10 +1118,12 @@ async def flutterwave_reconcile_payouts(
     db: Session = Depends(get_db),
 ):
     """
-    Admin-only: run both payout checks right now (the background jobs do the
+    Admin-only: run all payout checks right now (the background jobs do the
     same on a timer).
     - flutterwave: asks Flutterwave for the real status of payouts we sent.
     - stripe: asks Stripe whether any transfer we sent has been reversed.
+    - stripe_bank_settlement: asks Stripe whether a referrer's own Stripe
+      balance has since been paid out to their real bank account.
     """
     if not getattr(current_user, "is_admin", False):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1133,7 +1135,13 @@ async def flutterwave_reconcile_payouts(
     stripe_counts = await asyncio.to_thread(
         PayoutService.reconcile_stripe_payouts, db, background_tasks
     )
-    return {"status": "success", "result": flutterwave_counts, "stripe": stripe_counts}
+    bank_settlement_counts = await asyncio.to_thread(
+        PayoutService.reconcile_stripe_bank_settlements, db, background_tasks
+    )
+    return {
+        "status": "success", "result": flutterwave_counts,
+        "stripe": stripe_counts, "stripe_bank_settlement": bank_settlement_counts,
+    }
 
 
 @router.get("/health")
