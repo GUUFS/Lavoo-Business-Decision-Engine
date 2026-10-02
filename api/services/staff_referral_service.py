@@ -24,10 +24,20 @@ _ASSIGNMENT_LOCK_ID = 7304
 
 def assign_next_staff_referrer(db: Session) -> Optional[User]:
     """
-    Pick the staff member who has been given the fewest referrals so far
-    (ties broken by whoever's gone longest since their last one), and record
-    that they just received another — so the pool can never hand a second
-    referral to anyone before everyone else in it has had the same number.
+    Pick whoever has gone longest without a referral (a never-assigned
+    member counts as longest of all), and record that they just received
+    one — a plain turn-based rotation, not a race to equalise totals.
+
+    This is deliberately gentle rather than aggressive: a staff member who
+    joins the pool after others already have a head start is NOT given a
+    burst of back-to-back referrals to catch their running total up to the
+    group's. They're simply slotted into the rotation from here on and take
+    their turn exactly like everyone else, so the historical gap narrows
+    only gradually, over many turns, the same way it would have if they'd
+    always been in the pool. Sorting by assigned_count instead would do the
+    opposite — hand every new referral to the newest member alone until
+    their count matches the others', which reads as favouritism toward
+    whoever just joined.
 
     Returns the picked User, or None if the pool is empty. Never raises: a
     signup must succeed whether or not this finds anyone to assign.
@@ -43,8 +53,14 @@ def assign_next_staff_referrer(db: Session) -> Optional[User]:
             db.query(StaffReferralPool)
             .filter(StaffReferralPool.is_active.is_(True))
             .order_by(
-                StaffReferralPool.assigned_count.asc(),
+                # Primary: whoever hasn't had a turn in the longest time.
+                # Only ties among members who have NEVER been assigned
+                # (last_assigned_at IS NULL — e.g. several added to the pool
+                # before the first referral ever arrives) fall through to
+                # assigned_count/id, since "longest ago" has no meaning yet
+                # for any of them.
                 StaffReferralPool.last_assigned_at.asc().nulls_first(),
+                StaffReferralPool.assigned_count.asc(),
                 StaffReferralPool.id.asc(),
             )
             .first()
