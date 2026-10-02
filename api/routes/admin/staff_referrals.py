@@ -26,12 +26,6 @@ class AddStaffEmail(BaseModel):
 
 def _serialize(entry: StaffReferralPool, db: Session) -> dict:
     user = db.query(User).filter(User.id == entry.user_id).first()
-    commissions_generated = (
-        db.query(Commission)
-        .join(Referral, Referral.referrer_id == Commission.user_id)
-        .filter(Referral.via_staff_pool.is_(True), Commission.user_id == entry.user_id)
-        .count()
-    )
     return {
         "id": entry.id,
         "user_id": entry.user_id,
@@ -39,7 +33,6 @@ def _serialize(entry: StaffReferralPool, db: Session) -> dict:
         "name": user.name if user else None,
         "is_active": entry.is_active,
         "assigned_count": entry.assigned_count or 0,
-        "commissions_generated": commissions_generated,
         "last_assigned_at": entry.last_assigned_at.isoformat() if entry.last_assigned_at else None,
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
     }
@@ -52,6 +45,50 @@ async def list_staff_referral_pool(
 ):
     entries = db.query(StaffReferralPool).order_by(StaffReferralPool.created_at.asc()).all()
     return {"pool": [_serialize(e, db) for e in entries]}
+
+
+@router.get("/{entry_id}/referrals")
+async def list_staff_referral_assignments(
+    entry_id: int,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """
+    The actual referred users assigned to one staff member — what the pool's
+    'Assigned so far' count on the list view is a running total of. Each
+    Commission is matched by both referrer AND referred user, not just the
+    referrer, since a referrer can have commissions from other sources too.
+    """
+    entry = db.query(StaffReferralPool).filter(StaffReferralPool.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    referrals = (
+        db.query(Referral)
+        .filter(Referral.referrer_id == entry.user_id, Referral.via_staff_pool.is_(True))
+        .order_by(Referral.created_at.desc())
+        .all()
+    )
+
+    rows = []
+    for referral in referrals:
+        referred = db.query(User).filter(User.id == referral.referred_user_id).first()
+        commissions = db.query(Commission).filter(
+            Commission.user_id == entry.user_id,
+            Commission.referred_user_id == referral.referred_user_id,
+        ).all()
+        rows.append({
+            "referred_user_id": referral.referred_user_id,
+            "name": referred.name if referred else None,
+            "email": referred.email if referred else None,
+            "assigned_at": referral.created_at.isoformat() if referral.created_at else None,
+            "subscription_status": referred.subscription_status if referred else None,
+            "commission_count": len(commissions),
+            "commission_total": sum(float(c.amount) for c in commissions) if commissions else 0.0,
+            "commission_currency": commissions[0].currency if commissions else None,
+        })
+
+    return {"staff_name": entry.email, "referrals": rows}
 
 
 @router.post("")
