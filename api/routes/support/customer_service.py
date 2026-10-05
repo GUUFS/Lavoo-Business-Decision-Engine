@@ -5,7 +5,7 @@ import json
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Cookie, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Cookie, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from pydantic import BaseModel
@@ -13,10 +13,30 @@ from pydantic import BaseModel
 from livekit.api import AccessToken, VideoGrants
 
 from api.routes.auth.login import SECRET_KEY, ALGORITHM, get_current_user
-from api.routes.dependencies import get_current_user_optional
 from database.pg_connections import get_db
 from database.pg_models import User, Ticket, TicketMessage, TicketCreate, MessageCreate, TicketResponse, MessageResponse, UserNotification
 from api.routes.support.ai_support import async_process_ticket_support_ai
+
+
+def get_current_user_optional(
+    authorization: Optional[str] = Header(None),
+    access_token_cookie: Optional[str] = Cookie(None),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Best-effort version of get_current_user defined directly in customer_service
+    to avoid circular import cycles during application startup.
+    """
+    if not authorization and not access_token_cookie:
+        return None
+    try:
+        return get_current_user(
+            authorization=authorization,
+            access_token_cookie=access_token_cookie,
+            db=db,
+        )
+    except HTTPException:
+        return None
 
 router = APIRouter(prefix="/customer-service", tags=["customer-service"])
 
