@@ -6,7 +6,6 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 
 from database.pg_connections import get_db
-from database.pg_models import SecurityMetricsSummary, FailedLoginAttempt, SecurityEvent
 from api.routes.dependencies import admin_required
 from config.logging import get_logger
 
@@ -16,68 +15,49 @@ router = APIRouter(prefix="/security", tags=["security"])
 @router.get("/metrics")
 async def get_security_metrics(db: Session = Depends(get_db), _user=Depends(admin_required)):
     """
-    Get real-time security metrics for the admin dashboard.
-    Returns threat level, attack counts, failed logins, and firewall status.
+    Real-time security metrics for the admin dashboard's stat cards. Field
+    names here must match app/(admin)/admin/security/page.tsx's
+    SecurityMetrics interface exactly, since that's the only consumer and it
+    has no fallback beyond `?? 0`.
+
+    security_events is the authoritative event log — a failed login is
+    recorded there too (see api/routes/auth/login.py), in addition to its
+    own row in failed_login_attempts, so total_events counts security_events
+    alone rather than adding both tables and double-counting.
     """
     try:
-        # Use Raw SQL to query the view - safer handling of nulls/types
-        query = text("SELECT * FROM security_metrics_summary LIMIT 1")
-        result = db.execute(query).fetchone()
-        
-        # Get TOTAL counts for failed logins and blocked IPs (All Time)
-        total_failed_logins = db.execute(text("SELECT COUNT(*) FROM failed_login_attempts")).scalar() or 0
-        total_blocked_ips = db.execute(text("SELECT COUNT(*) FROM ip_blacklist WHERE is_active = true")).scalar() or 0
-        
-        if not result:
-             return {
-                "threatLevel": "Low",
-                "blockedAttacks": int(total_blocked_ips),
-                "failedLogins": int(total_failed_logins),
-                "suspiciousActivity": 0,
-                "activeFirewallRules": 0,
-                "lastSecurityScan": "Never"
-            }
+        total_events = db.execute(text("SELECT COUNT(*) FROM security_events")).scalar() or 0
 
-        # Convert Row to dict for safer access
-        # SQLAlchemy 1.4/2.0+ supports ._mapping
-        row_dict = result._mapping if hasattr(result, '_mapping') else dict(result)
-        
-        # Determine threat level based on high severity events in last 24h
-        high_events = row_dict.get('high_severity_events_24h') or 0
-        threat_level = "Low"
-        if high_events > 10:
-            threat_level = "High"
-        elif high_events > 5:
-            threat_level = "Medium"
+        failed_logins_today = db.execute(text(
+            "SELECT COUNT(*) FROM failed_login_attempts WHERE created_at >= date_trunc('day', NOW())"
+        )).scalar() or 0
 
-        # Get last scan timestamp
-        last_scan = db.execute(text("SELECT completed_at FROM vulnerability_scans ORDER BY completed_at DESC LIMIT 1")).fetchone()
-        last_scan_date = "Never"
-        if last_scan and last_scan[0]:
-             last_scan_date = last_scan[0].isoformat()
+        blocked_ips = db.execute(text(
+            "SELECT COUNT(*) FROM ip_blacklist WHERE is_active = true"
+        )).scalar() or 0
 
-        # Get TOTAL firewall blocks from security_events
-        blocked_attacks = db.execute(text("SELECT COUNT(*) FROM security_events WHERE type = 'firewall block'")).scalar() or 0
+        vulnerability_scans = db.execute(text("SELECT COUNT(*) FROM vulnerability_scans")).scalar() or 0
+
+        critical_events = db.execute(text(
+            "SELECT COUNT(*) FROM security_events WHERE severity ILIKE 'critical'"
+        )).scalar() or 0
 
         return {
-            "threatLevel": threat_level,
-            "blockedAttacks": int(blocked_attacks),
-            "failedLogins": int(total_failed_logins),
-            "suspiciousActivity": int(high_events),
-            "activeFirewallRules": int(row_dict.get('active_firewall_rules') or 0),
-            "lastSecurityScan": last_scan_date
+            "total_events": int(total_events),
+            "failed_logins_today": int(failed_logins_today),
+            "blocked_ips": int(blocked_ips),
+            "vulnerability_scans": int(vulnerability_scans),
+            "critical_events": int(critical_events),
         }
     except Exception as e:
         logger.error(f"Failed to get security metrics: {str(e)}")
-        # Return zeroed metrics on error
         return {
-            "threatLevel": "Low",
-            "blockedAttacks": 0,
-            "failedLogins": 0,
-            "suspiciousActivity": 0,
-            "activeFirewallRules": 0,
-            "lastSecurityScan": "Never",
-            "error": str(e)
+            "total_events": 0,
+            "failed_logins_today": 0,
+            "blocked_ips": 0,
+            "vulnerability_scans": 0,
+            "critical_events": 0,
+            "error": str(e),
         }
 
 

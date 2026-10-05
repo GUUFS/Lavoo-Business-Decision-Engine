@@ -197,6 +197,15 @@ def verify_signup(
     if pending.referrer_code:
         referrer = db.query(User).filter(User.referral_code == pending.referrer_code).first()
 
+    # No referral code at all — auto-assign a staff member from the pool
+    # (fairly rotated) so every signup has someone attributed. Rated
+    # differently: see Referral.via_staff_pool / COMMISSION_RATE_STAFF_POOL.
+    via_staff_pool = False
+    if not referrer:
+        from api.services.staff_referral_service import assign_next_staff_referrer
+        referrer = assign_next_staff_referrer(db)
+        via_staff_pool = referrer is not None
+
     # ── Waitlist referral continuity ─────────────────────────────────────────
     # The waitlist and main-app share the same database. If this email existed
     # on the waitlist, carry over their referral_code (so existing referral links
@@ -255,7 +264,8 @@ def verify_signup(
             referrer_id=referrer.id,
             referred_user_id=new_user.id,
             chops_awarded=50,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
+            via_staff_pool=via_staff_pool,
         )
         db.add(referral)
 
@@ -264,7 +274,10 @@ def verify_signup(
             user_id=new_user.id,
             type=NotificationType.REFERRAL_REGISTERED.value,
             title="Welcome Bonus!",
-            message="You received 50 chops for joining via a referral link.",
+            message=(
+                "You received 50 chops for joining Lavoo!" if via_staff_pool
+                else "You received 50 chops for joining via a referral link."
+            ),
             link="/dashboard/earnings"
         )
         NotificationService.create_notification(
@@ -272,7 +285,10 @@ def verify_signup(
             user_id=referrer.id,
             type=NotificationType.REFERRAL_REGISTERED.value,
             title="New Referral! +50 Chops",
-            message=f"{new_user.name} signed up using your referral link. You earned 50 chops!",
+            message=(
+                f"{new_user.name} was assigned to you as a new referral. You earned 50 chops!" if via_staff_pool
+                else f"{new_user.name} signed up using your referral link. You earned 50 chops!"
+            ),
             link="/dashboard/referrals"
         )
 

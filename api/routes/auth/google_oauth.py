@@ -192,6 +192,15 @@ async def google_callback(
                 if referral_code:
                     referrer = db.query(User).filter(User.referral_code == referral_code).first()
 
+                # No referral code at all — auto-assign a staff member from
+                # the pool. Same logic and rate treatment as manual signup;
+                # see api/routes/auth/signup.py's verify_signup.
+                via_staff_pool = False
+                if not referrer:
+                    from api.services.staff_referral_service import assign_next_staff_referrer
+                    referrer = assign_next_staff_referrer(db)
+                    via_staff_pool = referrer is not None
+
                 user = User(
                     email=email,
                     name=name or email.split("@")[0],
@@ -223,16 +232,23 @@ async def google_callback(
                         referred_user_id=user.id,
                         chops_awarded=50,
                         created_at=datetime.now(timezone.utc),
+                        via_staff_pool=via_staff_pool,
                     ))
                     NotificationService.create_notification(
                         db=db,
                         user_id=user.id,
                         type=NotificationType.REFERRAL_REGISTERED.value,
                         title="Welcome Bonus!",
-                        message="You received 50 chops for joining via a referral link.",
+                        message=(
+                            "You received 50 chops for joining Lavoo!" if via_staff_pool
+                            else "You received 50 chops for joining via a referral link."
+                        ),
                         link="/dashboard/earnings",
                     )
-                    logger.info(f"New user created via Google OAuth with referral: {referral_code}")
+                    logger.info(
+                        f"New user created via Google OAuth with "
+                        f"{'staff-pool assignment' if via_staff_pool else f'referral: {referral_code}'}"
+                    )
 
             update_login_streak(db, user)
 

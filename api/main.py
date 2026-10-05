@@ -79,7 +79,7 @@ from api.routes.auth import login, signup, forgot_password, google_oauth
 from api.routes.decision_engine import analyzer as business_analyzer
 from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions, profile as user_profile
 from api.routes.support import customer_service, reviews, contact as support_contact
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact, staff_referrals
 
 # Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
@@ -778,9 +778,13 @@ async def run_stripe_commission_settlement_job():
 
 async def run_stripe_payout_reconcile_job():
     """
-    Runs every 30 minutes. Checks our recent Stripe payouts against Stripe and
-    fixes any transfer that Stripe has reversed (see
-    PayoutService.reconcile_stripe_payouts).
+    Runs every 30 minutes, and checks two separate things against Stripe:
+    1. Has any transfer we sent to a referrer been reversed
+       (PayoutService.reconcile_stripe_payouts)?
+    2. Has Stripe since paid a referrer's own Stripe balance out to their
+       real bank account (PayoutService.reconcile_stripe_bank_settlements)?
+       This is a fallback for the payout.paid webhook (stripe_connect.py),
+       which normally handles this the moment it happens.
     """
     from fastapi import BackgroundTasks
     while True:
@@ -791,8 +795,11 @@ async def run_stripe_payout_reconcile_job():
             bg = BackgroundTasks()
             with SessionLocal() as db:
                 counts = await asyncio.to_thread(PayoutService.reconcile_stripe_payouts, db, bg)
+                settle_counts = await asyncio.to_thread(PayoutService.reconcile_stripe_bank_settlements, db, bg)
             if counts["checked"]:
                 logger.info("[stripe-reconcile-job] %s", counts)
+            if settle_counts["accounts_checked"]:
+                logger.info("[stripe-bank-settle-job] %s", settle_counts)
             await bg()
         except Exception as exc:
             logger.error("[stripe-reconcile-job] error: %s", exc)
@@ -1247,6 +1254,17 @@ def run_heavy_schema_migrations():
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS original_currency VARCHAR(10)",
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS original_amount NUMERIC(10,2)",
             "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS fx_rate NUMERIC(18,6)",
+            "ALTER TABLE payouts ADD COLUMN IF NOT EXISTS bank_settled_at TIMESTAMPTZ",
+            "ALTER TABLE referrals ADD COLUMN IF NOT EXISTS via_staff_pool BOOLEAN DEFAULT FALSE",
+            """CREATE TABLE IF NOT EXISTS staff_referral_pool (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) UNIQUE,
+                email VARCHAR(255) NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                assigned_count INTEGER DEFAULT 0,
+                last_assigned_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )""",
             "UPDATE users SET username = LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]', '', 'g')) WHERE username IS NULL OR username = ''",
             "CREATE TABLE IF NOT EXISTS founder_insight_cards (id SERIAL PRIMARY KEY, highlight_stat VARCHAR(50), insight_text TEXT NOT NULL, source VARCHAR(255) NOT NULL, category VARCHAR(50) DEFAULT 'african_tech', accent_color VARCHAR(20) DEFAULT '#e87a02', is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)"
         ]
@@ -1501,6 +1519,7 @@ app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(permissions.router, prefix="/api")
+app.include_router(staff_referrals.router, prefix="/api")
 app.include_router(admin_contact.router, prefix="/api")
 app.include_router(signals.router, prefix="/api")
 
