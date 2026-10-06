@@ -506,6 +506,10 @@ def generate_ai_takeaways_for_discussion(discussion_id: int, db: Session) -> Opt
         d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
         if not d:
             return None
+        post_type_val = getattr(d, 'post_type', None) or getattr(d, 'type', '') or ''
+        if _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or ""):
+            logger.info(f"[takeaways] Skipping takeaway generation for discussion {d.id} because it is a question.")
+            return None
         if d.ai_takeaways and isinstance(d.ai_takeaways, list) and len(d.ai_takeaways) > 0:
             return d.ai_takeaways
 
@@ -712,6 +716,10 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
 
     slug_val = _slugify(d.title or "")
 
+    is_q_post = _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or "")
+    has_valid_takeaways = bool(author_is_paid and raw_takeaways and not is_q_post)
+    takeaways_val = raw_takeaways if has_valid_takeaways else None
+
     return {
         "id": d.id, "channel_id": d.channel_id, "title": d.title, "content": d.content,
         "slug": slug_val,
@@ -726,8 +734,8 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
         "spice_count": spice_cnt, "spiced": spice_cnt, "spices": spice_cnt,
         "quoted_discussion_id": getattr(d, 'quoted_discussion_id', None),
         "quoted_discussion": quoted_dict,
-        "takeaways": raw_takeaways if (author_is_paid and raw_takeaways) else None,
-        "has_takeaways": bool(author_is_paid and raw_takeaways),
+        "takeaways": takeaways_val,
+        "has_takeaways": has_valid_takeaways,
         "author_is_paid": author_is_paid,
         "type": post_type_val,
         "analysis_id": getattr(d, 'analysis_id', None),
@@ -1612,12 +1620,14 @@ async def get_discussion(
     d.view_count = (d.view_count or 0) + 1
     db.commit()
 
-    # Strategy 2: On-Demand "Lazy" Generation in background if ai_takeaways is NULL (Paid authors only)
+    # Strategy 2: On-Demand "Lazy" Generation in background if ai_takeaways is NULL (Paid authors only, non-questions)
     author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
     author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower() if author_user else ''
     author_is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author_user, 'is_admin', False) if author_user else False)
 
-    if author_is_paid and d.ai_takeaways is None:
+    post_type_val = getattr(d, 'post_type', None) or getattr(d, 'type', '') or ''
+    is_q = _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or "")
+    if author_is_paid and d.ai_takeaways is None and not is_q:
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
     def _serialise_reply(r) -> dict:
@@ -1659,6 +1669,10 @@ async def get_discussion_takeaways(
     d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Discussion not found")
+
+    post_type_val = getattr(d, 'post_type', None) or getattr(d, 'type', '') or ''
+    if _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or ""):
+        return {"status": "none", "has_takeaways": False, "takeaways": None}
 
     author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
     author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower() if author_user else ''
@@ -1774,10 +1788,10 @@ async def create_discussion(
                     pass
         db.commit()
 
-    # Automatically schedule background AI generation for new posts upon creation if creator is paid/pro/trial
+    # Automatically schedule background AI generation for new posts upon creation if creator is paid/pro/trial and NOT a question
     creator_sub = (getattr(current_user, 'subscription_status', '') or '').strip().lower()
     creator_is_paid = bool(creator_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(current_user, 'is_admin', False))
-    if creator_is_paid:
+    if creator_is_paid and not is_question:
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
     return {"success": True, "data": _discussion_dict(d, set(), current_user=current_user)}
