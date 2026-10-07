@@ -21,12 +21,13 @@ from database.pg_models import (
     CommunityEvent, EventRegistration,
     CommunityActivity, SavedItem,
     UserSettings, BusinessAnalysis,
-    UserNotification, FounderInsightCard,
+    FounderInsightCard,
 )
 from api.routes.auth.login import get_current_user
 from api.routes.dependencies import get_current_user_optional
 from api.routes.user.missions import _flatten_roadmap_tasks
 from api.cache import get_cached, set_cached, delete_cached
+from api.services.notification_service import NotificationService
 
 from passlib.context import CryptContext
 
@@ -35,6 +36,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/community", tags=["community"])
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+
+def _notify_community(db: Session, user_id: int, type: str, title: str, message: str, link: str):
+    """Route Build Room notifications through preference checks and WebSocket delivery."""
+    return NotificationService.create_notification(
+        db=db, user_id=user_id, type=type, title=title, message=message, link=link
+    )
 
 
 def ensure_voo_bot_user(db: Session) -> User:
@@ -347,16 +355,11 @@ async def cron_process_pending_voo_replies(db: Session):
             # Notify question author
             if d.user_id:
                 try:
-                    notif = UserNotification(
-                        user_id=d.user_id,
-                        type="voo_checkin",
-                        title="🤖 Voo answered your question",
-                        message=f"Voo shared an answer to your question: '{d.title[:50]}'",
-                        link=f"/dashboard/community?discussionId={d.id}",
-                        is_read=False
+                    _notify_community(
+                        db, d.user_id, "voo_checkin", "🤖 Voo answered your question",
+                        f"Voo shared an answer to your question: '{d.title[:50]}'",
+                        f"/dashboard/community?discussionId={d.id}",
                     )
-                    db.add(notif)
-                    db.commit()
                 except Exception as ne:
                     logger.warning(f"[voo-bot] Notification creation failed: {ne}")
 
@@ -1731,14 +1734,11 @@ async def create_discussion(
         for tagged_id in set(tagged_ids):
             if tagged_id != current_user.id:
                 try:
-                    n = UserNotification(
-                        user_id=tagged_id,
-                        type="user_tagged",
-                        title="You were tagged in a Build Room post!",
-                        message=f"{current_user.name} tagged you in: \"{d.title[:60]}\"",
-                        link=f"/dashboard/community?discussionId={d.id}"
+                    _notify_community(
+                        db, tagged_id, "user_tagged", "You were tagged in a Build Room post!",
+                        f"{current_user.name} tagged you in: \"{d.title[:60]}\"",
+                        f"/dashboard/community?discussionId={d.id}",
                     )
-                    db.add(n)
                 except Exception:
                     pass
         db.commit()
@@ -1983,16 +1983,11 @@ async def like_discussion(
     try:
         if d.user_id and d.user_id != current_user.id:
             actor_name = current_user.name or 'Someone'
-            notif = UserNotification(
-                user_id=d.user_id,
-                type="community_cooked",
-                title=f"{actor_name} thinks you cooked.",
-                message=f"{actor_name} thinks you cooked with your post '{d.title[:60]}'",
-                link=f"/dashboard/community/post/{discussion_id}",
-                is_read=False,
+            _notify_community(
+                db, d.user_id, "community_cooked", f"{actor_name} thinks you cooked.",
+                f"{actor_name} thinks you cooked with your post '{d.title[:60]}'",
+                f"/dashboard/community/post/{discussion_id}",
             )
-            db.add(notif)
-            db.commit()
     except Exception as notif_err:
         logger.warning(f"Cooked notification creation failed: {notif_err}")
 
@@ -2028,16 +2023,12 @@ async def gift_chops_to_discussion(
     # Notify post owner (skip when gifting self)
     try:
         if d.user_id and d.user_id != current_user.id:
-            notif = UserNotification(
-                user_id=d.user_id,
-                type="community_chops",
-                title=f"{current_user.name or 'Someone'} gifted you {body.amount} Chops!",
-                message=f"You received {body.amount} Chops for your post '{d.title[:60]}'",
-                link=f"/dashboard/community/post/{discussion_id}",
-                is_read=False,
+            _notify_community(
+                db, d.user_id, "community_chops",
+                f"{current_user.name or 'Someone'} gifted you {body.amount} Chops!",
+                f"You received {body.amount} Chops for your post '{d.title[:60]}'",
+                f"/dashboard/community/post/{discussion_id}",
             )
-            db.add(notif)
-            db.commit()
     except Exception as notif_err:
         logger.warning(f"Gift chops notification creation failed: {notif_err}")
 
@@ -2089,16 +2080,10 @@ async def spice_discussion(
     # Notify original post owner (unless spicing own post)
     try:
         if d.user_id and d.user_id != current_user.id:
-            notif = UserNotification(
-                user_id=d.user_id,
-                type="community_spice",
-                title=f"{current_user.name or 'Someone'} spiced your post",
-                message=content_text[:120],
-                link=f"/dashboard/community/post/{d.id}",
-                is_read=False,
+            _notify_community(
+                db, d.user_id, "community_spice", f"{current_user.name or 'Someone'} spiced your post",
+                content_text[:120], f"/dashboard/community/post/{d.id}",
             )
-            db.add(notif)
-            db.commit()
     except Exception as notif_err:
         logger.warning(f"Spice notification creation failed: {notif_err}")
 
@@ -2180,29 +2165,20 @@ async def reply_to_discussion(
     # Notify post owner (skip when replying to own post)
     try:
         if d.user_id and d.user_id != current_user.id:
-            notif = UserNotification(
-                user_id=d.user_id,
-                type="community_reply",
-                title=f"{current_user.name or 'Someone'} replied to your post",
-                message=body.content.strip()[:120],
-                link=f"/dashboard/community?discussionId={discussion_id}",
-                is_read=False,
+            _notify_community(
+                db, d.user_id, "community_reply", f"{current_user.name or 'Someone'} replied to your post",
+                body.content.strip()[:120], f"/dashboard/community?discussionId={discussion_id}",
             )
-            db.add(notif)
 
         # Notify tagged users in reply
         if tagged_ids:
             for tagged_id in set(tagged_ids):
                 if tagged_id != current_user.id and tagged_id != d.user_id:
-                    n = UserNotification(
-                        user_id=tagged_id,
-                        type="user_tagged",
-                        title="You were tagged in a reply!",
-                        message=f"{current_user.name} tagged you in a reply on: \"{d.title[:60]}\"",
-                        link=f"/dashboard/community?discussionId={discussion_id}",
-                        is_read=False
+                    _notify_community(
+                        db, tagged_id, "user_tagged", "You were tagged in a reply!",
+                        f"{current_user.name} tagged you in a reply on: \"{d.title[:60]}\"",
+                        f"/dashboard/community?discussionId={discussion_id}",
                     )
-                    db.add(n)
 
         db.commit()
     except Exception as notif_err:
@@ -2296,16 +2272,12 @@ async def gift_chops_to_reply(
     # Notify reply owner (skip when gifting self)
     try:
         if reply.user_id and reply.user_id != current_user.id:
-            notif = UserNotification(
-                user_id=reply.user_id,
-                type="community_chops",
-                title=f"{current_user.name or 'Someone'} gifted you {body.amount} Chops!",
-                message=f"You received {body.amount} Chops for your reply",
-                link=f"/dashboard/community/post/{discussion_id}",
-                is_read=False,
+            _notify_community(
+                db, reply.user_id, "community_chops",
+                f"{current_user.name or 'Someone'} gifted you {body.amount} Chops!",
+                f"You received {body.amount} Chops for your reply",
+                f"/dashboard/community/post/{discussion_id}",
             )
-            db.add(notif)
-            db.commit()
     except Exception as notif_err:
         logger.warning(f"Reply gift chops notification creation failed: {notif_err}")
 

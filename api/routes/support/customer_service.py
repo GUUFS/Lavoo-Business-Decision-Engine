@@ -688,17 +688,15 @@ async def admin_reply_to_ticket(
 
         # Create in-app notification for the user
         try:
-            user_notif = UserNotification(
+            from api.services.notification_service import NotificationService
+            NotificationService.create_notification(
+                db=db,
                 user_id=ticket.user_id,
                 type="support_reply",
                 title="🎧 Lavoo Support Team replied",
                 message=f"Our support team replied to your ticket: '{(ticket.issue or 'Support Request')[:45]}'",
                 link=f"/l/customer-service?ticketId={ticket.id}",
-                is_read=False,
-                created_at=datetime.now(timezone.utc)
             )
-            db.add(user_notif)
-            db.commit()
         except Exception as notif_err:
             print(f"Failed to record UserNotification for support reply: {notif_err}")
 

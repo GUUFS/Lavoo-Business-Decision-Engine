@@ -25,6 +25,7 @@ redis>=5.0.0
 cohere>=5.0.0
 pip-audit
 websockets>=13.0
+pywebpush>=2.0.0
 livekit-api>=1.2.0
 livekit-agents>=1.8.0
 livekit-plugins-openai>=1.8.0

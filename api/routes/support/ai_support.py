@@ -336,16 +336,15 @@ async def async_process_ticket_support_ai(ticket_id: int):
             ticket.updated_at = datetime.now(timezone.utc)
 
             # Create UserNotification for user dashboard
-            user_notif = UserNotification(
+            from api.services.notification_service import NotificationService
+            NotificationService.create_notification(
+                db=db,
                 user_id=ticket.user_id,
                 type="support_reply",
                 title="🎧 Lavoo Admin replied",
                 message=f"Lavoo Admin replied to your ticket: '{(latest_user_text or ticket.issue or 'Support Request')[:45]}'",
                 link=f"/l/customer-service?ticketId={ticket.id}",
-                is_read=False,
-                created_at=datetime.now(timezone.utc)
             )
-            db.add(user_notif)
 
             db.commit()
             db.refresh(support_msg)

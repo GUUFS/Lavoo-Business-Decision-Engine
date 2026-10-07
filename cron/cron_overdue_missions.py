@@ -18,7 +18,8 @@ load_dotenv(".env.production")
 
 from sqlalchemy.orm import Session
 from database.pg_connections import get_db
-from database.pg_models import BusinessAnalysis, UserNotification, NotificationHistory
+from database.pg_models import BusinessAnalysis, NotificationHistory
+from api.services.notification_service import NotificationService
 from api.routes.user.missions import _ensure_dict, _flatten_roadmap_tasks
 import logging
 
@@ -110,21 +111,23 @@ def check_overdue_missions():
                 continue
 
             mission_name = mission_config.get('mission_name') or (analysis.business_goal or "your mission")
-            db.add(UserNotification(
+            notification = NotificationService.create_notification(
+                db=db,
                 user_id=analysis.user_id,
                 type="mission_overdue",
                 title="Mission overdue",
                 message=f"Day {overdue_day} of \"{mission_name[:60]}\" is overdue. Complete it to keep your progress going.",
                 link=f"/dashboard/decision-engine/result/{analysis.id}",
-                is_read=False,
-            ))
-            db.add(NotificationHistory(
-                user_id=analysis.user_id,
-                notification_type=history_key,
-            ))
+            )
+            if notification is not None:
+                db.add(NotificationHistory(
+                    user_id=analysis.user_id,
+                    notification_type=history_key,
+                ))
             db.commit()
-            notified += 1
-            logger.info(f"Notified user {analysis.user_id}: analysis {analysis.id} day {overdue_day} overdue")
+            if notification is not None:
+                notified += 1
+                logger.info(f"Notified user {analysis.user_id}: analysis {analysis.id} day {overdue_day} overdue")
 
         logger.info(f"Checked {checked} activated missions, sent {notified} overdue notifications")
 
