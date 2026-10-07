@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from database.pg_models import User, UserNotification, NotificationHistory
+from api.services.notification_service import NotificationService as CoreNotificationService
 
 
 class NotificationService:
@@ -27,6 +28,9 @@ class NotificationService:
         """
         resolved_type = notification_type or type or "general"
 
+        if not CoreNotificationService._is_enabled(db, user_id, resolved_type):
+            return None
+
         notification = UserNotification(
             user_id=user_id,
             type=resolved_type,
@@ -47,6 +51,16 @@ class NotificationService:
         db.add(history)
 
         db.commit()
+
+        CoreNotificationService._send_web_push(db, user_id, {
+            "id": notification.id,
+            "type": resolved_type,
+            "title": title,
+            "message": message,
+            "link": link,
+            "created_at": notification.created_at.isoformat(),
+            "is_read": False,
+        })
 
         # Broadcast via WebSocket (Fire-and-forget)
         try:

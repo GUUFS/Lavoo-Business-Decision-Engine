@@ -1714,6 +1714,20 @@ class UserSettings(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class PushSubscription(Base):
+    """Web Push endpoint and encryption keys registered by a user's browser/device."""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint = Column(Text, nullable=False, unique=True)
+    p256dh = Column(String(255), nullable=False)
+    auth = Column(String(255), nullable=False)
+    user_agent = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
 # ──────────────────────────────────────────────
 # Community Models
 # ──────────────────────────────────────────────
@@ -2303,4 +2317,4 @@ class ContactMessage(Base):
     notes = Column(Text, nullable=True)
     admin_replies = Column(JSON, nullable=True, default=list)
     last_replied_at = Column(DateTime(timezone=True), nullable=True)
-    last_replied_by = Column(String(255), nullable=True)
+    last_replied_by = Column(String(255), nullable=True)

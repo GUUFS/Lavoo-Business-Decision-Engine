@@ -4,13 +4,14 @@ Handles user preferences and settings management
 """
 
 import logging
+import os
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database.pg_connections import get_db
-from database.pg_models import User, UserSettings
+from database.pg_models import User, UserSettings, PushSubscription
 from api.routes.auth.login import get_current_user
 
 logging.basicConfig(level=logging.INFO)
@@ -65,6 +66,12 @@ class UpdateSettingsRequest(BaseModel):
 
     # Community Settings
     showMissionCommentsInCommunity: Optional[bool] = None
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+    userAgent: Optional[str] = None
 
 
 # ===== Helper Functions =====
@@ -250,6 +257,55 @@ async def update_notification_settings(
         db.rollback()
         logger.error(f"Error updating notification settings: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to update notification settings")
+
+
+@router.get("/push/public-key")
+async def get_push_public_key():
+    """Return the public VAPID key used by browsers to subscribe to Web Push."""
+    public_key = os.getenv("VAPID_PUBLIC_KEY")
+    if not public_key:
+        raise HTTPException(status_code=503, detail="Browser push notifications are not configured")
+    return {"publicKey": public_key}
+
+
+@router.post("/push/subscriptions")
+async def register_push_subscription(
+    request: PushSubscriptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Register or refresh one browser/device Web Push endpoint."""
+    p256dh = request.keys.get("p256dh")
+    auth = request.keys.get("auth")
+    if not request.endpoint or not p256dh or not auth:
+        raise HTTPException(status_code=400, detail="Invalid push subscription")
+
+    subscription = db.query(PushSubscription).filter(PushSubscription.endpoint == request.endpoint).first()
+    if subscription is None:
+        subscription = PushSubscription(endpoint=request.endpoint)
+        db.add(subscription)
+    subscription.user_id = current_user.id
+    subscription.p256dh = p256dh
+    subscription.auth = auth
+    subscription.user_agent = request.userAgent
+    db.commit()
+    return {"success": True}
+
+
+@router.delete("/push/subscriptions")
+async def unregister_push_subscription(
+    request: PushSubscriptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    subscription = db.query(PushSubscription).filter(
+        PushSubscription.endpoint == request.endpoint,
+        PushSubscription.user_id == current_user.id,
+    ).first()
+    if subscription:
+        db.delete(subscription)
+        db.commit()
+    return {"success": True}
 
 
 @router.get("/privacy")
