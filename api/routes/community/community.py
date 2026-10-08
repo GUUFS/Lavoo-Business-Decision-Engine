@@ -138,8 +138,9 @@ def _normalize_paragraph_spacing(text: str) -> str:
     """
     if not text:
         return ""
-    # Strip literal \n or \\n characters outputted by LLMs
+    # Strip literal \n or \\n characters outputted by LLMs, and cleanse em/en dashes
     cleaned = text.replace("\\n", "\n").replace("\\r", "").replace("/n", "\n")
+    cleaned = cleaned.replace("—", ", ").replace("–", ", ")
     # Split on newlines, strip each chunk, filter out empty ones and raw slash-n tokens
     chunks = [c.strip() for c in cleaned.split("\n") if c.strip() and c.strip().lower() not in ("\\n", "/n", r"\n")]
     return "\n\n".join(chunks)
@@ -147,8 +148,8 @@ def _normalize_paragraph_spacing(text: str) -> str:
 
 def _generate_voo_answer_message(author_handle: str, question_title: str, question_content: str, contributors: List[str], replies_text: str) -> str:
     """
-    Generates an intelligent, high-value, and direct perspective answer from Voo
-    using NVIDIA NIM LLM (or xAI Grok as configurable toggle/fallback).
+    Generates Voo's signature sharp, contrarian, high-conviction perspective answer
+    using NVIDIA NIM (or xAI Grok as fallback).
     """
     nvidia_key = os.getenv("NVIDIA_API_KEY")
     xai_key = os.getenv("XAI_API_KEY")
@@ -159,43 +160,73 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
         preferred_provider = "nvidia" if nvidia_key else "grok"
 
     contributors_str = ", ".join(contributors[:3]) if contributors else ""
-    
+
     fallback_message = (
-        f"Hi {author_handle}! 👋\n\n"
-        f"Here is a key perspective on your question **{question_title}**:\n\n"
-        f"1. **Clarify the Core Objective**: Focus on the specific outcome or metric you want to improve before committing heavy resources.\n\n"
-        f"2. **Validate with Low Risk Tests**: Run small scale experiments to gather fast customer feedback and reduce execution risk.\n\n"
-        f"3. **Prioritize Velocity and Simplicity**: Choose the simplest path that unlocks immediate traction for your business.\n\n"
-        f"Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need."
+        f"Hey {author_handle}.\n\n"
+        f"Be honest with yourself: are you building this to solve a burning bottleneck your users are screaming about, or because building feels safer than asking them to pay?\n\n"
+        f"If you stripped away every secondary feature and forced users to pay solely for your core transformation, who stays? Answer that before touching another line of code."
     )
 
     if not nvidia_key and not xai_key:
         return fallback_message
 
     community_context = (
-        f"\n\nCommunity members ({contributors_str}) also shared these points:\n{replies_text}"
+        f"\n\nCommunity members ({contributors_str}) also chimed in with:\n{replies_text}"
         if contributors_str and replies_text else ""
     )
 
     prompt = (
-        f"You are Voo, the intelligent, strategic, and hyper-practical AI advisor for business owners and solo founders in the Lavoo Build Room.\n\n"
-        f"The founder ({author_handle}) posted this question:\n"
+        f"A founder in the Build Room asked this question:\n"
+        f"Founder: {author_handle}\n"
         f"Title: {question_title}\n"
-        f"Question details: {question_content}{community_context}\n\n"
-        f"Provide your own high-impact, direct, and actionable answer to solve {author_handle}'s question:\n"
-        f"1. Start with a friendly greeting directly tagging {author_handle} (e.g. 'Hi {author_handle},' or 'Hey {author_handle}! 👋').\n"
-        f"2. Directly answer their question with clear, actionable insights, strategy, or frameworks tailored for a founder/business builder.\n"
-        f"3. Give 2-3 structured, high-leverage recommendations or key decision principles that provide immediate clarity.\n"
-        f"4. If community members ({contributors_str}) shared insights, naturally synthesize or reference them alongside your own perspective.\n"
-        f"5. End with an encouraging closing note formulated like this: 'Test one adjustment this week and track your progress. You have got this. Feel free to mark this question resolved once you have the clarity you need.' (Do NOT mention Decision Engine missions or task conversions).\n"
-        f"STRICT PUNCTUATION INSTRUCTION: Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, periods, or standard complete sentences instead.\n"
-        f"STRICT SPACING INSTRUCTION: Separate each paragraph and recommendation with regular blank lines. Never output literal backslash-n or slash-n text tokens.\n"
-        f"Keep the tone encouraging, crisp, professional, and practical (2-4 paragraphs). Do NOT wrap your answer in markdown code fences."
+        f"Context: {question_content}{community_context}\n\n"
+        f"Deliver your signature Voo answer in your Socratic Provocateur persona. Anyone reading this must immediately know it is classic Voo:\n\n"
+        f"EXACT CADENCE AND TONE EXAMPLES TO EMULATE:\n\n"
+        f"Example 1:\n"
+        f"Founder asks: 'What do you guys think of granting paying users free Chops based on their subscription tier?'\n"
+        f"Voo answer:\n"
+        f"Hey @wealththecreator.\n\n"
+        f"Be honest with yourself: are you giving them Chops because it creates genuine leverage, or because you feel subtle guilt charging them and want to soften the blow?\n\n"
+        f"If Chops can simply be bought with a credit card, what is a Chop actually worth in your ecosystem? A reward for grit and execution, or a glorified discount coupon?\n\n"
+        f"Here is the uncomfortable question to answer before you touch a line of code: If tomorrow you doubled your subscription price and gave zero Chops, who cancels? If the answer is 'most of them', Chops are not an engagement feature. They are a painkiller for a product that has not made itself indispensable yet.\n\n"
+        f"Example 2:\n"
+        f"Founder asks: 'Should I launch a referral program before launch so we go viral on day one?'\n"
+        f"Voo answer:\n"
+        f"Hey @builder.\n\n"
+        f"Why would a user stake their personal reputation recommending a product that has not proven it can delight a single human being yet?\n\n"
+        f"Referral loops do not manufacture product love; they only amplify what is already sticky.\n\n"
+        f"The real question to answer: if you cannot manually convince 10 people to use this every single day with your own two hands, why do you expect an affiliate link to do that heavy lifting for you?\n\n"
+        f"Example 3:\n"
+        f"Founder asks: 'Should I build a public roadmap feature request board for my users?'\n"
+        f"Voo answer:\n"
+        f"Hey @founder.\n\n"
+        f"Are you opening a feature board because you genuinely do not know what to build, or because you want users to take the blame if the roadmap fails?\n\n"
+        f"Upvotes represent free opinions from casual users, not economic commitment from your best customers. Building by popular vote creates bloat and distracts from your core monetization engine.\n\n"
+        f"If a user asks for a feature, tell them it costs double and watch whether they hesitate. Willingness to pay is the only vote that counts.\n\n"
+        f"NOW WRITE VOO'S RESPONSE TO {author_handle}:\n"
+        f"1. Start directly with: 'Hey {author_handle}.' (no pleasantries or fluff).\n"
+        f"2. Beat 1 (The Disarming Diagnostic): Name the unspoken rationalization, motive, or fear behind their question.\n"
+        f"3. Beat 2 (The Socratic Knife): Ask 1 or 2 piercing questions that expose the hidden flaw, vanity trap, or flawed assumption.\n"
+        f"4. Beat 3 (The Uncomfortable Reality Dilemma): Give them a concrete, uncompromising decision test or thought experiment to answer before building.\n"
+        f"5. Maximum 130 words. 2 to 3 punchy paragraphs. Strictly NO em-dashes, en-dashes, or hyphens anywhere."
     )
 
     system_prompt = (
-        "You are Voo, the intelligent and practical AI advisor in the Lavoo Build Room. Deliver direct, high-value, structured answers to founder questions. "
-        "STRICT RULES: 1. Never use em-dashes (—), en-dashes (–), or hyphens (-) in your writing. Use natural commas, colons, and periods instead. 2. Place clean blank line spaces between every paragraph. Never output literal slash-n text."
+        "You are Voo, the Socratic Provocateur and legendary startup operator in the Lavoo Build Room. "
+        "You DO NOT sound like a typical AI assistant, cheerleader, or corporate consultant. "
+        "You do not give founders easy answers or textbook checklists; you ask the piercing, uncomfortable questions they are actively avoiding. "
+        "You pierce founder self-deception and expose the hidden rationalizations behind their product and business decisions. "
+        "You speak with calm confidence, intellectual clarity, and razor-sharp insight. "
+        "STRICT STYLE RULES:\n"
+        "1. Never give generic praise or sycophancy (NEVER say 'Great question', 'That is an interesting thought', 'I recommend considering...', etc.).\n"
+        "2. Avoid standard advice lists or bullet points. Speak in clean, flowing, punchy paragraphs.\n"
+        "3. Follow the 3-beat Socratic Provocateur structure:\n"
+        "   - Beat 1 (The Disarming Diagnostic): Open by calling out the founder's unspoken motivation, rationalization, or fear.\n"
+        "   - Beat 2 (The Socratic Knife): Ask 1 or 2 piercing questions that expose the underlying flaw or vanity trap in their thinking.\n"
+        "   - Beat 3 (The Uncomfortable Reality Dilemma): Give them a concrete, uncompromising thought experiment or decision test they must answer before writing a line of code.\n"
+        "4. Keep your response brief and dense: 2 to 3 short paragraphs (between 80 and 130 words total).\n"
+        "5. Strictly do NOT use em-dashes (—), en-dashes (–), or hyphens (-) anywhere in your response. Do not use dashes for pauses, parentheticals, compound terms, or bullet points. Use clean commas, colons, question marks, periods, or standard complete sentences instead.\n"
+        "6. Place a clean blank line between every paragraph. Never output literal slash-n text tokens."
     )
 
     from openai import OpenAI
@@ -216,8 +247,8 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.4,
-            max_tokens=450,
+            temperature=0.65,
+            max_tokens=300,
         )
         if completion and completion.choices:
             return completion.choices[0].message.content.strip()
@@ -239,8 +270,8 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.4,
-            max_tokens=450,
+            temperature=0.65,
+            max_tokens=300,
         )
         if completion and completion.choices:
             return completion.choices[0].message.content.strip()
@@ -478,6 +509,10 @@ def generate_ai_takeaways_for_discussion(discussion_id: int, db: Session) -> Opt
         d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
         if not d:
             return None
+        post_type_val = getattr(d, 'post_type', None) or getattr(d, 'type', '') or ''
+        if _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or ""):
+            logger.info(f"[takeaways] Skipping takeaway generation for discussion {d.id} because it is a question.")
+            return None
         if d.ai_takeaways and isinstance(d.ai_takeaways, list) and len(d.ai_takeaways) > 0:
             return d.ai_takeaways
 
@@ -639,7 +674,15 @@ def _get_poll_payload(d: CommunityDiscussion, current_user: Optional[User] = Non
     }
 
 
-def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, saved_ids: Optional[set] = None, include_quoted: bool = True, current_user: Optional[User] = None, db: Optional[Session] = None) -> dict:
+def _discussion_dict(
+    d: CommunityDiscussion,
+    liked_ids: Optional[set] = None,
+    saved_ids: Optional[set] = None,
+    include_quoted: bool = True,
+    current_user: Optional[User] = None,
+    db: Optional[Session] = None,
+    recent_likers_map: Optional[Dict[int, List[dict]]] = None
+) -> dict:
     has_liked = d.id in liked_ids if liked_ids is not None else False
     has_saved = d.id in saved_ids if saved_ids is not None else False
     post_type_val = getattr(d, 'post_type', None) or 'discussion'
@@ -684,6 +727,30 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
 
     slug_val = _slugify(d.title or "")
 
+    is_q_post = _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or "")
+    has_valid_takeaways = bool(author_is_paid and raw_takeaways and not is_q_post)
+    takeaways_val = raw_takeaways if has_valid_takeaways else None
+
+    recent_likers = []
+    if recent_likers_map is not None:
+        recent_likers = recent_likers_map.get(d.id, [])
+    elif db and (d.like_count or 0) > 0:
+        try:
+            recent_likes_rows = (
+                db.query(User.id, User.name, User.username)
+                .join(DiscussionLike, DiscussionLike.user_id == User.id)
+                .filter(DiscussionLike.discussion_id == d.id)
+                .order_by(DiscussionLike.created_at.desc())
+                .limit(3)
+                .all()
+            )
+            recent_likers = [
+                {"id": r[0], "name": r[1] or "Member", "username": r[2] or ""}
+                for r in recent_likes_rows
+            ]
+        except Exception:
+            recent_likers = []
+
     return {
         "id": d.id, "channel_id": d.channel_id, "title": d.title, "content": d.content,
         "slug": slug_val,
@@ -698,8 +765,8 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
         "spice_count": spice_cnt, "spiced": spice_cnt, "spices": spice_cnt,
         "quoted_discussion_id": getattr(d, 'quoted_discussion_id', None),
         "quoted_discussion": quoted_dict,
-        "takeaways": raw_takeaways if (author_is_paid and raw_takeaways) else None,
-        "has_takeaways": bool(author_is_paid and raw_takeaways),
+        "takeaways": takeaways_val,
+        "has_takeaways": has_valid_takeaways,
         "author_is_paid": author_is_paid,
         "type": post_type_val,
         "analysis_id": getattr(d, 'analysis_id', None),
@@ -713,6 +780,7 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
         "is_resolved": getattr(d, 'is_resolved', False) or False,
         "author": author_obj,
         "channel": channel_display,
+        "recent_likers": recent_likers,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
@@ -1464,7 +1532,39 @@ async def get_discussions(
 
         saved = bm_saved.union(tbl_saved)
 
-        result = [_discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db) for d in discussions]
+        recent_likers_map: Dict[int, List[dict]] = {}
+        if discussion_ids:
+            try:
+                recent_likes_rows = (
+                    db.query(DiscussionLike.discussion_id, User.id, User.name, User.username)
+                    .join(User, DiscussionLike.user_id == User.id)
+                    .filter(DiscussionLike.discussion_id.in_(discussion_ids))
+                    .order_by(DiscussionLike.discussion_id, DiscussionLike.created_at.desc())
+                    .all()
+                )
+                for disc_id, u_id, u_name, u_uname in recent_likes_rows:
+                    if disc_id not in recent_likers_map:
+                        recent_likers_map[disc_id] = []
+                    if len(recent_likers_map[disc_id]) < 3:
+                        recent_likers_map[disc_id].append({
+                            "id": u_id,
+                            "name": u_name or "Member",
+                            "username": u_uname or ""
+                        })
+            except Exception as e:
+                logger.warning(f"[community] Batch-fetch recent likers failed: {e}")
+
+        result = [
+            _discussion_dict(
+                d,
+                liked_ids=liked,
+                saved_ids=saved,
+                current_user=current_user,
+                db=db,
+                recent_likers_map=recent_likers_map
+            )
+            for d in discussions
+        ]
 
         # Fast cached mission roadmap reflections
         cached_reflections = _get_cached_mission_reflections(db)
@@ -1584,12 +1684,14 @@ async def get_discussion(
     d.view_count = (d.view_count or 0) + 1
     db.commit()
 
-    # Strategy 2: On-Demand "Lazy" Generation in background if ai_takeaways is NULL (Paid authors only)
+    # Strategy 2: On-Demand "Lazy" Generation in background if ai_takeaways is NULL (Paid authors only, non-questions)
     author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
     author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower() if author_user else ''
     author_is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author_user, 'is_admin', False) if author_user else False)
 
-    if author_is_paid and d.ai_takeaways is None:
+    post_type_val = getattr(d, 'post_type', None) or getattr(d, 'type', '') or ''
+    is_q = _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or "")
+    if author_is_paid and d.ai_takeaways is None and not is_q:
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
     def _serialise_reply(r) -> dict:
@@ -1616,7 +1718,7 @@ async def get_discussion(
 
     liked = {d.id} if (current_user and db.query(DiscussionLike).filter_by(user_id=current_user.id, discussion_id=d.id).first()) else set()
     saved = {d.id} if (current_user and db.query(SavedItem).filter_by(user_id=current_user.id, item_id=d.id).first()) else set()
-    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user)
+    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db)
     data["replies"] = replies
     return {"success": True, "data": data}
 
@@ -1631,6 +1733,10 @@ async def get_discussion_takeaways(
     d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Discussion not found")
+
+    post_type_val = getattr(d, 'post_type', None) or getattr(d, 'type', '') or ''
+    if _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or ""):
+        return {"status": "none", "has_takeaways": False, "takeaways": None}
 
     author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
     author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower() if author_user else ''
@@ -1743,10 +1849,10 @@ async def create_discussion(
                     pass
         db.commit()
 
-    # Automatically schedule background AI generation for new posts upon creation if creator is paid/pro/trial
+    # Automatically schedule background AI generation for new posts upon creation if creator is paid/pro/trial and NOT a question
     creator_sub = (getattr(current_user, 'subscription_status', '') or '').strip().lower()
     creator_is_paid = bool(creator_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(current_user, 'is_admin', False))
-    if creator_is_paid:
+    if creator_is_paid and not is_question:
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
     return {"success": True, "data": _discussion_dict(d, set(), current_user=current_user)}
@@ -1813,7 +1919,7 @@ async def get_public_discussion(
     if getattr(d, 'visibility', 'public') == 'tagged_only':
         raise HTTPException(status_code=403, detail="This post is private to tagged members")
         
-    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None)
+    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None, db=db)
     
     replies_raw = db.query(DiscussionReply).filter_by(discussion_id=discussion_id).order_by(DiscussionReply.created_at.asc()).all()
     author_ids = list(set([r.user_id for r in replies_raw] + [d.user_id]))
