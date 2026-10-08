@@ -5,7 +5,7 @@ import json
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Cookie, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, WebSocket, WebSocketDisconnect, Cookie, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from pydantic import BaseModel
@@ -16,6 +16,27 @@ from api.routes.auth.login import SECRET_KEY, ALGORITHM, get_current_user
 from database.pg_connections import get_db
 from database.pg_models import User, Ticket, TicketMessage, TicketCreate, MessageCreate, TicketResponse, MessageResponse, UserNotification
 from api.routes.support.ai_support import async_process_ticket_support_ai
+
+
+def get_current_user_optional(
+    authorization: Optional[str] = Header(None),
+    access_token_cookie: Optional[str] = Cookie(None),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Best-effort version of get_current_user defined directly in customer_service
+    to avoid circular import cycles during application startup.
+    """
+    if not authorization and not access_token_cookie:
+        return None
+    try:
+        return get_current_user(
+            authorization=authorization,
+            access_token_cookie=access_token_cookie,
+            db=db,
+        )
+    except HTTPException:
+        return None
 
 router = APIRouter(prefix="/customer-service", tags=["customer-service"])
 
@@ -1090,7 +1111,7 @@ async def get_voice_room_token(
 async def save_voice_transcript(
     payload: VoiceTranscriptRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Save the transcript of a completed voice call to the active support ticket.
@@ -1102,14 +1123,15 @@ async def save_voice_transcript(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    if ticket.user_id != current_user.id and current_user.role != "admin":
+    if current_user and ticket.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized to update this ticket")
 
     formatted_message = f"🎙️ [Voice Support Call Transcript]\n\n{payload.transcript.strip()}"
 
+    sender_uid = current_user.id if current_user else ticket.user_id
     new_msg = TicketMessage(
         ticket_id=payload.ticket_id,
-        sender_id=current_user.id,
+        sender_id=sender_uid,
         sender_role="system",
         message=formatted_message,
         is_read=True,
@@ -1153,7 +1175,7 @@ class VoiceChatRequest(BaseModel):
 async def process_voice_chat(
     payload: VoiceChatRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
     Process spoken input from the user, query NVIDIA NIM (meta/llama-3.2-11b-vision-instruct),
@@ -1165,12 +1187,14 @@ async def process_voice_chat(
 
     user_msg_id = None
     ticket = None
+    sender_uid = current_user.id if current_user else None
+    sender_uname = current_user.name if (current_user and current_user.name) else "User"
     if payload.ticket_id:
         ticket = db.query(Ticket).filter(Ticket.id == payload.ticket_id).first()
-        if ticket:
+        if ticket and sender_uid:
             user_msg = TicketMessage(
                 ticket_id=ticket.id,
-                sender_id=current_user.id,
+                sender_id=sender_uid,
                 sender_role="user",
                 message=user_text,
                 is_read=True,
@@ -1185,9 +1209,9 @@ async def process_voice_chat(
             u_payload = {
                 "id": user_msg.id,
                 "ticket_id": ticket.id,
-                "sender_id": current_user.id,
+                "sender_id": sender_uid,
                 "sender_role": "user",
-                "sender_name": current_user.name or "User",
+                "sender_name": sender_uname,
                 "message": user_text,
                 "content": user_text,
                 "is_read": True,
