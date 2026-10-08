@@ -3,7 +3,7 @@ Community Feature — Channels, Discussions, Events, Leaderboard, Saved Items
 """
 import logging
 import re
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime, timezone, timedelta
 import json
 import os
