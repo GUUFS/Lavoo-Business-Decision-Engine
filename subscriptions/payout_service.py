@@ -93,6 +93,122 @@ class PayoutService:
             return None
 
     @staticmethod
+    def get_platform_flutterwave_available(currency: str = "NGN") -> Optional[Dict[str, Decimal]]:
+        """
+        How much Flutterwave money Lavoo can actually spend right now.
+
+        Unlike get_platform_stripe_available above (pence/cents integers),
+        Flutterwave's /balances endpoint reports amounts as plain floats in
+        whole currency units (e.g. 12345.67 NGN) — returned here as
+        Decimal to avoid float rounding on a real-money comparison.
+        Returns None if Flutterwave can't be reached or the response is
+        unusable; never raises.
+        """
+        try:
+            response = requests.get(
+                f"{FLUTTERWAVE_BASE_URL}/balances/{currency}",
+                headers={"Authorization": f"Bearer {FLUTTERWAVE_SECRET_KEY}"},
+                timeout=15,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    f"[FLW balance] non-200 reading {currency} balance: "
+                    f"{response.status_code} {response.text}"
+                )
+                return None
+            data = response.json().get("data") or {}
+            return {
+                "available": Decimal(str(data.get("available_balance", 0))),
+                "ledger": Decimal(str(data.get("ledger_balance", 0))),
+            }
+        except Exception as e:
+            logger.warning(f"[FLW balance] could not read platform balance: {e}")
+            return None
+
+    @staticmethod
+    def check_flutterwave_balance(db: Session, background_tasks: BackgroundTasks, currency: str = "NGN") -> Dict[str, Any]:
+        """
+        Reads Lavoo's live Flutterwave balance, compares it against both a
+        configurable safety floor (FLUTTERWAVE_MIN_BALANCE_NGN, default
+        50,000) and whatever Lavoo currently owes (pending/processing
+        Flutterwave payouts already queued in this currency), and records a
+        PlatformBalanceSnapshot either way so the admin Revenue page has a
+        real number and trend to show instead of nothing.
+
+        Alerts the admin only on the transition INTO "low" or "unreachable"
+        (comparing against the immediately-previous snapshot), not on every
+        poll — a balance that stays low for a day shouldn't re-send the same
+        email every couple of minutes.
+        """
+        from database.pg_models import PlatformBalanceSnapshot
+
+        pending_obligations = db.query(
+            func.coalesce(func.sum(Payout.amount), 0)
+        ).filter(
+            Payout.payment_method == 'flutterwave',
+            Payout.currency == currency,
+            Payout.status.in_(['pending', 'processing']),
+        ).scalar() or Decimal("0.00")
+
+        min_floor = Decimal(os.getenv("FLUTTERWAVE_MIN_BALANCE_NGN", "50000"))
+        threshold = max(min_floor, pending_obligations)
+
+        balance = PayoutService.get_platform_flutterwave_available(currency)
+
+        previous = db.query(PlatformBalanceSnapshot).filter(
+            PlatformBalanceSnapshot.provider == "flutterwave",
+            PlatformBalanceSnapshot.currency == currency,
+        ).order_by(PlatformBalanceSnapshot.checked_at.desc()).first()
+        was_already_low = bool(previous and previous.below_threshold)
+        was_already_failing = bool(previous and previous.check_failed)
+
+        snapshot = PlatformBalanceSnapshot(
+            provider="flutterwave",
+            currency=currency,
+            pending_obligations=pending_obligations,
+            threshold=threshold,
+        )
+        if balance is None:
+            snapshot.check_failed = True
+            snapshot.below_threshold = False  # unknown, never asserted as a known-low reading
+            snapshot.error_message = "Could not reach Flutterwave's balance endpoint"
+        else:
+            snapshot.available_balance = balance["available"]
+            snapshot.ledger_balance = balance["ledger"]
+            snapshot.below_threshold = balance["available"] < threshold
+
+        db.add(snapshot)
+        db.commit()
+
+        if snapshot.below_threshold and not was_already_low:
+            PayoutService._queue_admin_alert(
+                background_tasks,
+                f"⚠️ Flutterwave {currency} balance is low",
+                (
+                    f"Available: {snapshot.available_balance} {currency}. "
+                    f"Pending/processing payouts already owed: {pending_obligations} {currency}. "
+                    f"Safety floor: {min_floor} {currency}. "
+                    "Builder Bonus payouts via Flutterwave will start failing or stalling "
+                    "until the wallet is topped up in the Flutterwave dashboard."
+                ),
+            )
+        elif snapshot.check_failed and not was_already_failing:
+            PayoutService._queue_admin_alert(
+                background_tasks,
+                "⚠️ Could not check Flutterwave balance",
+                f"The periodic Flutterwave {currency} balance check failed to reach "
+                "Flutterwave's API. See server logs for detail.",
+            )
+
+        return {
+            "available": float(snapshot.available_balance) if snapshot.available_balance is not None else None,
+            "pending_obligations": float(pending_obligations),
+            "threshold": float(threshold),
+            "below_threshold": snapshot.below_threshold,
+            "check_failed": snapshot.check_failed,
+        }
+
+    @staticmethod
     def process_stripe_transfer_payout(
         payout: Payout, db: Session, manage_transaction: bool = True,
         transfer_group: Optional[str] = None, idempotency_key: Optional[str] = None,
@@ -410,6 +526,34 @@ class PayoutService:
                 f"bank_code={payout_account.bank_code} account=***{payout_account.account_number[-4:]} "
                 f"name={payout_account.account_name}"
             )
+
+            # Fail fast with a clear reason instead of letting Flutterwave
+            # reject the transfer after the fact (or worse, accept it and
+            # leave it stuck 'processing' until the reconcile job notices).
+            # A None reading means the balance endpoint itself couldn't be
+            # reached — that's a "we don't know," not a "we have money," so
+            # it blocks too rather than optimistically sending anyway.
+            available = PayoutService.get_platform_flutterwave_available(payout.currency)
+            if available is None or available["available"] < Decimal(str(payout.amount)):
+                reason = (
+                    f"Insufficient Flutterwave balance. Available: "
+                    f"{available['available'] if available else 'unknown'} {payout.currency}, "
+                    f"requested: {payout.amount} {payout.currency}."
+                    if available is not None else
+                    f"Could not verify Flutterwave balance before sending {payout.amount} {payout.currency}."
+                )
+                logger.warning(f"[FLW payout] blocked | payout={payout.id} {reason}")
+                try:
+                    admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
+                    email_service.email_service._send_email(
+                        to_email=admin_email, to_name="Lavoo Admin",
+                        subject="⚠️ Flutterwave payout blocked — insufficient/unknown balance",
+                        html_content=f"<p>Payout #{payout.id} for user {payout.user_id}: {reason}</p>",
+                        text_content=f"Payout #{payout.id} for user {payout.user_id}: {reason}",
+                    )
+                except Exception as alert_exc:
+                    logger.warning(f"[FLW payout] admin alert failed: {alert_exc}")
+                raise ValueError(reason)
 
             # Prepare transfer payload. No debit_currency override: Flutterwave
             # debits the balance matching the transfer `currency` by default,

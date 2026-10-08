@@ -40,69 +40,79 @@ async def get_revenue_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get overall revenue statistics"""
+    """
+    Overall revenue statistics, broken out per currency.
+
+    Subscriptions and Payouts are both genuinely multi-currency (NGN/USD/
+    GBP — see api/routes/user/stats.py's own comments on this). The
+    previous version summed every currency into one number labelled
+    "currency": "USD", which silently blended incompatible currencies into
+    a meaningless total (e.g. a NGN payout and a USD subscription added
+    together). This groups by the row's actual currency instead.
+    """
     verify_admin(current_user)
-    
+
     try:
         now = datetime.now(timezone.utc)
         current_month_start = datetime(now.year, now.month, 1)
-        
-        # Monthly Revenue (current month subscriptions)
-        monthly_revenue = db.query(
-            func.coalesce(func.sum(Subscriptions.amount), 0)
-        ).filter(
-            Subscriptions.status.in_(['active', 'completed']),
-            Subscriptions.created_at >= current_month_start
-        ).scalar() or Decimal("0.00")
-        
-        # Total Subscription Revenue (all time)
-        total_subscription_revenue = db.query(
-            func.coalesce(func.sum(Subscriptions.amount), 0)
-        ).filter(
-            Subscriptions.status.in_(['active', 'completed'])
-        ).scalar() or Decimal("0.00")
-        
-        # Referral Commissions Paid (from payouts table)
-        referral_commissions_paid = db.query(
-            func.coalesce(func.sum(Payout.amount), 0)
-        ).filter(
-            Payout.status == 'completed'
-        ).scalar() or Decimal("0.00")
-        
-        # Refunds (subscriptions with refund status)
-        refunds = db.query(
-            func.coalesce(func.sum(Subscriptions.amount), 0)
-        ).filter(
-            Subscriptions.status == 'refunded'
-        ).scalar() or Decimal("0.00")
-        
-        # Calculate growth rates (compare to last month)
         last_month = now.month - 1 if now.month > 1 else 12
         last_year = now.year if now.month > 1 else now.year - 1
         last_month_start = datetime(last_year, last_month, 1)
-        
-        last_month_revenue = db.query(
-            func.coalesce(func.sum(Subscriptions.amount), 0)
-        ).filter(
+
+        def sum_by_currency(amount_col, currency_col, *filters):
+            rows = db.query(
+                currency_col.label('currency'),
+                func.coalesce(func.sum(amount_col), 0).label('total')
+            ).filter(*filters).group_by(currency_col).all()
+            return {(row.currency or 'USD'): float(row.total) for row in rows}
+
+        monthly_by_ccy = sum_by_currency(
+            Subscriptions.amount, Subscriptions.currency,
+            Subscriptions.status.in_(['active', 'completed']),
+            Subscriptions.created_at >= current_month_start,
+        )
+        last_month_by_ccy = sum_by_currency(
+            Subscriptions.amount, Subscriptions.currency,
             Subscriptions.status.in_(['active', 'completed']),
             Subscriptions.created_at >= last_month_start,
-            Subscriptions.created_at < current_month_start
-        ).scalar() or Decimal("0.00")
-        
-        if last_month_revenue > 0:
-            growth = float(((monthly_revenue - last_month_revenue) / last_month_revenue) * 100)
-        else:
-            growth = 100.0 if monthly_revenue > 0 else 0.0
-        
-        return {
-            "monthly_revenue": float(monthly_revenue),
-            "total_subscription_revenue": float(total_subscription_revenue),
-            "referral_commissions_paid": float(referral_commissions_paid),
-            "refunds": float(refunds),
-            "growth_rate": round(growth, 1),
-            "currency": "USD"
-        }
-        
+            Subscriptions.created_at < current_month_start,
+        )
+        total_subscription_by_ccy = sum_by_currency(
+            Subscriptions.amount, Subscriptions.currency,
+            Subscriptions.status.in_(['active', 'completed']),
+        )
+        commissions_paid_by_ccy = sum_by_currency(
+            Payout.amount, Payout.currency,
+            Payout.status == 'completed',
+        )
+        refunds_by_ccy = sum_by_currency(
+            Subscriptions.amount, Subscriptions.currency,
+            Subscriptions.status == 'refunded',
+        )
+
+        currencies = sorted(
+            set(monthly_by_ccy) | set(total_subscription_by_ccy)
+            | set(commissions_paid_by_ccy) | set(refunds_by_ccy)
+        )
+
+        by_currency = {}
+        for ccy in currencies:
+            this_month = monthly_by_ccy.get(ccy, 0.0)
+            prior_month = last_month_by_ccy.get(ccy, 0.0)
+            if prior_month > 0:
+                growth = ((this_month - prior_month) / prior_month) * 100
+            else:
+                growth = 100.0 if this_month > 0 else 0.0
+            by_currency[ccy] = {
+                "monthly_revenue": this_month,
+                "total_subscription_revenue": total_subscription_by_ccy.get(ccy, 0.0),
+                "referral_commissions_paid": commissions_paid_by_ccy.get(ccy, 0.0),
+                "refunds": refunds_by_ccy.get(ccy, 0.0),
+                "growth_rate": round(growth, 1),
+            }
+
+        return {"by_currency": by_currency, "currencies": currencies}
+
     except Exception as e:
         print(f"Error in revenue stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -174,29 +184,41 @@ async def get_commissions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get commission data grouped by user with payment methods"""
+    """
+    Get commission data grouped by user with payment methods.
+
+    Commission.status actually has five live values, not three:
+    pending, approved (set by CommissionService.approve_commission /
+    auto_approve_commissions — see commission_service.py — but never acted
+    on by this file's own /commissions/approve/{user_id} below, which only
+    ever reads 'pending' rows directly; that gap is real and unresolved,
+    flagged rather than silently worked around here), processing, paid,
+    and auto_settled (paid automatically at charge time or via immediate
+    FX payout, never touched by an admin). The previous version only
+    summed pending/processing/paid, so any approved or auto_settled
+    commission was invisible in every total below even though it's real
+    money already committed or already paid.
+    """
     verify_admin(current_user)
-    
+
     try:
         from database.pg_models import PayoutAccount
-        
+
+        def status_sum(status: str):
+            return func.coalesce(
+                func.sum(case((Commission.status == status, Commission.amount), else_=0)), 0
+            )
+
         commission_data = db.query(
             Commission.user_id,
             User.name.label('user_name'),
             User.email.label('user_email'),
             func.coalesce(func.sum(Commission.amount), 0).label('total_commissions'),
-            func.coalesce(
-                func.sum(case((Commission.status == 'pending', Commission.amount), else_=0)), 
-                0
-            ).label('pending_commissions'),
-            func.coalesce(
-                func.sum(case((Commission.status == 'processing', Commission.amount), else_=0)), 
-                0
-            ).label('processing_commissions'),
-            func.coalesce(
-                func.sum(case((Commission.status == 'paid', Commission.amount), else_=0)), 
-                0
-            ).label('paid_commissions'),
+            status_sum('pending').label('pending_commissions'),
+            status_sum('approved').label('approved_commissions'),
+            status_sum('processing').label('processing_commissions'),
+            status_sum('paid').label('paid_commissions'),
+            status_sum('auto_settled').label('auto_settled_commissions'),
             func.max(Commission.created_at).label('last_commission_date'),
             func.count(Commission.id).label('commission_count')
         ).join(
@@ -216,14 +238,24 @@ async def get_commissions(
         for data in commission_data:
             # Calculate amounts for each status
             pending = float(data.pending_commissions)
+            approved = float(data.approved_commissions)
             processing = float(data.processing_commissions)
             paid = float(data.paid_commissions)
-            
-            # Determine overall payout status
+            auto_settled = float(data.auto_settled_commissions)
+
+            # Determine overall payout status — ordered so the status needing
+            # the most urgent admin attention wins when a user has a mix.
             if pending > 0:
                 payout_status = "pending"  # Has pending commissions to approve
             elif processing > 0:
                 payout_status = "processing"  # Awaiting payout confirmation
+            elif approved > 0:
+                # Approved by CommissionService but /commissions/approve
+                # below can't act on it yet (see docstring) — surfaced
+                # distinctly so this isn't mistaken for "nothing owed."
+                payout_status = "approved"
+            elif auto_settled > 0:
+                payout_status = "auto_settled"  # Already paid, no admin action was needed
             elif paid > 0:
                 payout_status = "paid"  # All paid
             else:
@@ -247,8 +279,10 @@ async def get_commissions(
                 "user_email": data.user_email,
                 "total_commissions": float(data.total_commissions),
                 "pending_commissions": pending,
+                "approved_commissions": approved,
                 "processing_commissions": processing,
                 "paid_commissions": paid,
+                "auto_settled_commissions": auto_settled,
                 "payout_status": payout_status,
                 "last_commission_date": data.last_commission_date.strftime("%Y-%m-%d %H:%M") if data.last_commission_date else None,
                 "commission_count": data.commission_count,
@@ -397,23 +431,50 @@ async def approve_user_commissions(
 
         actual_payout_amount = payout_amount
         linked_amount = sum(Decimal(str(c.amount)) for c in selected_commissions)
-        
+
         print(f"[Admin] Processing ${actual_payout_amount} payout for user {user_id} via {payment_method}")
         print(f"[Admin] Linked commissions total: ${linked_amount}")
 
+        # A Flutterwave transfer is always a plain NGN bank transfer — see
+        # payout_service.py's process_flutterwave_payout, which debits
+        # Lavoo's NGN balance for whatever currency `payout.currency` says
+        # and has no FX-conversion step of its own. This endpoint used to
+        # hardcode currency='USD' on every payout regardless of method, so
+        # an admin-approved Flutterwave payout for a non-NGN commission was
+        # silently sent to Flutterwave's transfer API tagged "USD" — a
+        # currency Lavoo doesn't hold any Flutterwave balance in, and a
+        # plausible real cause of payouts failing outright. The automatic
+        # immediate-payout path (commission_service.py) already converts
+        # non-NGN commissions to NGN via a live FX rate before creating its
+        # Payout row; this endpoint has no such conversion, so rather than
+        # silently mislabel the currency, block the one case that would
+        # actually be wrong and require the FX-aware automatic flow instead.
+        commission_currency = (selected_commissions[0].currency or 'USD').upper()
+        if payment_method == 'flutterwave' and commission_currency != 'NGN':
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This commission is in {commission_currency}; a Flutterwave payout can only "
+                    "send NGN. FX-converting an admin-approved payout isn't supported here — this "
+                    "happens automatically when the commission is first earned if the referrer has "
+                    "Flutterwave bank details on file, or have them add Stripe payout details instead."
+                ),
+            )
+        payout_currency = 'NGN' if payment_method == 'flutterwave' else commission_currency
+
         # Create payout record with status 'pending'
         user = db.query(User).filter(User.id == user_id).first()
-        
+
         # Build account details string for the payout record
         if payment_method == 'stripe':
             account_details = f"Stripe Connect: {payout_account.stripe_account_id}"
         else:
             account_details = f"Bank: {payout_account.bank_name}, Account: ****{payout_account.account_number[-4:] if payout_account.account_number else 'N/A'}"
-        
+
         payout = Payout(
             user_id=user_id,
             amount=actual_payout_amount,  # Use exact requested amount
-            currency='USD',
+            currency=payout_currency,
             payment_method=payment_method,
             status='pending',
             recipient_email=user.email,
@@ -602,6 +663,55 @@ async def get_user_commission_details(
         print(f"Error getting user commission details: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+@router.get("/platform-balance")
+async def get_platform_balance(
+    provider: str = "flutterwave",
+    currency: str = "NGN",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Latest platform payout-provider balance snapshot, written by
+    run_flutterwave_balance_monitor_job (api/main.py) every 10 minutes.
+    Returns a "no_data_yet" status if the job hasn't run since this table
+    was added, rather than a confusing empty/zeroed response.
+    """
+    verify_admin(current_user)
+
+    try:
+        from database.pg_models import PlatformBalanceSnapshot
+
+        snapshot = db.query(PlatformBalanceSnapshot).filter(
+            PlatformBalanceSnapshot.provider == provider,
+            PlatformBalanceSnapshot.currency == currency,
+        ).order_by(PlatformBalanceSnapshot.checked_at.desc()).first()
+
+        if not snapshot:
+            return {
+                "status": "no_data_yet",
+                "provider": provider,
+                "currency": currency,
+            }
+
+        return {
+            "status": "ok",
+            "provider": snapshot.provider,
+            "currency": snapshot.currency,
+            "available_balance": float(snapshot.available_balance) if snapshot.available_balance is not None else None,
+            "ledger_balance": float(snapshot.ledger_balance) if snapshot.ledger_balance is not None else None,
+            "pending_obligations": float(snapshot.pending_obligations) if snapshot.pending_obligations is not None else None,
+            "threshold": float(snapshot.threshold) if snapshot.threshold is not None else None,
+            "below_threshold": snapshot.below_threshold,
+            "check_failed": snapshot.check_failed,
+            "error_message": snapshot.error_message,
+            "checked_at": snapshot.checked_at.isoformat() if snapshot.checked_at else None,
+        }
+
+    except Exception as e:
+        print(f"Error fetching platform balance: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/payouts")

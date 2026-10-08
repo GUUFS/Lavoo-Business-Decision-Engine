@@ -1401,6 +1401,30 @@ class VulnerabilityScan(Base):
     )
 
 
+# Platform Balance Snapshot Table — one row per periodic balance check
+# (see run_flutterwave_balance_monitor_job in api/main.py), so the admin
+# Revenue page can show the platform's real, current payout-provider
+# balance and its recent trend, not just a live-only in-memory number.
+class PlatformBalanceSnapshot(Base):
+    __tablename__ = "platform_balance_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String(50), nullable=False)  # "flutterwave", "stripe"
+    currency = Column(String(10), nullable=False)  # "NGN", "USD", ...
+    available_balance = Column(Numeric(precision=14, scale=2), nullable=True)  # NULL if the provider couldn't be reached
+    ledger_balance = Column(Numeric(precision=14, scale=2), nullable=True)
+    pending_obligations = Column(Numeric(precision=14, scale=2), nullable=True)  # sum of our own pending/processing payouts in this currency at check time
+    threshold = Column(Numeric(precision=14, scale=2), nullable=True)  # the minimum this check compared against
+    below_threshold = Column(Boolean, nullable=False, default=False)
+    check_failed = Column(Boolean, nullable=False, default=False)  # provider unreachable / API error
+    error_message = Column(Text, nullable=True)
+    checked_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_platform_balance_provider_currency_time", "provider", "currency", checked_at.desc()),
+    )
+
+
 # Audit Log Table
 class AuditLog(Base):
     __tablename__ = "audit_log"
