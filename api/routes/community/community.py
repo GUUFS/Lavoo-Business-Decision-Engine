@@ -674,7 +674,15 @@ def _get_poll_payload(d: CommunityDiscussion, current_user: Optional[User] = Non
     }
 
 
-def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, saved_ids: Optional[set] = None, include_quoted: bool = True, current_user: Optional[User] = None, db: Optional[Session] = None) -> dict:
+def _discussion_dict(
+    d: CommunityDiscussion,
+    liked_ids: Optional[set] = None,
+    saved_ids: Optional[set] = None,
+    include_quoted: bool = True,
+    current_user: Optional[User] = None,
+    db: Optional[Session] = None,
+    recent_likers_map: Optional[Dict[int, List[dict]]] = None
+) -> dict:
     has_liked = d.id in liked_ids if liked_ids is not None else False
     has_saved = d.id in saved_ids if saved_ids is not None else False
     post_type_val = getattr(d, 'post_type', None) or 'discussion'
@@ -723,6 +731,26 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
     has_valid_takeaways = bool(author_is_paid and raw_takeaways and not is_q_post)
     takeaways_val = raw_takeaways if has_valid_takeaways else None
 
+    recent_likers = []
+    if recent_likers_map is not None:
+        recent_likers = recent_likers_map.get(d.id, [])
+    elif db and (d.like_count or 0) > 0:
+        try:
+            recent_likes_rows = (
+                db.query(User.id, User.name, User.username)
+                .join(DiscussionLike, DiscussionLike.user_id == User.id)
+                .filter(DiscussionLike.discussion_id == d.id)
+                .order_by(DiscussionLike.created_at.desc())
+                .limit(3)
+                .all()
+            )
+            recent_likers = [
+                {"id": r[0], "name": r[1] or "Member", "username": r[2] or ""}
+                for r in recent_likes_rows
+            ]
+        except Exception:
+            recent_likers = []
+
     return {
         "id": d.id, "channel_id": d.channel_id, "title": d.title, "content": d.content,
         "slug": slug_val,
@@ -752,6 +780,7 @@ def _discussion_dict(d: CommunityDiscussion, liked_ids: Optional[set] = None, sa
         "is_resolved": getattr(d, 'is_resolved', False) or False,
         "author": author_obj,
         "channel": channel_display,
+        "recent_likers": recent_likers,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "updated_at": d.updated_at.isoformat() if d.updated_at else None,
     }
@@ -1503,7 +1532,39 @@ async def get_discussions(
 
         saved = bm_saved.union(tbl_saved)
 
-        result = [_discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db) for d in discussions]
+        recent_likers_map: Dict[int, List[dict]] = {}
+        if discussion_ids:
+            try:
+                recent_likes_rows = (
+                    db.query(DiscussionLike.discussion_id, User.id, User.name, User.username)
+                    .join(User, DiscussionLike.user_id == User.id)
+                    .filter(DiscussionLike.discussion_id.in_(discussion_ids))
+                    .order_by(DiscussionLike.discussion_id, DiscussionLike.created_at.desc())
+                    .all()
+                )
+                for disc_id, u_id, u_name, u_uname in recent_likes_rows:
+                    if disc_id not in recent_likers_map:
+                        recent_likers_map[disc_id] = []
+                    if len(recent_likers_map[disc_id]) < 3:
+                        recent_likers_map[disc_id].append({
+                            "id": u_id,
+                            "name": u_name or "Member",
+                            "username": u_uname or ""
+                        })
+            except Exception as e:
+                logger.warning(f"[community] Batch-fetch recent likers failed: {e}")
+
+        result = [
+            _discussion_dict(
+                d,
+                liked_ids=liked,
+                saved_ids=saved,
+                current_user=current_user,
+                db=db,
+                recent_likers_map=recent_likers_map
+            )
+            for d in discussions
+        ]
 
         # Fast cached mission roadmap reflections
         cached_reflections = _get_cached_mission_reflections(db)
@@ -1657,7 +1718,7 @@ async def get_discussion(
 
     liked = {d.id} if (current_user and db.query(DiscussionLike).filter_by(user_id=current_user.id, discussion_id=d.id).first()) else set()
     saved = {d.id} if (current_user and db.query(SavedItem).filter_by(user_id=current_user.id, item_id=d.id).first()) else set()
-    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user)
+    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db)
     data["replies"] = replies
     return {"success": True, "data": data}
 
@@ -1858,7 +1919,7 @@ async def get_public_discussion(
     if getattr(d, 'visibility', 'public') == 'tagged_only':
         raise HTTPException(status_code=403, detail="This post is private to tagged members")
         
-    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None)
+    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None, db=db)
     
     replies_raw = db.query(DiscussionReply).filter_by(discussion_id=discussion_id).order_by(DiscussionReply.created_at.asc()).all()
     author_ids = list(set([r.user_id for r in replies_raw] + [d.user_id]))
