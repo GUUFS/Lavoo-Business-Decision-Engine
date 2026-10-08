@@ -753,6 +753,32 @@ async def run_flutterwave_payout_reconcile_job():
             logger.error("[flw-reconcile-job] error: %s", exc)
 
 
+async def run_flutterwave_balance_monitor_job():
+    """
+    Runs every 10 minutes. Reads Lavoo's real Flutterwave NGN balance,
+    records a PlatformBalanceSnapshot (so the admin Revenue page has a
+    live number + trend instead of nothing), and emails the admin alert
+    address the moment it drops below either a safety floor
+    (FLUTTERWAVE_MIN_BALANCE_NGN) or what's already owed in pending/
+    processing Flutterwave payouts — whichever is higher — so a low
+    wallet is caught before it causes Builder Bonus payouts to fail,
+    not after.
+    """
+    from fastapi import BackgroundTasks
+    while True:
+        await asyncio.sleep(10 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.payout_service import PayoutService
+            bg = BackgroundTasks()
+            with SessionLocal() as db:
+                result = await asyncio.to_thread(PayoutService.check_flutterwave_balance, db, bg)
+            logger.info("[flw-balance-job] %s", result)
+            await bg()
+        except Exception as exc:
+            logger.error("[flw-balance-job] error: %s", exc)
+
+
 async def run_stripe_commission_settlement_job():
     """
     Runs every 10 minutes. Pays commissions that are waiting to go out through
@@ -1266,7 +1292,21 @@ def run_heavy_schema_migrations():
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )""",
             "UPDATE users SET username = LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]', '', 'g')) WHERE username IS NULL OR username = ''",
-            "CREATE TABLE IF NOT EXISTS founder_insight_cards (id SERIAL PRIMARY KEY, highlight_stat VARCHAR(50), insight_text TEXT NOT NULL, source VARCHAR(255) NOT NULL, category VARCHAR(50) DEFAULT 'african_tech', accent_color VARCHAR(20) DEFAULT '#e87a02', is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)"
+            "CREATE TABLE IF NOT EXISTS founder_insight_cards (id SERIAL PRIMARY KEY, highlight_stat VARCHAR(50), insight_text TEXT NOT NULL, source VARCHAR(255) NOT NULL, category VARCHAR(50) DEFAULT 'african_tech', accent_color VARCHAR(20) DEFAULT '#e87a02', is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)",
+            """CREATE TABLE IF NOT EXISTS platform_balance_snapshots (
+                id SERIAL PRIMARY KEY,
+                provider VARCHAR(50) NOT NULL,
+                currency VARCHAR(10) NOT NULL,
+                available_balance NUMERIC(14,2),
+                ledger_balance NUMERIC(14,2),
+                pending_obligations NUMERIC(14,2),
+                threshold NUMERIC(14,2),
+                below_threshold BOOLEAN NOT NULL DEFAULT FALSE,
+                check_failed BOOLEAN NOT NULL DEFAULT FALSE,
+                error_message TEXT,
+                checked_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_platform_balance_provider_currency_time ON platform_balance_snapshots(provider, currency, checked_at DESC)"
         ]
         for stmt in index_statements:
             try:
@@ -1370,6 +1410,7 @@ async def startup_event():
     asyncio.create_task(run_scheduled_reflections_job())
     asyncio.create_task(run_scheduled_voo_bot_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
+    asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_commission_settlement_job())
     asyncio.create_task(run_stripe_payout_reconcile_job())
 
