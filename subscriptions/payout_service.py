@@ -818,6 +818,16 @@ class PayoutService:
             blob["lavoo"] = keep
         payout.provider_response = json.dumps(blob)
 
+        # A dashboard retry of a failed transfer gets its OWN Flutterwave
+        # transfer id, distinct from payout.provider_payout_id (which still
+        # points at the original, permanently-FAILED transfer). Without this,
+        # provider_payout_id — and the "Transaction ID" the success email
+        # shows the user — stays pinned to the dead transfer forever, even
+        # though it's the retry's id that actually moved the money.
+        attempt_id = attempt.get("id")
+        if attempt_id and str(attempt_id) != str(payout.provider_payout_id):
+            payout.provider_payout_id = str(attempt_id)
+
     @staticmethod
     def _relink_commissions_from_history(payout: Payout, db: Session) -> list:
         """
