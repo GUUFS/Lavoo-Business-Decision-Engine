@@ -52,6 +52,14 @@ class PayoutService:
         moved) could never be recorded as completed. Opens its own session
         because it runs as a background task, after the request's session
         has closed.
+
+        Also creates the in-app bell/push notification. This is the one
+        place every real completion path (the Flutterwave webhook, the
+        Flutterwave/Stripe reconcile jobs, and the synchronous Stripe path)
+        converges on — previously only commission_service.py's separate
+        immediate Stripe auto-settle path created a bell notification, so a
+        payout completed any other way (the common case) only ever emailed
+        the user with nothing showing on their notification bell.
         """
         try:
             from database.pg_connections import SessionLocal
@@ -68,6 +76,13 @@ class PayoutService:
                     payment_method=(payout.payment_method if payout else None) or "bank transfer",
                     transaction_id=str(payout.provider_payout_id if payout and payout.provider_payout_id else payout_id),
                     processing_date=(processed_at or datetime.now(timezone.utc)).strftime("%B %d, %Y"),
+                )
+                NotificationService.create_notification(
+                    db=s, user_id=user_id,
+                    type=NotificationType.PAYOUT_COMPLETED.value,
+                    title="💸 Builder Bonus paid",
+                    message=f"{amount} {currency} was sent to your {(payout.payment_method if payout else None) or 'payout'} account.",
+                    link="/l/earnings",
                 )
         except Exception as e:
             logger.error(f"Could not send payout success email for payout {payout_id}: {e}")
@@ -678,7 +693,7 @@ class PayoutService:
     def complete_flutterwave_payout(
         payout_id: int, background_tasks: BackgroundTasks, transfer_status: str, db: Session,
         settled_amount: float | None = None, fee: float | None = None,
-        failure_reason: str | None = None,
+        failure_reason: str | None = None, provider_transfer_id: str | None = None,
     ) -> None:
         """
         Complete Flutterwave payout after webhook confirmation.
@@ -690,6 +705,15 @@ class PayoutService:
         lost the way it previously was (a referrer reported receiving
         119.73 NGN for a requested 120 NGN payout with nothing on file to
         explain it).
+
+        provider_transfer_id is the id of the transfer attempt that ACTUALLY
+        settled — not necessarily payout.provider_payout_id. A dashboard
+        retry of a failed transfer gets its own, new Flutterwave transfer id;
+        the original stays FAILED forever. Both callers (the webhook and the
+        polling reconciler) pass the id of whichever attempt they saw
+        succeed, so provider_payout_id — and the "Transaction ID" the
+        success email shows the user — always points at the transfer that
+        actually moved the money, not a dead earlier attempt.
         """
         payout = db.query(Payout).filter(Payout.id == payout_id).first()
 
@@ -705,6 +729,8 @@ class PayoutService:
             return
 
         if transfer_status == "successful":
+            if provider_transfer_id and str(provider_transfer_id) != str(payout.provider_payout_id):
+                payout.provider_payout_id = str(provider_transfer_id)
             payout.status = 'completed'
             payout.completed_at = datetime.now(timezone.utc)
             if settled_amount is not None:
@@ -935,6 +961,7 @@ class PayoutService:
                     PayoutService.complete_flutterwave_payout(
                         payout_id, background_tasks, "successful", db,
                         settled_amount=attempt.get("amount"), fee=attempt.get("fee"),
+                        provider_transfer_id=attempt.get("id"),
                     )
                     counts["completed"] += 1
                     logger.info(

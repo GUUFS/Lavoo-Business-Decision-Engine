@@ -884,6 +884,38 @@ async def flutterwave_payout_callback(
                 logger.info("[FLW webhook] ignoring payment event ref=%s status=%s", payment_tx_ref, transfer_status)
             return {"status": "success"}
 
+        # Persist every transfer-type webhook we receive as-is, before any
+        # matching logic runs. Previously a transfer we couldn't tie to one
+        # of our own payouts (e.g. sent directly from Flutterwave's
+        # dashboard, with no PAYOUT-{id} reference) left nothing behind but
+        # a Railway log line — "nothing should be done without anything
+        # being recorded" wasn't actually true for that case.
+        import json as _json
+        from database.pg_models import FlutterwaveTransferEvent
+        matched_payout_id = None
+        if reference and reference.startswith("PAYOUT-"):
+            try:
+                matched_payout_id = int(reference.split("-")[1])
+            except (IndexError, ValueError):
+                matched_payout_id = None
+        try:
+            _raw_amount = transfer_data.get("amount")
+            _event_amount = _raw_amount.get("value") if isinstance(_raw_amount, dict) else _raw_amount
+            db.add(FlutterwaveTransferEvent(
+                event_type=event_type or None,
+                reference=reference or None,
+                transfer_id=str(transfer_data.get("id")) if transfer_data.get("id") is not None else None,
+                status=transfer_status or None,
+                amount=Decimal(str(_event_amount)) if _event_amount is not None else None,
+                currency=transfer_data.get("currency"),
+                matched_payout_id=matched_payout_id,
+                raw_payload=_json.dumps(payload)[:8000],
+            ))
+            db.commit()
+        except Exception as audit_exc:
+            db.rollback()
+            logger.warning("[FLW webhook] could not persist transfer event audit row: %s", audit_exc)
+
         if reference and reference.startswith("PAYOUT-"):
             try:
                 payout_id = int(reference.split("-")[1])
@@ -920,13 +952,15 @@ async def flutterwave_payout_callback(
             )
 
             if is_success:
+                webhook_transfer_id = transfer_data.get("id")
                 PayoutService.complete_flutterwave_payout(
                     payout_id, background_tasks, "successful", db,
                     settled_amount=settled_amount, fee=fee,
+                    provider_transfer_id=webhook_transfer_id,
                 )
                 logger.info(
-                    "[FLW webhook] payout %s completed | settled_amount=%s fee=%s (per Flutterwave's webhook payload)",
-                    payout_id, settled_amount, fee,
+                    "[FLW webhook] payout %s completed | transfer_id=%s settled_amount=%s fee=%s (per Flutterwave's webhook payload)",
+                    payout_id, webhook_transfer_id, settled_amount, fee,
                 )
             elif is_failure:
                 failure_reason = transfer_data.get("complete_message") or transfer_data.get("narration")
@@ -939,6 +973,24 @@ async def flutterwave_payout_callback(
                 logger.warning("[FLW webhook] unknown event=%s status=%s", event_type, transfer_status)
         else:
             logger.info("[FLW webhook] non-payout ref: %s", reference)
+            if transfer_status:  # a real transfer, just not one we recognize
+                try:
+                    from subscriptions.payout_service import PayoutService
+                    PayoutService._queue_admin_alert(
+                        background_tasks,
+                        subject=f"ℹ️ Unrecognized Flutterwave transfer ({transfer_status}) — ref {reference or 'unknown'}",
+                        body=(
+                            f"Flutterwave sent a transfer webhook that doesn't match any Lavoo payout: "
+                            f"reference={reference!r}, transfer_id={transfer_data.get('id')}, status={transfer_status}, "
+                            f"amount={transfer_data.get('amount')} {transfer_data.get('currency')}. This usually "
+                            f"means the transfer was sent directly from Flutterwave's dashboard rather than "
+                            f"through Lavoo. It's recorded in flutterwave_transfer_events for reference, but no "
+                            f"Payout/Commission row was updated — if this was a Builder Bonus payment, mark the "
+                            f"matching commission as paid manually in the admin Revenue page."
+                        ),
+                    )
+                except Exception as alert_exc:
+                    logger.warning("[FLW webhook] admin alert for unmatched transfer failed: %s", alert_exc)
 
         return {"status": "success"}
 

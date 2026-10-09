@@ -746,8 +746,7 @@ async def run_flutterwave_payout_reconcile_job():
             bg = BackgroundTasks()
             with SessionLocal() as db:
                 counts = await asyncio.to_thread(PayoutService.reconcile_flutterwave_payouts, db, bg)
-            if counts["checked"]:
-                logger.info("[flw-reconcile-job] %s", counts)
+            logger.info("[flw-reconcile-job] %s", counts)
             await bg()
         except Exception as exc:
             logger.error("[flw-reconcile-job] error: %s", exc)
@@ -1306,7 +1305,22 @@ def run_heavy_schema_migrations():
                 error_message TEXT,
                 checked_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )""",
-            "CREATE INDEX IF NOT EXISTS idx_platform_balance_provider_currency_time ON platform_balance_snapshots(provider, currency, checked_at DESC)"
+            "CREATE INDEX IF NOT EXISTS idx_platform_balance_provider_currency_time ON platform_balance_snapshots(provider, currency, checked_at DESC)",
+            """CREATE TABLE IF NOT EXISTS flutterwave_transfer_events (
+                id SERIAL PRIMARY KEY,
+                event_type VARCHAR(50),
+                reference VARCHAR(255),
+                transfer_id VARCHAR(50),
+                status VARCHAR(30),
+                amount NUMERIC(14,2),
+                currency VARCHAR(10),
+                matched_payout_id INTEGER REFERENCES payouts(id),
+                raw_payload TEXT,
+                received_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_flw_transfer_events_reference ON flutterwave_transfer_events(reference)",
+            "CREATE INDEX IF NOT EXISTS idx_flw_transfer_events_transfer_id ON flutterwave_transfer_events(transfer_id)",
+            "CREATE INDEX IF NOT EXISTS idx_flw_transfer_events_matched_payout_id ON flutterwave_transfer_events(matched_payout_id)",
         ]
         for stmt in index_statements:
             try:

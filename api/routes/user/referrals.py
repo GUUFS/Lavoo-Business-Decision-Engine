@@ -55,7 +55,20 @@ async def get_referral_stats(current_user = Depends(get_current_user), db: Sessi
             Referral.referrer_id == user_id,
             Referral.created_at >= first_day_of_month
         ).count()
-        
+
+        # Referrals with no active subscription right now — covers both a
+        # referred user who never subscribed at all and one whose
+        # subscription has since lapsed/expired. Uses User.subscription_status
+        # (the same field /referrals already reports per-row as `is_active`)
+        # rather than the Subscriptions history table, so this always agrees
+        # with what the referral list itself shows.
+        referrals_not_subscribed = db.query(Referral).join(
+            User, User.id == Referral.referred_user_id
+        ).filter(
+            Referral.referrer_id == user_id,
+            User.subscription_status != "active"
+        ).count()
+
         # Get recent referrals (last 5)
         recent_referrals = db.query(Referral).filter(
             Referral.referrer_id == user_id
@@ -77,6 +90,7 @@ async def get_referral_stats(current_user = Depends(get_current_user), db: Sessi
             "total_referrals": total_referrals,
             "total_chops_earned": total_chops,
             "referrals_this_month": referrals_this_month,
+            "referrals_not_subscribed": referrals_not_subscribed,
             "recent_referrals": recent_referrals_data
         }
         
