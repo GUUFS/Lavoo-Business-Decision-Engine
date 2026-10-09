@@ -273,6 +273,25 @@ async def get_user_details(
     referrals = db.query(Referral).filter(Referral.referrer_id == user.id).all()
     referral_names = [ref.referred_user.name for ref in referrals if ref.referred_user]
 
+    # Who referred THIS user — the reverse direction from referral_names
+    # above (who this user referred). Previously not surfaced at all, so
+    # the admin had no way to see a user's own referrer from this modal.
+    inbound_referral = (
+        db.query(Referral)
+        .filter(Referral.referred_user_id == user.id)
+        .order_by(Referral.created_at.desc())
+        .first()
+    )
+    referred_by = None
+    if inbound_referral and inbound_referral.via_staff_pool:
+        referred_by = {"name": "Lavoo staff (no referral code used)", "email": None, "id": None}
+    elif inbound_referral and inbound_referral.referrer:
+        referred_by = {
+            "name": inbound_referral.referrer.name,
+            "email": inbound_referral.referrer.email,
+            "id": inbound_referral.referrer.id,
+        }
+
     if not user.is_active:
         status = "suspended"
     elif is_user_inactive(user):
@@ -305,6 +324,7 @@ async def get_user_details(
         "referral_code": user.referral_code,
         "total_referrals": user.referral_count or 0,
         "referred_users": referral_names,
+        "referred_by": referred_by,
         "days_remaining": days_remaining,
     }
 

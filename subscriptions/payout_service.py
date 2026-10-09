@@ -52,6 +52,14 @@ class PayoutService:
         moved) could never be recorded as completed. Opens its own session
         because it runs as a background task, after the request's session
         has closed.
+
+        Also creates the in-app bell/push notification. This is the one
+        place every real completion path (the Flutterwave webhook, the
+        Flutterwave/Stripe reconcile jobs, and the synchronous Stripe path)
+        converges on — previously only commission_service.py's separate
+        immediate Stripe auto-settle path created a bell notification, so a
+        payout completed any other way (the common case) only ever emailed
+        the user with nothing showing on their notification bell.
         """
         try:
             from database.pg_connections import SessionLocal
@@ -68,6 +76,13 @@ class PayoutService:
                     payment_method=(payout.payment_method if payout else None) or "bank transfer",
                     transaction_id=str(payout.provider_payout_id if payout and payout.provider_payout_id else payout_id),
                     processing_date=(processed_at or datetime.now(timezone.utc)).strftime("%B %d, %Y"),
+                )
+                NotificationService.create_notification(
+                    db=s, user_id=user_id,
+                    type=NotificationType.PAYOUT_COMPLETED.value,
+                    title="💸 Builder Bonus paid",
+                    message=f"{amount} {currency} was sent to your {(payout.payment_method if payout else None) or 'payout'} account.",
+                    link="/l/earnings",
                 )
         except Exception as e:
             logger.error(f"Could not send payout success email for payout {payout_id}: {e}")
