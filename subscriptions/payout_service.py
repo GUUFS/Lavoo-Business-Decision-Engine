@@ -678,7 +678,7 @@ class PayoutService:
     def complete_flutterwave_payout(
         payout_id: int, background_tasks: BackgroundTasks, transfer_status: str, db: Session,
         settled_amount: float | None = None, fee: float | None = None,
-        failure_reason: str | None = None,
+        failure_reason: str | None = None, provider_transfer_id: str | None = None,
     ) -> None:
         """
         Complete Flutterwave payout after webhook confirmation.
@@ -690,6 +690,15 @@ class PayoutService:
         lost the way it previously was (a referrer reported receiving
         119.73 NGN for a requested 120 NGN payout with nothing on file to
         explain it).
+
+        provider_transfer_id is the id of the transfer attempt that ACTUALLY
+        settled — not necessarily payout.provider_payout_id. A dashboard
+        retry of a failed transfer gets its own, new Flutterwave transfer id;
+        the original stays FAILED forever. Both callers (the webhook and the
+        polling reconciler) pass the id of whichever attempt they saw
+        succeed, so provider_payout_id — and the "Transaction ID" the
+        success email shows the user — always points at the transfer that
+        actually moved the money, not a dead earlier attempt.
         """
         payout = db.query(Payout).filter(Payout.id == payout_id).first()
 
@@ -705,6 +714,8 @@ class PayoutService:
             return
 
         if transfer_status == "successful":
+            if provider_transfer_id and str(provider_transfer_id) != str(payout.provider_payout_id):
+                payout.provider_payout_id = str(provider_transfer_id)
             payout.status = 'completed'
             payout.completed_at = datetime.now(timezone.utc)
             if settled_amount is not None:
@@ -817,16 +828,6 @@ class PayoutService:
         if keep:
             blob["lavoo"] = keep
         payout.provider_response = json.dumps(blob)
-
-        # A dashboard retry of a failed transfer gets its OWN Flutterwave
-        # transfer id, distinct from payout.provider_payout_id (which still
-        # points at the original, permanently-FAILED transfer). Without this,
-        # provider_payout_id — and the "Transaction ID" the success email
-        # shows the user — stays pinned to the dead transfer forever, even
-        # though it's the retry's id that actually moved the money.
-        attempt_id = attempt.get("id")
-        if attempt_id and str(attempt_id) != str(payout.provider_payout_id):
-            payout.provider_payout_id = str(attempt_id)
 
     @staticmethod
     def _relink_commissions_from_history(payout: Payout, db: Session) -> list:
@@ -945,6 +946,7 @@ class PayoutService:
                     PayoutService.complete_flutterwave_payout(
                         payout_id, background_tasks, "successful", db,
                         settled_amount=attempt.get("amount"), fee=attempt.get("fee"),
+                        provider_transfer_id=attempt.get("id"),
                     )
                     counts["completed"] += 1
                     logger.info(

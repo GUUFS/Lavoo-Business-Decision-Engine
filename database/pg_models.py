@@ -1425,6 +1425,28 @@ class PlatformBalanceSnapshot(Base):
     )
 
 
+class FlutterwaveTransferEvent(Base):
+    """
+    Every transfer-related Flutterwave webhook we receive, recorded as-is
+    before any matching/branching logic runs — so a transfer we can't tie to
+    one of our own Payout rows (e.g. a brand-new transfer sent directly from
+    Flutterwave's dashboard, with no PAYOUT-{id} reference) still leaves a
+    row here instead of only a Railway log line that scrolls away.
+    """
+    __tablename__ = "flutterwave_transfer_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String(50), nullable=True)
+    reference = Column(String(255), nullable=True, index=True)
+    transfer_id = Column(String(50), nullable=True, index=True)  # Flutterwave's own id for this attempt
+    status = Column(String(30), nullable=True)
+    amount = Column(Numeric(precision=14, scale=2), nullable=True)
+    currency = Column(String(10), nullable=True)
+    matched_payout_id = Column(Integer, ForeignKey("payouts.id"), nullable=True, index=True)
+    raw_payload = Column(Text, nullable=True)
+    received_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 # Audit Log Table
 class AuditLog(Base):
     __tablename__ = "audit_log"
