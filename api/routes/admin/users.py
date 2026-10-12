@@ -282,14 +282,18 @@ async def get_user_details(
         .order_by(Referral.created_at.desc())
         .first()
     )
+    # referrer_id points at the actual staff member's User row even for a
+    # staff-pool auto-assignment (signup.py sets referrer_id=referrer.id in
+    # both cases) — so the real name/email is always available here. Only
+    # the via_staff_pool flag itself distinguishes "signed up with a real
+    # referral code" from "no code, auto-assigned to a staff member."
     referred_by = None
-    if inbound_referral and inbound_referral.via_staff_pool:
-        referred_by = {"name": "Lavoo staff (no referral code used)", "email": None, "id": None}
-    elif inbound_referral and inbound_referral.referrer:
+    if inbound_referral and inbound_referral.referrer:
         referred_by = {
             "name": inbound_referral.referrer.name,
             "email": inbound_referral.referrer.email,
             "id": inbound_referral.referrer.id,
+            "via_staff_pool": inbound_referral.via_staff_pool,
         }
 
     if not user.is_active:
