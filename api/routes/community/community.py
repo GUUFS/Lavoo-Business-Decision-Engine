@@ -88,7 +88,7 @@ def _is_question_discussion(post_type: str = "", title: str = "", content: str =
     Strictly avoids false-positive matches on ordinary reflections, statements, and updates.
     """
     p_type = (post_type or "").strip().lower()
-    if p_type in ("questions", "question", "ask-the-community", "decision-help", "ask", "help", "inquiry", "advice"):
+    if p_type in ("questions", "question", "ask-the-community", "decision-help", "ask", "help", "inquiry", "advice", "poll", "polls"):
         return True
 
     t = (title or "").strip().lower()
@@ -767,6 +767,7 @@ def _discussion_dict(
         "quoted_discussion": quoted_dict,
         "takeaways": takeaways_val,
         "has_takeaways": has_valid_takeaways,
+        "is_question": is_q_post,
         "author_is_paid": author_is_paid,
         "type": post_type_val,
         "analysis_id": getattr(d, 'analysis_id', None),
