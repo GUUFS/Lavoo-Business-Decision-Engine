@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, case
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Optional
 
 from database.pg_connections import get_db
 from database.pg_models import User, Subscriptions, Commission, Payout, ApproveCommissionsRequest
@@ -122,14 +123,15 @@ async def get_revenue_stats(
 async def get_transactions(
     limit: int = 50,
     offset: int = 0,
+    currency: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get all subscription transactions with user details"""
     verify_admin(current_user)
-    
+
     try:
-        transactions = db.query(
+        query = db.query(
             Subscriptions.id,
             Subscriptions.transaction_id,
             Subscriptions.user_id,
@@ -143,11 +145,17 @@ async def get_transactions(
             Subscriptions.created_at
         ).join(
             User, Subscriptions.user_id == User.id
-        ).order_by(
+        )
+        count_query = db.query(func.count(Subscriptions.id))
+        if currency:
+            query = query.filter(Subscriptions.currency == currency.upper())
+            count_query = count_query.filter(Subscriptions.currency == currency.upper())
+
+        transactions = query.order_by(
             Subscriptions.created_at.desc()
         ).limit(limit).offset(offset).all()
-        
-        total = db.query(func.count(Subscriptions.id)).scalar()
+
+        total = count_query.scalar()
         
         result = []
         for txn in transactions:
@@ -181,6 +189,7 @@ async def get_transactions(
 async def get_commissions(
     limit: int = 50,
     offset: int = 0,
+    currency: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -209,7 +218,7 @@ async def get_commissions(
                 func.sum(case((Commission.status == status, Commission.amount), else_=0)), 0
             )
 
-        commission_data = db.query(
+        commission_query = db.query(
             Commission.user_id,
             User.name.label('user_name'),
             User.email.label('user_email'),
@@ -223,16 +232,21 @@ async def get_commissions(
             func.count(Commission.id).label('commission_count')
         ).join(
             User, Commission.user_id == User.id
-        ).group_by(
+        )
+        if currency:
+            commission_query = commission_query.filter(Commission.currency == currency.upper())
+
+        commission_data = commission_query.group_by(
             Commission.user_id, User.name, User.email
         ).order_by(
             func.max(Commission.created_at).desc()
         ).limit(limit).offset(offset).all()
         
         # Get total unique users with commissions
-        total = db.query(
-            func.count(func.distinct(Commission.user_id))
-        ).scalar()
+        total_query = db.query(func.count(func.distinct(Commission.user_id)))
+        if currency:
+            total_query = total_query.filter(Commission.currency == currency.upper())
+        total = total_query.scalar()
         
         result = []
         for data in commission_data:
@@ -443,23 +457,31 @@ async def approve_user_commissions(
         # an admin-approved Flutterwave payout for a non-NGN commission was
         # silently sent to Flutterwave's transfer API tagged "USD" — a
         # currency Lavoo doesn't hold any Flutterwave balance in, and a
-        # plausible real cause of payouts failing outright. The automatic
-        # immediate-payout path (commission_service.py) already converts
-        # non-NGN commissions to NGN via a live FX rate before creating its
-        # Payout row; this endpoint has no such conversion, so rather than
-        # silently mislabel the currency, block the one case that would
-        # actually be wrong and require the FX-aware automatic flow instead.
+        # plausible real cause of payouts failing outright.
         commission_currency = (selected_commissions[0].currency or 'USD').upper()
+        fx_rate = None
+        original_currency = None
+        original_amount = None
         if payment_method == 'flutterwave' and commission_currency != 'NGN':
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"This commission is in {commission_currency}; a Flutterwave payout can only "
-                    "send NGN. FX-converting an admin-approved payout isn't supported here — this "
-                    "happens automatically when the commission is first earned if the referrer has "
-                    "Flutterwave bank details on file, or have them add Stripe payout details instead."
-                ),
-            )
+            # Same live-rate conversion the automatic immediate-payout path
+            # (commission_service.py) already does at commission-creation
+            # time — this endpoint previously just blocked this combination
+            # outright, which left an admin with no manual way to pay a
+            # USD/GBP commission to a referrer whose only account is
+            # Flutterwave/NGN (exactly the case that needed this button).
+            from subscriptions.flutterwave_split import get_flutterwave_fx_rate
+            fx_rate = get_flutterwave_fx_rate(commission_currency, "NGN")
+            if fx_rate is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Could not fetch a live {commission_currency}->NGN exchange rate right now "
+                        "— try again shortly."
+                    ),
+                )
+            original_currency = commission_currency
+            original_amount = actual_payout_amount
+            actual_payout_amount = (actual_payout_amount * fx_rate).quantize(Decimal("0.01"))
         payout_currency = 'NGN' if payment_method == 'flutterwave' else commission_currency
 
         # Create payout record with status 'pending'
@@ -473,13 +495,16 @@ async def approve_user_commissions(
 
         payout = Payout(
             user_id=user_id,
-            amount=actual_payout_amount,  # Use exact requested amount
+            amount=actual_payout_amount,  # In payout_currency — already FX-converted if applicable
             currency=payout_currency,
             payment_method=payment_method,
             status='pending',
             recipient_email=user.email,
             recipient_name=user.name,
             account_details=account_details,
+            original_currency=original_currency,
+            original_amount=original_amount,
+            fx_rate=fx_rate,
             failure_reason='',  # Initialize as empty string (will be populated on failure)
             requested_at=datetime.now(timezone.utc)
         )
@@ -508,7 +533,7 @@ async def approve_user_commissions(
                 
                 return {
                     "status": "success",
-                    "message": f"Paid ${actual_payout_amount} via Stripe",
+                    "message": f"Paid {actual_payout_amount} {payout_currency} via Stripe",
                     "payout_amount": float(actual_payout_amount),
                     "payout_id": payout.id,
                     "payout_status": payout.status,
@@ -524,7 +549,11 @@ async def approve_user_commissions(
                 
                 return {
                     "status": "processing",
-                    "message": f"Payout of ${actual_payout_amount} initiated via Flutterwave. Awaiting confirmation.",
+                    "message": (
+                        f"Payout of {actual_payout_amount} {payout_currency} initiated via Flutterwave"
+                        + (f" (converted from {original_amount} {original_currency} @ {fx_rate})" if fx_rate else "")
+                        + ". Awaiting confirmation."
+                    ),
                     "payout_amount": float(actual_payout_amount),
                     "payout_id": payout.id,
                     "payout_status": payout.status,
@@ -718,14 +747,15 @@ async def get_platform_balance(
 async def get_all_payouts(
     limit: int = 50,
     offset: int = 0,
+    currency: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get all payout records"""
     verify_admin(current_user)
-    
+
     try:
-        payouts = db.query(
+        query = db.query(
             Payout.id,
             Payout.user_id,
             User.name.label('user_name'),
@@ -740,11 +770,17 @@ async def get_all_payouts(
             Payout.provider_payout_id
         ).join(
             User, Payout.user_id == User.id
-        ).order_by(
+        )
+        count_query = db.query(func.count(Payout.id))
+        if currency:
+            query = query.filter(Payout.currency == currency.upper())
+            count_query = count_query.filter(Payout.currency == currency.upper())
+
+        payouts = query.order_by(
             Payout.requested_at.desc()
         ).limit(limit).offset(offset).all()
-        
-        total = db.query(func.count(Payout.id)).scalar()
+
+        total = count_query.scalar()
         
         result = []
         for payout in payouts:
@@ -771,6 +807,135 @@ async def get_all_payouts(
         
     except Exception as e:
         print(f"Error fetching payouts: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/detail/{kind}/{record_id}")
+async def get_revenue_detail(
+    kind: str,
+    record_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Full detail for one row from any of the three lists above (subscription
+    transaction, payout, or commission/builder bonus), for the admin's
+    "View" modal — the list endpoints only return a thin projection, and
+    none of them include the raw provider response, FX audit trail, or the
+    other two records a given row links to.
+    """
+    verify_admin(current_user)
+    kind = (kind or "").lower()
+
+    try:
+        if kind == "subscription":
+            txn = db.query(Subscriptions).filter(Subscriptions.id == record_id).first()
+            if not txn:
+                raise HTTPException(status_code=404, detail="Transaction not found")
+            user = db.query(User).filter(User.id == txn.user_id).first()
+            commission = db.query(Commission).filter(Commission.subscription_id == txn.id).first()
+            return {
+                "kind": "subscription",
+                "id": txn.id,
+                "transaction_id": txn.transaction_id,
+                "tx_ref": txn.tx_ref,
+                "user": {"id": user.id, "name": user.name, "email": user.email} if user else None,
+                "plan": txn.subscription_plan,
+                "amount": float(txn.amount),
+                "currency": txn.currency,
+                "status": txn.status,
+                "subscription_status": txn.subscription_status,
+                "payment_provider": txn.payment_provider,
+                "start_date": txn.start_date.isoformat() if txn.start_date else None,
+                "end_date": txn.end_date.isoformat() if txn.end_date else None,
+                "created_at": txn.created_at.isoformat() if txn.created_at else None,
+                "linked_commission": (
+                    {"id": commission.id, "amount": float(commission.amount), "currency": commission.currency,
+                     "status": commission.status, "referrer_user_id": commission.user_id}
+                    if commission else None
+                ),
+            }
+
+        if kind == "payout":
+            payout = db.query(Payout).filter(Payout.id == record_id).first()
+            if not payout:
+                raise HTTPException(status_code=404, detail="Payout not found")
+            user = db.query(User).filter(User.id == payout.user_id).first()
+            linked_commissions = db.query(Commission).filter(Commission.payout_id == payout.id).all()
+            try:
+                provider_response = json.loads(payout.provider_response) if payout.provider_response else None
+            except (TypeError, ValueError):
+                provider_response = {"raw": payout.provider_response}
+            return {
+                "kind": "payout",
+                "id": payout.id,
+                "user": {"id": user.id, "name": user.name, "email": user.email} if user else None,
+                "amount": float(payout.amount),
+                "currency": payout.currency,
+                "status": payout.status,
+                "provider": payout.provider,
+                "payment_method": payout.payment_method,
+                "provider_payout_id": payout.provider_payout_id,
+                "account_details": payout.account_details,
+                "recipient_name": payout.recipient_name,
+                "recipient_email": payout.recipient_email,
+                "original_currency": payout.original_currency,
+                "original_amount": float(payout.original_amount) if payout.original_amount is not None else None,
+                "fx_rate": float(payout.fx_rate) if payout.fx_rate is not None else None,
+                "provider_settled_amount": float(payout.provider_settled_amount) if payout.provider_settled_amount is not None else None,
+                "provider_fee": float(payout.provider_fee) if payout.provider_fee is not None else None,
+                "failure_reason": payout.failure_reason,
+                "requested_at": payout.requested_at.isoformat() if payout.requested_at else None,
+                "processed_at": payout.processed_at.isoformat() if payout.processed_at else None,
+                "completed_at": payout.completed_at.isoformat() if payout.completed_at else None,
+                "created_at": payout.created_at.isoformat() if payout.created_at else None,
+                "provider_response": provider_response,
+                "linked_commissions": [
+                    {"id": c.id, "amount": float(c.amount), "currency": c.currency, "status": c.status,
+                     "referred_user_id": c.referred_user_id}
+                    for c in linked_commissions
+                ],
+            }
+
+        if kind == "commission":
+            commission = db.query(Commission).filter(Commission.id == record_id).first()
+            if not commission:
+                raise HTTPException(status_code=404, detail="Builder bonus not found")
+            referrer = db.query(User).filter(User.id == commission.user_id).first()
+            referred_user = db.query(User).filter(User.id == commission.referred_user_id).first() if commission.referred_user_id else None
+            payout = db.query(Payout).filter(Payout.id == commission.payout_id).first() if commission.payout_id else None
+            subscription = db.query(Subscriptions).filter(Subscriptions.id == commission.subscription_id).first() if commission.subscription_id else None
+            return {
+                "kind": "commission",
+                "id": commission.id,
+                "referrer": {"id": referrer.id, "name": referrer.name, "email": referrer.email} if referrer else None,
+                "referred_user": {"id": referred_user.id, "name": referred_user.name, "email": referred_user.email} if referred_user else None,
+                "amount": float(commission.amount),
+                "original_amount": float(commission.original_amount) if commission.original_amount is not None else None,
+                "currency": commission.currency,
+                "commission_rate": float(commission.commission_rate) if commission.commission_rate is not None else None,
+                "status": commission.status,
+                "created_at": commission.created_at.isoformat() if commission.created_at else None,
+                "approved_at": commission.approved_at.isoformat() if commission.approved_at else None,
+                "paid_at": commission.paid_at.isoformat() if commission.paid_at else None,
+                "linked_subscription": (
+                    {"id": subscription.id, "amount": float(subscription.amount), "currency": subscription.currency,
+                     "plan": subscription.subscription_plan}
+                    if subscription else None
+                ),
+                "linked_payout": (
+                    {"id": payout.id, "amount": float(payout.amount), "currency": payout.currency, "status": payout.status,
+                     "payment_method": payout.payment_method, "provider_payout_id": payout.provider_payout_id}
+                    if payout else None
+                ),
+            }
+
+        raise HTTPException(status_code=400, detail="kind must be one of: subscription, payout, commission")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching revenue detail: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
