@@ -778,6 +778,31 @@ async def run_flutterwave_balance_monitor_job():
             logger.error("[flw-balance-job] error: %s", exc)
 
 
+async def run_stripe_balance_monitor_job():
+    """
+    Runs every 10 minutes. The Stripe-side counterpart to
+    run_flutterwave_balance_monitor_job above — records a
+    PlatformBalanceSnapshot per currency Lavoo actually sends Stripe
+    payouts in (USD, GBP) so the admin Revenue page shows a live Stripe
+    balance the same way it already shows Flutterwave's, and alerts the
+    admin the moment either drops below what's already owed.
+    """
+    from fastapi import BackgroundTasks
+    while True:
+        await asyncio.sleep(10 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.payout_service import PayoutService
+            bg = BackgroundTasks()
+            with SessionLocal() as db:
+                for ccy in ("USD", "GBP"):
+                    result = await asyncio.to_thread(PayoutService.check_stripe_balance, db, bg, ccy)
+                    logger.info("[stripe-balance-job] %s %s", ccy, result)
+            await bg()
+        except Exception as exc:
+            logger.error("[stripe-balance-job] error: %s", exc)
+
+
 async def run_stripe_commission_settlement_job():
     """
     Runs every 10 minutes. Pays commissions that are waiting to go out through
@@ -1448,6 +1473,7 @@ async def startup_event():
     asyncio.create_task(run_scheduled_voo_bot_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
+    asyncio.create_task(run_stripe_balance_monitor_job())
     asyncio.create_task(run_stripe_commission_settlement_job())
     asyncio.create_task(run_flutterwave_commission_settlement_job())
     asyncio.create_task(run_stripe_payout_reconcile_job())

@@ -67,20 +67,20 @@ async def get_revenue_stats(
             ).filter(*filters).group_by(currency_col).all()
             return {(row.currency or 'USD'): float(row.total) for row in rows}
 
-        monthly_by_ccy = sum_by_currency(
+        monthly_gross_by_ccy = sum_by_currency(
             Subscriptions.amount, Subscriptions.currency,
-            Subscriptions.status.in_(['active', 'completed']),
+            Subscriptions.status.in_(['active', 'completed', 'successful', 'succeeded']),
             Subscriptions.created_at >= current_month_start,
         )
-        last_month_by_ccy = sum_by_currency(
+        last_month_gross_by_ccy = sum_by_currency(
             Subscriptions.amount, Subscriptions.currency,
-            Subscriptions.status.in_(['active', 'completed']),
+            Subscriptions.status.in_(['active', 'completed', 'successful', 'succeeded']),
             Subscriptions.created_at >= last_month_start,
             Subscriptions.created_at < current_month_start,
         )
-        total_subscription_by_ccy = sum_by_currency(
+        total_subscription_gross_by_ccy = sum_by_currency(
             Subscriptions.amount, Subscriptions.currency,
-            Subscriptions.status.in_(['active', 'completed']),
+            Subscriptions.status.in_(['active', 'completed', 'successful', 'succeeded']),
         )
         commissions_paid_by_ccy = sum_by_currency(
             Payout.amount, Payout.currency,
@@ -91,22 +91,44 @@ async def get_revenue_stats(
             Subscriptions.status == 'refunded',
         )
 
+        # Builder bonus EARNED (not just paid) in the same currency the
+        # subscription was charged in — Commission.currency always matches
+        # the originating Subscription's currency (it's a straight
+        # percentage of it), unlike Payout.currency above, which can be a
+        # different, FX-converted currency once the bonus is actually sent
+        # (e.g. a USD commission paid out as NGN). The moment a referred
+        # user's payment creates a commission, that share is owed to the
+        # referrer regardless of whether it's been paid out yet — every
+        # status (pending/approved/processing/paid/auto_settled) is real,
+        # committed money that was never Lavoo's to keep, so all of them
+        # count here, not just 'paid'.
+        monthly_bonus_by_ccy = sum_by_currency(
+            Commission.amount, Commission.currency,
+            Commission.created_at >= current_month_start,
+        )
+        last_month_bonus_by_ccy = sum_by_currency(
+            Commission.amount, Commission.currency,
+            Commission.created_at >= last_month_start,
+            Commission.created_at < current_month_start,
+        )
+        total_bonus_by_ccy = sum_by_currency(Commission.amount, Commission.currency)
+
         currencies = sorted(
-            set(monthly_by_ccy) | set(total_subscription_by_ccy)
+            set(monthly_gross_by_ccy) | set(total_subscription_gross_by_ccy)
             | set(commissions_paid_by_ccy) | set(refunds_by_ccy)
         )
 
         by_currency = {}
         for ccy in currencies:
-            this_month = monthly_by_ccy.get(ccy, 0.0)
-            prior_month = last_month_by_ccy.get(ccy, 0.0)
+            this_month = monthly_gross_by_ccy.get(ccy, 0.0) - monthly_bonus_by_ccy.get(ccy, 0.0)
+            prior_month = last_month_gross_by_ccy.get(ccy, 0.0) - last_month_bonus_by_ccy.get(ccy, 0.0)
             if prior_month > 0:
                 growth = ((this_month - prior_month) / prior_month) * 100
             else:
                 growth = 100.0 if this_month > 0 else 0.0
             by_currency[ccy] = {
                 "monthly_revenue": this_month,
-                "total_subscription_revenue": total_subscription_by_ccy.get(ccy, 0.0),
+                "total_subscription_revenue": total_subscription_gross_by_ccy.get(ccy, 0.0) - total_bonus_by_ccy.get(ccy, 0.0),
                 "referral_commissions_paid": commissions_paid_by_ccy.get(ccy, 0.0),
                 "refunds": refunds_by_ccy.get(ccy, 0.0),
                 "growth_rate": round(growth, 1),
@@ -702,10 +724,11 @@ async def get_platform_balance(
     db: Session = Depends(get_db)
 ):
     """
-    Latest platform payout-provider balance snapshot, written by
-    run_flutterwave_balance_monitor_job (api/main.py) every 10 minutes.
-    Returns a "no_data_yet" status if the job hasn't run since this table
-    was added, rather than a confusing empty/zeroed response.
+    Latest platform payout-provider balance snapshot, written every 10
+    minutes by run_flutterwave_balance_monitor_job or
+    run_stripe_balance_monitor_job (api/main.py), depending on `provider`.
+    Returns a "no_data_yet" status if the matching job hasn't run since
+    this table was added, rather than a confusing empty/zeroed response.
     """
     verify_admin(current_user)
 

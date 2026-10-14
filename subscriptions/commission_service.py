@@ -182,7 +182,10 @@ class CommissionService:
             raise
 
     @staticmethod
-    def _attempt_immediate_payout(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
+    def _attempt_immediate_payout(
+        commission: "Commission", db: Session, notify_admin: bool = True,
+        balance_override: "Decimal | None" = None,
+    ) -> "int | None":
         """Pay a freshly-created commission out immediately, no admin
         approval step, when the referrer's only usable payout method is a
         verified Flutterwave bank account — covering exactly the case a
@@ -199,6 +202,17 @@ class CommissionService:
         existed. Never raises: a payout failure here must never take down
         the commission record it's trying to settle, let alone the
         subscription payment that's already been charged for real.
+
+        balance_override: when a caller is settling several commissions in
+        one batch (settle_pending_flutterwave_commissions), it tracks one
+        running balance across the whole batch and passes it here instead
+        of letting each commission re-query Flutterwave independently.
+        Confirmed in production this isn't optional: two commissions
+        processed 5 seconds apart each saw the same live "available"
+        balance (neither transfer had settled on Flutterwave's side yet),
+        both passed their own fresh check, and Flutterwave's own ledger
+        could only honor one — the other came back a real, visible
+        "Insufficient funds" failure on Flutterwave's dashboard.
         """
         logger.info(
             f"[BUILDER BONUS] immediate payout check | commission={commission.id} "
@@ -264,13 +278,18 @@ class CommissionService:
             # and mark it 'failed' — a messier trail than simply not
             # attempting yet, and (via the broad except below) an admin
             # alert on every single retry cycle instead of a rate-limited one.
-            available = PayoutService.get_platform_flutterwave_available("NGN")
-            if available is None or available["available"] < payout_amount:
+            if balance_override is not None:
+                available_amount = balance_override
+            else:
+                available = PayoutService.get_platform_flutterwave_available("NGN")
+                available_amount = available["available"] if available is not None else None
+
+            if available_amount is None or available_amount < payout_amount:
                 msg = (
                     f"Commission #{commission.id} ({payout_amount} NGN"
                     + (f", converted from {commission_amount} {commission_currency}" if fx_rate else "")
                     + f") is waiting: the platform's available Flutterwave NGN balance is "
-                    + (f"{available['available']}" if available is not None else "unknown (balance check failed)")
+                    + (f"{available_amount}" if available_amount is not None else "unknown (balance check failed)")
                     + ". It will be paid automatically once funded."
                 )
                 logger.warning(f"[BUILDER BONUS] flutterwave payout waiting for balance | {msg}")
@@ -278,25 +297,58 @@ class CommissionService:
                     CommissionService._alert_admin(f"⚠️ Referral payout waiting for Flutterwave balance — commission #{commission.id}", msg)
                 return None
 
-            payout = Payout(
-                user_id=commission.user_id,
-                amount=payout_amount,
-                currency="NGN",
-                status="pending",
-                provider="flutterwave",
-                payment_method="flutterwave",
-                recipient_name=payout_account.account_name,
-                account_details=(
+            # Reuse the commission's own prior failed attempt, if it has one,
+            # instead of creating an unrelated new Payout row. Previously a
+            # retry always inserted a fresh row with no link back to the
+            # attempt that failed — two rows for what is really one payout's
+            # history, unlike a dashboard retry of an existing transfer
+            # (reconcile_flutterwave_payouts), which already updates the
+            # same row in place. commission.payout_id is set below on EVERY
+            # attempt now (success or failure) specifically so this lookup
+            # has something to find next time.
+            existing_payout = (
+                db.query(Payout).filter(Payout.id == commission.payout_id).first()
+                if commission.payout_id else None
+            )
+            if existing_payout is not None and existing_payout.status == "failed":
+                payout = existing_payout
+                payout.amount = payout_amount
+                payout.currency = "NGN"
+                payout.status = "pending"
+                payout.provider = "flutterwave"
+                payout.payment_method = "flutterwave"
+                payout.recipient_name = payout_account.account_name
+                payout.account_details = (
                     f"Bank: {payout_account.bank_name}, "
                     f"Account: ****{payout_account.account_number[-4:] if payout_account.account_number else 'N/A'}"
-                ),
-                original_currency=commission_currency if commission_currency != "NGN" else None,
-                original_amount=commission_amount if commission_currency != "NGN" else None,
-                fx_rate=fx_rate,
-                requested_at=datetime.now(timezone.utc),
-            )
-            db.add(payout)
+                )
+                payout.original_currency = commission_currency if commission_currency != "NGN" else None
+                payout.original_amount = commission_amount if commission_currency != "NGN" else None
+                payout.fx_rate = fx_rate
+                payout.failure_reason = None
+                payout.requested_at = datetime.now(timezone.utc)
+                logger.info(f"[BUILDER BONUS] reusing failed payout {payout.id} for retry | commission={commission.id}")
+            else:
+                payout = Payout(
+                    user_id=commission.user_id,
+                    amount=payout_amount,
+                    currency="NGN",
+                    status="pending",
+                    provider="flutterwave",
+                    payment_method="flutterwave",
+                    recipient_name=payout_account.account_name,
+                    account_details=(
+                        f"Bank: {payout_account.bank_name}, "
+                        f"Account: ****{payout_account.account_number[-4:] if payout_account.account_number else 'N/A'}"
+                    ),
+                    original_currency=commission_currency if commission_currency != "NGN" else None,
+                    original_amount=commission_amount if commission_currency != "NGN" else None,
+                    fx_rate=fx_rate,
+                    requested_at=datetime.now(timezone.utc),
+                )
+                db.add(payout)
             db.flush()
+            commission.payout_id = payout.id
 
             PayoutService.process_flutterwave_payout(payout, db, manage_transaction=False)
             # process_flutterwave_payout sets payout.status='processing' on a
@@ -316,6 +368,18 @@ class CommissionService:
 
         except Exception as e:
             logger.error(f"[BUILDER BONUS] Immediate payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            # Commit here, not just flush: the caller (settle_pending_commission)
+            # rolls back on a None return, which would otherwise undo the
+            # failed Payout row and commission.payout_id link this attempt
+            # just set up — exactly the state a retry needs to reconcile
+            # against the SAME payout instead of creating an unrelated new
+            # one. A commit failing here is itself best-effort; it must not
+            # turn an already-handled payout failure into a crash.
+            try:
+                db.commit()
+            except Exception as commit_err:
+                logger.error(f"[BUILDER BONUS] could not persist failed payout state for commission {commission.id}: {commit_err}")
+                db.rollback()
             # Only a log line before this — a real transfer failure (bad IP
             # whitelist, insufficient balance, bad account) went completely
             # unnoticed until someone happened to dig through logs (which is
@@ -506,26 +570,38 @@ class CommissionService:
                     CommissionService._alert_admin(f"⚠️ Referral payout waiting for Stripe balance — commission #{commission.id}", msg)
                 return None
 
-            payout = Payout(
-                user_id=commission.user_id,
-                amount=payout_amount,
-                currency=target_currency,
-                status="pending",
-                provider="stripe",
-                payment_method="stripe",
-                recipient_email=None,
-                account_details=f"Stripe Connect: {stripe_account.stripe_account_id}",
-                original_currency=commission_currency if commission_currency != target_currency else None,
-                original_amount=commission_amount if commission_currency != target_currency else None,
-                fx_rate=fx_rate,
-                requested_at=datetime.now(timezone.utc),
+            # Reuse the commission's own prior failed attempt, if it has one,
+            # rather than creating an unrelated new Payout row — same
+            # reasoning as the Flutterwave path above: a retry should
+            # reconcile against the SAME payout, not look like a second,
+            # disconnected one.
+            existing_payout = (
+                db.query(Payout).filter(Payout.id == commission.payout_id).first()
+                if commission.payout_id else None
             )
+            if existing_payout is not None and existing_payout.status == "failed":
+                payout = existing_payout
+                payout.status = "pending"
+                payout.failure_reason = None
+                payout.requested_at = datetime.now(timezone.utc)
+            else:
+                payout = Payout(user_id=commission.user_id, status="pending", requested_at=datetime.now(timezone.utc))
+                db.add(payout)
+            payout.amount = payout_amount
+            payout.currency = target_currency
+            payout.provider = "stripe"
+            payout.payment_method = "stripe"
+            payout.recipient_email = None
+            payout.account_details = f"Stripe Connect: {stripe_account.stripe_account_id}"
+            payout.original_currency = commission_currency if commission_currency != target_currency else None
+            payout.original_amount = commission_amount if commission_currency != target_currency else None
+            payout.fx_rate = fx_rate
             if prior_transfer:
                 # Record what Stripe actually sent, not what we'd compute today.
                 payout.amount = (Decimal(str(prior_transfer.get("amount", amount_minor))) / 100).quantize(Decimal("0.01"))
                 payout.currency = str(prior_transfer.get("currency") or target_currency).upper()
-            db.add(payout)
             db.flush()
+            commission.payout_id = payout.id
 
             PayoutService.process_stripe_transfer_payout(
                 payout, db, manage_transaction=False,
@@ -553,6 +629,16 @@ class CommissionService:
 
         except Exception as e:
             logger.error(f"[BUILDER BONUS] Stripe payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            # Commit here, not just flush: the caller (settle_pending_commission)
+            # rolls back on a None return, which would otherwise undo the
+            # failed Payout row and commission.payout_id link this attempt
+            # just set up — see the matching comment in
+            # _attempt_immediate_payout's except block.
+            try:
+                db.commit()
+            except Exception as commit_err:
+                logger.error(f"[BUILDER BONUS] could not persist failed Stripe payout state for commission {commission.id}: {commit_err}")
+                db.rollback()
             if notify_admin:
                 CommissionService._alert_admin(
                     f"⚠️ Referral payout via Stripe failed — commission #{commission.id}",
@@ -563,7 +649,10 @@ class CommissionService:
             return None
 
     @staticmethod
-    def settle_pending_commission(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
+    def settle_pending_commission(
+        commission: "Commission", db: Session, notify_admin: bool = True,
+        balance_override: "Decimal | None" = None,
+    ) -> "int | None":
         """
         Pay an EXISTING pending commission now (through whichever route the
         referrer has) and do the bookkeeping the create-time path does
@@ -571,11 +660,17 @@ class CommissionService:
         from pending to paid in the monthly summary (which had counted it as
         pending when it was created). Commits on success, rolls back otherwise.
         Returns the payout id or None.
+
+        balance_override is forwarded to _attempt_immediate_payout — see its
+        docstring. Irrelevant (and harmless) when the referrer has no
+        Flutterwave account, since that path is never reached.
         """
         from database.pg_models import Payout
         from subscriptions.payout_service import PayoutService
         try:
-            payout_id = CommissionService._attempt_immediate_payout(commission, db, notify_admin=notify_admin)
+            payout_id = CommissionService._attempt_immediate_payout(
+                commission, db, notify_admin=notify_admin, balance_override=balance_override,
+            )
             if not payout_id:
                 db.rollback()
                 return None
@@ -600,14 +695,20 @@ class CommissionService:
         makes no Stripe transfer and creates no payout rows (the balance is
         checked before anything is created), so it is safe to run often.
         """
-        from database.pg_models import PayoutAccount
+        from database.pg_models import PayoutAccount, Payout
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         rows = (
             db.query(Commission)
             .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .outerjoin(Payout, Payout.id == Commission.payout_id)
             .filter(
                 Commission.status == 'pending',
-                Commission.payout_id.is_(None),
+                # A prior attempt that failed still has payout_id set (so the
+                # retry reconciles against that SAME Payout row instead of
+                # creating an unrelated new one) — only a payout_id pointing
+                # at something OTHER than a failed attempt means this
+                # commission is genuinely spoken for already.
+                (Commission.payout_id.is_(None)) | (Payout.status == 'failed'),
                 Commission.created_at >= cutoff,
                 PayoutAccount.stripe_account_id.isnot(None),
                 PayoutAccount.is_verified.is_(True),
@@ -654,15 +755,29 @@ class CommissionService:
         wallet was empty when they were earned. Same shape, same safety
         properties: checks the balance before creating anything, so an
         unfunded cycle makes no transfer and leaves no failed rows behind.
+
+        Tracks ONE running balance across the whole batch rather than
+        letting each commission re-query Flutterwave independently —
+        confirmed in production that two commissions processed seconds
+        apart can both see the same live "available" balance (neither
+        transfer has settled on Flutterwave's side yet), both pass their
+        own fresh check, and Flutterwave's own ledger can only honor one.
         """
-        from database.pg_models import PayoutAccount
+        from database.pg_models import PayoutAccount, Payout
+        from subscriptions.payout_service import PayoutService
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         rows = (
             db.query(Commission)
             .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .outerjoin(Payout, Payout.id == Commission.payout_id)
             .filter(
                 Commission.status == 'pending',
-                Commission.payout_id.is_(None),
+                # Same reasoning as settle_pending_stripe_commissions above:
+                # a prior failed attempt keeps commission.payout_id set (so
+                # the retry reconciles against that SAME row) — only a
+                # payout_id pointing at something other than a failed
+                # attempt means this one is genuinely already spoken for.
+                (Commission.payout_id.is_(None)) | (Payout.status == 'failed'),
                 Commission.created_at >= cutoff,
                 PayoutAccount.payment_method == 'flutterwave',
                 PayoutAccount.bank_name.isnot(None),
@@ -674,11 +789,19 @@ class CommissionService:
             .all()
         )
         counts = {"checked": len(rows), "settled": 0, "waiting": 0}
+        if rows:
+            available = PayoutService.get_platform_flutterwave_available("NGN")
+            remaining = available["available"] if available is not None else Decimal("0")
         for commission in rows:
             cid = commission.id
-            if CommissionService.settle_pending_commission(commission, db, notify_admin=False):
+            payout_id = CommissionService.settle_pending_commission(
+                commission, db, notify_admin=False, balance_override=remaining,
+            )
+            if payout_id:
                 counts["settled"] += 1
-                logger.info(f"[settle-job] commission {cid} paid via Flutterwave")
+                sent = db.get(Payout, payout_id)
+                remaining -= Decimal(str(sent.amount)) if sent else Decimal("0")
+                logger.info(f"[settle-job] commission {cid} paid via Flutterwave | remaining_budget={remaining}")
             else:
                 counts["waiting"] += 1
 
