@@ -224,6 +224,80 @@ class PayoutService:
         }
 
     @staticmethod
+    def check_stripe_balance(db: Session, background_tasks: BackgroundTasks, currency: str = "USD") -> Dict[str, Any]:
+        """
+        The Stripe-side counterpart to check_flutterwave_balance above — same
+        shape, same PlatformBalanceSnapshot table (provider="stripe"), same
+        edge-triggered admin alert, just reading get_platform_stripe_available
+        (pence/cents) instead of Flutterwave's balances endpoint.
+        """
+        from database.pg_models import PlatformBalanceSnapshot
+
+        pending_obligations = db.query(
+            func.coalesce(func.sum(Payout.amount), 0)
+        ).filter(
+            Payout.payment_method == 'stripe',
+            Payout.currency == currency,
+            Payout.status.in_(['pending', 'processing']),
+        ).scalar() or Decimal("0.00")
+
+        min_floor = Decimal(os.getenv(f"STRIPE_MIN_BALANCE_{currency.upper()}", "0"))
+        threshold = max(min_floor, pending_obligations)
+
+        available_minor = PayoutService.get_platform_stripe_available(currency)
+        available = (Decimal(available_minor) / 100) if available_minor is not None else None
+
+        previous = db.query(PlatformBalanceSnapshot).filter(
+            PlatformBalanceSnapshot.provider == "stripe",
+            PlatformBalanceSnapshot.currency == currency,
+        ).order_by(PlatformBalanceSnapshot.checked_at.desc()).first()
+        was_already_low = bool(previous and previous.below_threshold)
+        was_already_failing = bool(previous and previous.check_failed)
+
+        snapshot = PlatformBalanceSnapshot(
+            provider="stripe",
+            currency=currency,
+            pending_obligations=pending_obligations,
+            threshold=threshold,
+        )
+        if available is None:
+            snapshot.check_failed = True
+            snapshot.below_threshold = False
+            snapshot.error_message = "Could not reach Stripe's balance endpoint"
+        else:
+            snapshot.available_balance = available
+            snapshot.below_threshold = available < threshold
+
+        db.add(snapshot)
+        db.commit()
+
+        if snapshot.below_threshold and not was_already_low:
+            PayoutService._queue_admin_alert(
+                background_tasks,
+                f"⚠️ Stripe {currency} balance is low",
+                (
+                    f"Available: {snapshot.available_balance} {currency}. "
+                    f"Pending/processing payouts already owed: {pending_obligations} {currency}. "
+                    "Add funds to the Stripe balance (Dashboard > Balances > Add to balance) — "
+                    "Builder Bonus payouts via Stripe will start failing or stalling until then."
+                ),
+            )
+        elif snapshot.check_failed and not was_already_failing:
+            PayoutService._queue_admin_alert(
+                background_tasks,
+                "⚠️ Could not check Stripe balance",
+                f"The periodic Stripe {currency} balance check failed to reach Stripe's API. See server logs.",
+            )
+
+        return {
+            "available": float(snapshot.available_balance) if snapshot.available_balance is not None else None,
+            "pending_obligations": float(pending_obligations),
+            "threshold": float(threshold),
+            "below_threshold": snapshot.below_threshold,
+            "check_failed": snapshot.check_failed,
+        }
+
+    @staticmethod
     def process_stripe_transfer_payout(
         payout: Payout, db: Session, manage_transaction: bool = True,
         transfer_group: Optional[str] = None, idempotency_key: Optional[str] = None,

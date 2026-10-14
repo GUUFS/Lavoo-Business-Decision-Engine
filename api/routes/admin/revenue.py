@@ -724,10 +724,11 @@ async def get_platform_balance(
     db: Session = Depends(get_db)
 ):
     """
-    Latest platform payout-provider balance snapshot, written by
-    run_flutterwave_balance_monitor_job (api/main.py) every 10 minutes.
-    Returns a "no_data_yet" status if the job hasn't run since this table
-    was added, rather than a confusing empty/zeroed response.
+    Latest platform payout-provider balance snapshot, written every 10
+    minutes by run_flutterwave_balance_monitor_job or
+    run_stripe_balance_monitor_job (api/main.py), depending on `provider`.
+    Returns a "no_data_yet" status if the matching job hasn't run since
+    this table was added, rather than a confusing empty/zeroed response.
     """
     verify_admin(current_user)
 
