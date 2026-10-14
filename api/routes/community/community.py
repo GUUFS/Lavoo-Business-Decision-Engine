@@ -47,7 +47,7 @@ def _notify_community(db: Session, user_id: int, type: str, title: str, message:
 
 def ensure_voo_bot_user(db: Session) -> User:
     """
-    Ensures the system bot user 'Voo Angle' exists in the database.
+    Ensures the system bot user "Voo's Angle" exists in the database.
     """
     bot = db.query(User).filter(func.lower(User.username) == "voo").first()
     if not bot:
@@ -55,7 +55,7 @@ def ensure_voo_bot_user(db: Session) -> User:
     if not bot:
         bot_pw = pwd_context.hash("voo_bot_secure_password_99x")
         bot = User(
-            name="Voo Angle",
+            name="Voo's Angle",
             email="voo@lavoo.io",
             username="voo",
             is_bot=True,
@@ -68,7 +68,7 @@ def ensure_voo_bot_user(db: Session) -> User:
         db.add(bot)
         db.commit()
         db.refresh(bot)
-        logger.info(f"[voo-bot] Created Voo Angle bot user account (id={bot.id})")
+        logger.info(f"[voo-bot] Created Voo's Angle bot user account (id={bot.id})")
     else:
         changed = False
         if not getattr(bot, "is_bot", False):
@@ -77,8 +77,8 @@ def ensure_voo_bot_user(db: Session) -> User:
         if getattr(bot, "role", "") != "ai_bot":
             bot.role = "ai_bot"
             changed = True
-        if bot.name != "Voo Angle":
-            bot.name = "Voo Angle"
+        if bot.name != "Voo's Angle":
+            bot.name = "Voo's Angle"
             changed = True
         if changed:
             db.commit()
@@ -1734,9 +1734,9 @@ async def get_discussion(
             (r.user and getattr(r.user, 'is_bot', False))
             or (r.user and getattr(r.user, 'role', '') == 'ai_bot')
             or (r.user and (getattr(r.user, 'username', '') or '').lower() in ('voo', 'vooangle'))
-            or (r.user and (getattr(r.user, 'name', '') or '').lower() in ('voo', 'voo angle'))
+            or (r.user and (getattr(r.user, 'name', '') or '').lower() in ('voo', 'voo angle', "voo's angle"))
         )
-        author_name = "Voo Angle" if is_bot else (r.user.name if r.user else "Member")
+        author_name = "Voo's Angle" if is_bot else (r.user.name if r.user else "Member")
         return {
             "id": r.id,
             "content": r.content,
@@ -1997,9 +1997,9 @@ async def get_public_discussion(
             getattr(r_author, 'is_bot', False)
             or (r_author and getattr(r_author, 'role', '') == 'ai_bot')
             or (r_author and (getattr(r_author, 'username', '') or '').lower() in ('voo', 'vooangle'))
-            or (r_author and (getattr(r_author, 'name', '') or '').lower() in ('voo', 'voo angle'))
+            or (r_author and (getattr(r_author, 'name', '') or '').lower() in ('voo', 'voo angle', "voo's angle"))
         )
-        author_name = "Voo Angle" if is_bot else (r_author.name if r_author else "Member")
+        author_name = "Voo's Angle" if is_bot else (r_author.name if r_author else "Member")
         replies_data.append({
             "id": r.id,
             "user_id": r.user_id,
@@ -2795,6 +2795,7 @@ async def get_leaderboard(
         func.lower(User.username) != "vooangle",
         func.lower(User.name) != "voo",
         func.lower(User.name) != "voo angle",
+        func.lower(User.name) != "voo's angle",
         User.email != "voo@lavoo.io"
     ).order_by(User.total_chops.desc(), User.created_at.asc()).limit(limit).all()
 
