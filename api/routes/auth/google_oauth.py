@@ -236,7 +236,7 @@ async def google_callback(
 
                 if referrer:
                     referrer.referral_count = (referrer.referral_count or 0) + 1
-                    user.total_chops = (user.total_chops or 0) + 50
+                    user.total_chops = (user.total_chops or 0) + 100
                     referrer.total_chops = (referrer.total_chops or 0) + 50
                     referrer.referral_chops = (referrer.referral_chops or 0) + 50
 
@@ -253,8 +253,8 @@ async def google_callback(
                         type=NotificationType.REFERRAL_REGISTERED.value,
                         title="Welcome Bonus!",
                         message=(
-                            "You received 50 chops for joining Lavoo!" if via_staff_pool
-                            else "You received 50 chops for joining via a referral link."
+                            "You received 100 chops for joining Lavoo!" if via_staff_pool
+                            else "You received 100 chops for joining via a referral link."
                         ),
                         link="/dashboard/earnings",
                     )

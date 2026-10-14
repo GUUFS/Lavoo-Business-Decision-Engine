@@ -182,7 +182,10 @@ class CommissionService:
             raise
 
     @staticmethod
-    def _attempt_immediate_payout(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
+    def _attempt_immediate_payout(
+        commission: "Commission", db: Session, notify_admin: bool = True,
+        balance_override: "Decimal | None" = None,
+    ) -> "int | None":
         """Pay a freshly-created commission out immediately, no admin
         approval step, when the referrer's only usable payout method is a
         verified Flutterwave bank account — covering exactly the case a
@@ -199,6 +202,17 @@ class CommissionService:
         existed. Never raises: a payout failure here must never take down
         the commission record it's trying to settle, let alone the
         subscription payment that's already been charged for real.
+
+        balance_override: when a caller is settling several commissions in
+        one batch (settle_pending_flutterwave_commissions), it tracks one
+        running balance across the whole batch and passes it here instead
+        of letting each commission re-query Flutterwave independently.
+        Confirmed in production this isn't optional: two commissions
+        processed 5 seconds apart each saw the same live "available"
+        balance (neither transfer had settled on Flutterwave's side yet),
+        both passed their own fresh check, and Flutterwave's own ledger
+        could only honor one — the other came back a real, visible
+        "Insufficient funds" failure on Flutterwave's dashboard.
         """
         logger.info(
             f"[BUILDER BONUS] immediate payout check | commission={commission.id} "
@@ -264,13 +278,18 @@ class CommissionService:
             # and mark it 'failed' — a messier trail than simply not
             # attempting yet, and (via the broad except below) an admin
             # alert on every single retry cycle instead of a rate-limited one.
-            available = PayoutService.get_platform_flutterwave_available("NGN")
-            if available is None or available["available"] < payout_amount:
+            if balance_override is not None:
+                available_amount = balance_override
+            else:
+                available = PayoutService.get_platform_flutterwave_available("NGN")
+                available_amount = available["available"] if available is not None else None
+
+            if available_amount is None or available_amount < payout_amount:
                 msg = (
                     f"Commission #{commission.id} ({payout_amount} NGN"
                     + (f", converted from {commission_amount} {commission_currency}" if fx_rate else "")
                     + f") is waiting: the platform's available Flutterwave NGN balance is "
-                    + (f"{available['available']}" if available is not None else "unknown (balance check failed)")
+                    + (f"{available_amount}" if available_amount is not None else "unknown (balance check failed)")
                     + ". It will be paid automatically once funded."
                 )
                 logger.warning(f"[BUILDER BONUS] flutterwave payout waiting for balance | {msg}")
@@ -563,7 +582,10 @@ class CommissionService:
             return None
 
     @staticmethod
-    def settle_pending_commission(commission: "Commission", db: Session, notify_admin: bool = True) -> "int | None":
+    def settle_pending_commission(
+        commission: "Commission", db: Session, notify_admin: bool = True,
+        balance_override: "Decimal | None" = None,
+    ) -> "int | None":
         """
         Pay an EXISTING pending commission now (through whichever route the
         referrer has) and do the bookkeeping the create-time path does
@@ -571,11 +593,17 @@ class CommissionService:
         from pending to paid in the monthly summary (which had counted it as
         pending when it was created). Commits on success, rolls back otherwise.
         Returns the payout id or None.
+
+        balance_override is forwarded to _attempt_immediate_payout — see its
+        docstring. Irrelevant (and harmless) when the referrer has no
+        Flutterwave account, since that path is never reached.
         """
         from database.pg_models import Payout
         from subscriptions.payout_service import PayoutService
         try:
-            payout_id = CommissionService._attempt_immediate_payout(commission, db, notify_admin=notify_admin)
+            payout_id = CommissionService._attempt_immediate_payout(
+                commission, db, notify_admin=notify_admin, balance_override=balance_override,
+            )
             if not payout_id:
                 db.rollback()
                 return None
@@ -654,8 +682,16 @@ class CommissionService:
         wallet was empty when they were earned. Same shape, same safety
         properties: checks the balance before creating anything, so an
         unfunded cycle makes no transfer and leaves no failed rows behind.
+
+        Tracks ONE running balance across the whole batch rather than
+        letting each commission re-query Flutterwave independently —
+        confirmed in production that two commissions processed seconds
+        apart can both see the same live "available" balance (neither
+        transfer has settled on Flutterwave's side yet), both pass their
+        own fresh check, and Flutterwave's own ledger can only honor one.
         """
-        from database.pg_models import PayoutAccount
+        from database.pg_models import PayoutAccount, Payout
+        from subscriptions.payout_service import PayoutService
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         rows = (
             db.query(Commission)
@@ -674,11 +710,19 @@ class CommissionService:
             .all()
         )
         counts = {"checked": len(rows), "settled": 0, "waiting": 0}
+        if rows:
+            available = PayoutService.get_platform_flutterwave_available("NGN")
+            remaining = available["available"] if available is not None else Decimal("0")
         for commission in rows:
             cid = commission.id
-            if CommissionService.settle_pending_commission(commission, db, notify_admin=False):
+            payout_id = CommissionService.settle_pending_commission(
+                commission, db, notify_admin=False, balance_override=remaining,
+            )
+            if payout_id:
                 counts["settled"] += 1
-                logger.info(f"[settle-job] commission {cid} paid via Flutterwave")
+                sent = db.get(Payout, payout_id)
+                remaining -= Decimal(str(sent.amount)) if sent else Decimal("0")
+                logger.info(f"[settle-job] commission {cid} paid via Flutterwave | remaining_budget={remaining}")
             else:
                 counts["waiting"] += 1
 
