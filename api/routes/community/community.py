@@ -677,6 +677,18 @@ def _get_poll_payload(d: CommunityDiscussion, current_user: Optional[User] = Non
     }
 
 
+def _bg_increment_view_count(discussion_id: int):
+    """Increment discussion view count asynchronously in the background."""
+    try:
+        with SessionLocal() as session:
+            session.query(CommunityDiscussion).filter(CommunityDiscussion.id == discussion_id).update(
+                {CommunityDiscussion.view_count: func.coalesce(CommunityDiscussion.view_count, 0) + 1}
+            )
+            session.commit()
+    except Exception as e:
+        logger.warning(f"[community] Background view count increment error for {discussion_id}: {e}")
+
+
 def _discussion_dict(
     d: CommunityDiscussion,
     liked_ids: Optional[set] = None,
@@ -1433,10 +1445,9 @@ async def get_discussions(
     db: Session = Depends(get_db)
 ):
     try:
-        user_id_str = str(current_user.id) if current_user else "anon"
         detected_country = _extract_country_code(request, explicit_country=country, current_user=current_user)
         geo_bucket = _resolve_geo_bucket(detected_country)
-        cache_key = f"community:discussions:geo:{geo_bucket}:user:{user_id_str}:ch:{channel_id}:lim:{limit}:off:{offset}"
+        cache_key = f"community:discussions:geo:{geo_bucket}:ch:{channel_id}:lim:{limit}:off:{offset}"
         cached = await get_cached(cache_key)
         if cached is not None:
             items = cached.get("data") if isinstance(cached, dict) else (cached if isinstance(cached, list) else None)
@@ -1473,6 +1484,15 @@ async def get_discussions(
                                     item["is_saved"] = pid in user_saves
                                     item["saved_by_user"] = pid in user_saves
                                     item["bookmarked"] = pid in user_saves
+                        else:
+                            for item in items:
+                                if isinstance(item, dict):
+                                    item["has_liked"] = False
+                                    item["liked_by_user"] = False
+                                    item["isBookmarked"] = False
+                                    item["is_saved"] = False
+                                    item["saved_by_user"] = False
+                                    item["bookmarked"] = False
 
                         # Rehydrate poll state in real-time for all cached items
                         poll_pids = [
@@ -1623,7 +1643,7 @@ async def get_discussions(
             logger.warning(f"Feed interleaving error: {interleave_err}")
 
         response = {"success": True, "data": result}
-        await set_cached(cache_key, response, ttl_seconds=15)
+        await set_cached(cache_key, response, ttl_seconds=60)
         return response
     except Exception as e:
         logger.error(f"Get discussions error: {e}")
@@ -1682,14 +1702,25 @@ async def get_discussion(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
-    d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
+    d = (
+        db.query(CommunityDiscussion)
+        .options(
+            joinedload(CommunityDiscussion.user),
+            joinedload(CommunityDiscussion.channel),
+            selectinload(CommunityDiscussion.replies).joinedload(DiscussionReply.user),
+            selectinload(CommunityDiscussion.replies).selectinload(DiscussionReply.sub_replies).joinedload(DiscussionReply.user),
+        )
+        .filter(CommunityDiscussion.id == discussion_id)
+        .first()
+    )
     if not d:
         raise HTTPException(status_code=404, detail="Discussion not found")
-    d.view_count = (d.view_count or 0) + 1
-    db.commit()
+
+    # Increment view count in background without blocking response or holding DB commit
+    background_tasks.add_task(_bg_increment_view_count, d.id)
 
     # Strategy 2: On-Demand "Lazy" Generation in background if ai_takeaways is NULL (Paid authors only, non-questions)
-    author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
+    author_user = d.user
     author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower() if author_user else ''
     author_is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author_user, 'is_admin', False) if author_user else False)
 
@@ -1728,12 +1759,12 @@ async def get_discussion(
         }
 
     # Only return top-level replies; sub_replies are nested inside each
-    top_level = [r for r in d.replies if r.parent_reply_id is None]
+    top_level = [r for r in (d.replies or []) if r.parent_reply_id is None]
     replies = [_serialise_reply(r) for r in top_level]
 
-    liked = {d.id} if (current_user and db.query(DiscussionLike).filter_by(user_id=current_user.id, discussion_id=d.id).first()) else set()
-    saved = {d.id} if (current_user and db.query(SavedItem).filter_by(user_id=current_user.id, item_id=d.id).first()) else set()
-    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db)
+    liked = {d.id} if (current_user and db.query(DiscussionLike.id).filter_by(user_id=current_user.id, discussion_id=d.id).first()) else set()
+    saved = {d.id} if (current_user and db.query(SavedItem.id).filter_by(user_id=current_user.id, item_id=d.id).first()) else set()
+    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db, recent_likers_map={d.id: []})
     data["replies"] = replies
     return {"success": True, "data": data}
 
@@ -1927,22 +1958,41 @@ async def get_public_discussion(
     discussion_id: int,
     db: Session = Depends(get_db)
 ):
-    d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
+    cache_key = f"community:public_post:{discussion_id}"
+    cached = await get_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    d = (
+        db.query(CommunityDiscussion)
+        .options(
+            joinedload(CommunityDiscussion.user),
+            joinedload(CommunityDiscussion.channel),
+        )
+        .filter(CommunityDiscussion.id == discussion_id)
+        .first()
+    )
     if not d:
         raise HTTPException(status_code=404, detail="Post not found")
     
     if getattr(d, 'visibility', 'public') == 'tagged_only':
         raise HTTPException(status_code=403, detail="This post is private to tagged members")
         
-    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None, db=db)
+    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None, db=db, recent_likers_map={d.id: []})
     
-    replies_raw = db.query(DiscussionReply).filter_by(discussion_id=discussion_id).order_by(DiscussionReply.created_at.asc()).all()
+    replies_raw = (
+        db.query(DiscussionReply)
+        .options(joinedload(DiscussionReply.user))
+        .filter_by(discussion_id=discussion_id)
+        .order_by(DiscussionReply.created_at.asc())
+        .all()
+    )
     author_ids = list(set([r.user_id for r in replies_raw] + [d.user_id]))
     authors = {u.id: u for u in db.query(User).filter(User.id.in_(author_ids)).all()} if author_ids else {}
     
     replies_data = []
     for r in replies_raw:
-        r_author = authors.get(r.user_id)
+        r_author = authors.get(r.user_id) or r.user
         is_bot = bool(
             getattr(r_author, 'is_bot', False)
             or (r_author and getattr(r_author, 'role', '') == 'ai_bot')
@@ -1966,13 +2016,15 @@ async def get_public_discussion(
             }
         })
         
-    return {
+    resp = {
         "success": True,
         "data": {
             **discussion_data,
             "replies_list": replies_data
         }
     }
+    await set_cached(cache_key, resp, ttl_seconds=60)
+    return resp
 
 
 @router.put("/discussions/{discussion_id}")
@@ -2039,6 +2091,7 @@ async def update_discussion(
     db.commit()
     db.refresh(d)
     await delete_cached("community:discussions:*")
+    await delete_cached(f"community:public_post:{discussion_id}")
 
     liked = {l.discussion_id for l in db.query(DiscussionLike).filter_by(user_id=current_user.id).all()} if current_user else set()
     saved = {b.discussion_id for b in db.query(DiscussionBookmark).filter_by(user_id=current_user.id).all()} if current_user else set()
@@ -2289,6 +2342,8 @@ async def reply_to_discussion(
 
     db.commit()
     db.refresh(reply)
+    await delete_cached(f"community:public_post:{discussion_id}")
+    await delete_cached("community:discussions:*")
 
     # Notify post owner (skip when replying to own post)
     try:
