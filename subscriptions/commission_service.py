@@ -24,6 +24,7 @@ class CommissionService:
 
     # When the settlement job last emailed about commissions stuck waiting.
     _last_waiting_alert: "datetime | None" = None
+    _last_waiting_alert_flutterwave: "datetime | None" = None
 
     @staticmethod
     def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
@@ -256,6 +257,27 @@ class CommissionService:
                     f"{commission_amount} {commission_currency} -> {payout_amount} NGN"
                 )
 
+            # Check the live Flutterwave balance before creating anything —
+            # same pattern as the Stripe path above. Without this, an
+            # unfunded cycle would create a Payout row, have
+            # process_flutterwave_payout's own pre-flight check reject it,
+            # and mark it 'failed' — a messier trail than simply not
+            # attempting yet, and (via the broad except below) an admin
+            # alert on every single retry cycle instead of a rate-limited one.
+            available = PayoutService.get_platform_flutterwave_available("NGN")
+            if available is None or available["available"] < payout_amount:
+                msg = (
+                    f"Commission #{commission.id} ({payout_amount} NGN"
+                    + (f", converted from {commission_amount} {commission_currency}" if fx_rate else "")
+                    + f") is waiting: the platform's available Flutterwave NGN balance is "
+                    + (f"{available['available']}" if available is not None else "unknown (balance check failed)")
+                    + ". It will be paid automatically once funded."
+                )
+                logger.warning(f"[BUILDER BONUS] flutterwave payout waiting for balance | {msg}")
+                if notify_admin:
+                    CommissionService._alert_admin(f"⚠️ Referral payout waiting for Flutterwave balance — commission #{commission.id}", msg)
+                return None
+
             payout = Payout(
                 user_id=commission.user_id,
                 amount=payout_amount,
@@ -303,32 +325,38 @@ class CommissionService:
             # promptly rather than discover it by accident. Best-effort and
             # isolated in its own try/except: a failure to send this alert
             # must not turn an already-handled payout failure into a crash.
-            try:
-                admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
-                email_service._send_email(
-                    to_email=admin_email,
-                    to_name="Lavoo Admin",
-                    subject=f"⚠️ Immediate Flutterwave payout failed — commission #{commission.id}",
-                    html_content=(
-                        f"<p>An automatic immediate payout attempt failed for "
-                        f"commission #{commission.id} (referrer user_id={commission.user_id}, "
-                        f"amount={commission.amount} {commission.currency}).</p>"
-                        f"<p>Error: {e}</p>"
-                        f"<p>The commission is safe and has fallen back to the manual "
-                        f"payout queue — nothing is lost — but this may indicate a "
-                        f"systemic issue (e.g. the server's IP no longer whitelisted "
-                        f"in the Flutterwave dashboard) affecting every referrer's "
-                        f"immediate payouts, not just this one.</p>"
-                    ),
-                    text_content=(
-                        f"Immediate Flutterwave payout failed for commission #{commission.id} "
-                        f"(referrer user_id={commission.user_id}, amount={commission.amount} "
-                        f"{commission.currency}). Error: {e}. The commission itself is safe "
-                        f"(manual payout queue), but this may be a systemic issue."
-                    ),
-                )
-            except Exception as alert_err:
-                logger.error(f"[BUILDER BONUS] Failed to send payout-failure alert email: {alert_err}")
+            # Gated on notify_admin: the periodic retry job passes False and
+            # sends its own rate-limited (6-hour) summary alert instead — an
+            # unhandled error here (bad bank details, Flutterwave API down)
+            # would otherwise re-email on every 10-minute retry cycle for as
+            # long as the underlying cause persists.
+            if notify_admin:
+                try:
+                    admin_email = os.getenv("ADMIN_ALERT_EMAIL", os.getenv("SUPPORT_EMAIL", "support@lavoo.io"))
+                    email_service._send_email(
+                        to_email=admin_email,
+                        to_name="Lavoo Admin",
+                        subject=f"⚠️ Immediate Flutterwave payout failed — commission #{commission.id}",
+                        html_content=(
+                            f"<p>An automatic immediate payout attempt failed for "
+                            f"commission #{commission.id} (referrer user_id={commission.user_id}, "
+                            f"amount={commission.amount} {commission.currency}).</p>"
+                            f"<p>Error: {e}</p>"
+                            f"<p>The commission is safe and has fallen back to the manual "
+                            f"payout queue — nothing is lost — but this may indicate a "
+                            f"systemic issue (e.g. the server's IP no longer whitelisted "
+                            f"in the Flutterwave dashboard) affecting every referrer's "
+                            f"immediate payouts, not just this one.</p>"
+                        ),
+                        text_content=(
+                            f"Immediate Flutterwave payout failed for commission #{commission.id} "
+                            f"(referrer user_id={commission.user_id}, amount={commission.amount} "
+                            f"{commission.currency}). Error: {e}. The commission itself is safe "
+                            f"(manual payout queue), but this may be a systemic issue."
+                        ),
+                    )
+                except Exception as alert_err:
+                    logger.error(f"[BUILDER BONUS] Failed to send payout-failure alert email: {alert_err}")
             return None
 
     @staticmethod
@@ -613,6 +641,62 @@ class CommissionService:
                     f"They are retried every 10 minutes and paid automatically once the cause clears. "
                     f"One exception: a transfer that Stripe reversed is never re-sent automatically, so it "
                     f"needs a manual decision. The [BUILDER BONUS] log lines say which case each one is.",
+                )
+        return counts
+
+    @staticmethod
+    def settle_pending_flutterwave_commissions(db: Session, lookback_days: int = 30, limit: int = 25) -> dict:
+        """
+        The Flutterwave-side counterpart to settle_pending_stripe_commissions
+        above — retries commissions waiting to be paid through a referrer's
+        Flutterwave bank account (typically a USD/GBP commission converted to
+        NGN via live FX rate), usually because the platform's Flutterwave
+        wallet was empty when they were earned. Same shape, same safety
+        properties: checks the balance before creating anything, so an
+        unfunded cycle makes no transfer and leaves no failed rows behind.
+        """
+        from database.pg_models import PayoutAccount
+        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        rows = (
+            db.query(Commission)
+            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .filter(
+                Commission.status == 'pending',
+                Commission.payout_id.is_(None),
+                Commission.created_at >= cutoff,
+                PayoutAccount.payment_method == 'flutterwave',
+                PayoutAccount.bank_name.isnot(None),
+                PayoutAccount.account_number.isnot(None),
+                PayoutAccount.bank_code.isnot(None),
+            )
+            .order_by(Commission.created_at)
+            .limit(limit)
+            .all()
+        )
+        counts = {"checked": len(rows), "settled": 0, "waiting": 0}
+        for commission in rows:
+            cid = commission.id
+            if CommissionService.settle_pending_commission(commission, db, notify_admin=False):
+                counts["settled"] += 1
+                logger.info(f"[settle-job] commission {cid} paid via Flutterwave")
+            else:
+                counts["waiting"] += 1
+
+        # Same 6-hour reminder cadence as the Stripe job, kept as a separate
+        # timestamp so a quiet Flutterwave wallet and a quiet Stripe balance
+        # don't suppress each other's alerts.
+        if counts["waiting"]:
+            now = datetime.now(timezone.utc)
+            last = CommissionService._last_waiting_alert_flutterwave
+            if last is None or now - last > timedelta(hours=6):
+                CommissionService._last_waiting_alert_flutterwave = now
+                CommissionService._alert_admin(
+                    f"⏳ {counts['waiting']} referral payout(s) waiting to be sent via Flutterwave",
+                    f"{counts['waiting']} pending commission(s) could not be paid to referrers whose only "
+                    f"payout method is a Flutterwave bank account. Most often the live Flutterwave NGN "
+                    f"balance is too low — check the admin Revenue page's Platform Balance card. "
+                    f"They are retried every 10 minutes and paid automatically once funded. The "
+                    f"[BUILDER BONUS] log lines say what each one is waiting on.",
                 )
         return counts
 

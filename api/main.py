@@ -801,6 +801,29 @@ async def run_stripe_commission_settlement_job():
             logger.error("[stripe-settle-job] error: %s", exc)
 
 
+async def run_flutterwave_commission_settlement_job():
+    """
+    Runs every 10 minutes. The Flutterwave-side counterpart to
+    run_stripe_commission_settlement_job above — pays commissions waiting to
+    go out through a referrer's Flutterwave bank account (typically a
+    USD/GBP commission converted to NGN via live FX rate), usually because
+    the platform's Flutterwave wallet was empty when the commission was
+    earned. Checks the balance before creating anything, so an unfunded
+    cycle sends nothing and leaves no failed rows behind.
+    """
+    while True:
+        await asyncio.sleep(10 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.commission_service import CommissionService
+            with SessionLocal() as db:
+                counts = await asyncio.to_thread(CommissionService.settle_pending_flutterwave_commissions, db)
+            if counts["checked"]:
+                logger.info("[flutterwave-settle-job] %s", counts)
+        except Exception as exc:
+            logger.error("[flutterwave-settle-job] error: %s", exc)
+
+
 async def run_stripe_payout_reconcile_job():
     """
     Runs every 30 minutes, and checks two separate things against Stripe:
@@ -1426,6 +1449,7 @@ async def startup_event():
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_commission_settlement_job())
+    asyncio.create_task(run_flutterwave_commission_settlement_job())
     asyncio.create_task(run_stripe_payout_reconcile_job())
 
     try:
