@@ -47,7 +47,7 @@ def _notify_community(db: Session, user_id: int, type: str, title: str, message:
 
 def ensure_voo_bot_user(db: Session) -> User:
     """
-    Ensures the system bot user 'Voo' exists in the database.
+    Ensures the system bot user 'Voo Angle' exists in the database.
     """
     bot = db.query(User).filter(func.lower(User.username) == "voo").first()
     if not bot:
@@ -55,7 +55,7 @@ def ensure_voo_bot_user(db: Session) -> User:
     if not bot:
         bot_pw = pwd_context.hash("voo_bot_secure_password_99x")
         bot = User(
-            name="Voo",
+            name="Voo Angle",
             email="voo@lavoo.io",
             username="voo",
             is_bot=True,
@@ -68,7 +68,7 @@ def ensure_voo_bot_user(db: Session) -> User:
         db.add(bot)
         db.commit()
         db.refresh(bot)
-        logger.info(f"[voo-bot] Created Voo bot user account (id={bot.id})")
+        logger.info(f"[voo-bot] Created Voo Angle bot user account (id={bot.id})")
     else:
         changed = False
         if not getattr(bot, "is_bot", False):
@@ -76,6 +76,9 @@ def ensure_voo_bot_user(db: Session) -> User:
             changed = True
         if getattr(bot, "role", "") != "ai_bot":
             bot.role = "ai_bot"
+            changed = True
+        if bot.name != "Voo Angle":
+            bot.name = "Voo Angle"
             changed = True
         if changed:
             db.commit()
@@ -88,7 +91,7 @@ def _is_question_discussion(post_type: str = "", title: str = "", content: str =
     Strictly avoids false-positive matches on ordinary reflections, statements, and updates.
     """
     p_type = (post_type or "").strip().lower()
-    if p_type in ("questions", "question", "ask-the-community", "decision-help", "ask", "help", "inquiry", "advice"):
+    if p_type in ("questions", "question", "ask-the-community", "decision-help", "ask", "help", "inquiry", "advice", "poll", "polls"):
         return True
 
     t = (title or "").strip().lower()
@@ -767,6 +770,7 @@ def _discussion_dict(
         "quoted_discussion": quoted_dict,
         "takeaways": takeaways_val,
         "has_takeaways": has_valid_takeaways,
+        "is_question": is_q_post,
         "author_is_paid": author_is_paid,
         "type": post_type_val,
         "analysis_id": getattr(d, 'analysis_id', None),
@@ -1695,6 +1699,13 @@ async def get_discussion(
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
     def _serialise_reply(r) -> dict:
+        is_bot = bool(
+            (r.user and getattr(r.user, 'is_bot', False))
+            or (r.user and getattr(r.user, 'role', '') == 'ai_bot')
+            or (r.user and (getattr(r.user, 'username', '') or '').lower() in ('voo', 'vooangle'))
+            or (r.user and (getattr(r.user, 'name', '') or '').lower() in ('voo', 'voo angle'))
+        )
+        author_name = "Voo Angle" if is_bot else (r.user.name if r.user else "Member")
         return {
             "id": r.id,
             "content": r.content,
@@ -1702,10 +1713,10 @@ async def get_discussion(
             "parent_reply_id": r.parent_reply_id,
             "author": {
                 "id": r.user.id,
-                "name": r.user.name,
+                "name": author_name,
                 "username": getattr(r.user, 'username', '') or '',
                 "role": getattr(r.user, 'role', '') or '',
-                "is_bot": getattr(r.user, 'is_bot', False) or False,
+                "is_bot": is_bot,
                 "total_chops": r.user.total_chops or 0,
                 "is_paid": bool(
                     (getattr(r.user, 'subscription_status', '') or '').strip().lower()
@@ -1932,7 +1943,13 @@ async def get_public_discussion(
     replies_data = []
     for r in replies_raw:
         r_author = authors.get(r.user_id)
-        author_name = r_author.name if r_author else "Member"
+        is_bot = bool(
+            getattr(r_author, 'is_bot', False)
+            or (r_author and getattr(r_author, 'role', '') == 'ai_bot')
+            or (r_author and (getattr(r_author, 'username', '') or '').lower() in ('voo', 'vooangle'))
+            or (r_author and (getattr(r_author, 'name', '') or '').lower() in ('voo', 'voo angle'))
+        )
+        author_name = "Voo Angle" if is_bot else (r_author.name if r_author else "Member")
         replies_data.append({
             "id": r.id,
             "user_id": r.user_id,
@@ -1945,6 +1962,7 @@ async def get_public_discussion(
                 "name": author_name,
                 "initials": (author_name or "M")[:2].upper(),
                 "role": getattr(r_author, 'role', '') if r_author else '',
+                "is_bot": is_bot,
             }
         })
         
@@ -2719,7 +2737,9 @@ async def get_leaderboard(
         User.is_active == True,
         (User.is_bot == False) | (User.is_bot.is_(None)),
         func.lower(User.username) != "voo",
+        func.lower(User.username) != "vooangle",
         func.lower(User.name) != "voo",
+        func.lower(User.name) != "voo angle",
         User.email != "voo@lavoo.io"
     ).order_by(User.total_chops.desc(), User.created_at.asc()).limit(limit).all()
 
