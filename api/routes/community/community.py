@@ -1707,6 +1707,10 @@ async def get_discussion(
                 "role": getattr(r.user, 'role', '') or '',
                 "is_bot": getattr(r.user, 'is_bot', False) or False,
                 "total_chops": r.user.total_chops or 0,
+                "is_paid": bool(
+                    (getattr(r.user, 'subscription_status', '') or '').strip().lower()
+                    in ("active", "trialing", "pro", "premium", "lifetime")
+                ) or bool(getattr(r.user, 'is_admin', False)),
             } if r.user else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "sub_replies": [_serialise_reply(sr) for sr in (r.sub_replies or [])],
