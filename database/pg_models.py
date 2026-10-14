@@ -1820,7 +1820,7 @@ class CommunityDiscussion(Base):
     spice_count = Column(Integer, default=0)
     quoted_discussion_id = Column(Integer, ForeignKey("community_discussions.id", ondelete="SET NULL"), nullable=True)
     ai_takeaways = Column(JSON, nullable=True)
-    is_pinned = Column(Boolean, default=False)
+    is_pinned = Column(Boolean, default=False, index=True)
     post_type = Column(String(50), default="discussion")  # discussion | reflection | spiced | poll
     analysis_id = Column(Integer, ForeignKey("business_analyses.id", ondelete="SET NULL"), nullable=True)
     analysis_goal = Column(Text, nullable=True)  # Brief business goal/description of analysis
@@ -1832,8 +1832,13 @@ class CommunityDiscussion(Base):
     voo_scheduled_for = Column(DateTime(timezone=True), nullable=True)
     voo_reply_id = Column(Integer, ForeignKey("discussion_replies.id", ondelete="SET NULL", use_alter=True, name="fk_community_discussions_voo_reply_id"), nullable=True)
     is_resolved = Column(Boolean, default=False, server_default="false")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_discussions_feed_sort", "is_pinned", "created_at"),
+        Index("idx_discussions_channel_sort", "channel_id", "created_at"),
+    )
     channel = relationship("CommunityChannel", back_populates="discussions")
     user = relationship("User")
     analysis = relationship("BusinessAnalysis", foreign_keys=[analysis_id])
