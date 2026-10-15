@@ -297,6 +297,130 @@ class PayoutService:
             "check_failed": snapshot.check_failed,
         }
 
+    # Tracks whether the system was already unhealthy last time this ran,
+    # so the periodic job's admin alert fires on the transition into
+    # trouble (and a once-per-6-hours reminder while it stays broken),
+    # not on every single cycle.
+    _last_integrity_status: str = "healthy"
+    _last_integrity_alert: "datetime | None" = None
+
+    @staticmethod
+    def check_payout_system_integrity(db: Session) -> Dict[str, Any]:
+        """
+        A single live answer to "is the payout system actually working right
+        now" — not a guess, a direct read of the same tables everything else
+        in this file writes to. Every check here catches a DIFFERENT failure
+        mode a silently-dead background job would otherwise hide:
+
+        - balance jobs stop writing snapshots -> nobody notices the wallet
+          emptied out until a real payout fails
+        - the reconcile jobs stop running -> a payout sent to Flutterwave/
+          Stripe sits at 'processing' forever, neither confirmed nor retried
+        - the settle jobs stop running -> a commission with a real, usable
+          payout account and enough balance just never gets paid
+        - a failed payout's commission silently fell out of 'pending'
+          without ever actually being paid (payout_id/commission status
+          disagreeing about what happened)
+
+        Returns {"status": "healthy"|"degraded"|"broken", "checked_at":...,
+        "checks": [{"name", "status", "detail", "count"}, ...]}. "degraded"
+        means something is stale/slow; "broken" means money is stuck.
+        """
+        from database.pg_models import PlatformBalanceSnapshot, Commission, PayoutAccount
+
+        now = datetime.now(timezone.utc)
+        checks = []
+
+        def add(name, status, detail, count=None):
+            checks.append({"name": name, "status": status, "detail": detail, "count": count})
+
+        # 1. Balance-monitor jobs: each runs every 10 minutes: a snapshot
+        # older than 25 minutes means the job itself has stopped running,
+        # not just that the balance hasn't changed.
+        for provider, currencies in (("flutterwave", ["NGN"]), ("stripe", ["USD", "GBP"])):
+            for ccy in currencies:
+                latest = db.query(PlatformBalanceSnapshot).filter(
+                    PlatformBalanceSnapshot.provider == provider,
+                    PlatformBalanceSnapshot.currency == ccy,
+                ).order_by(PlatformBalanceSnapshot.checked_at.desc()).first()
+                label = f"{provider} {ccy} balance monitor"
+                if not latest:
+                    add(label, "warning", "Has never run yet", None)
+                else:
+                    age_min = (now - latest.checked_at).total_seconds() / 60
+                    if age_min > 25:
+                        add(label, "critical", f"Last ran {age_min:.0f} minutes ago — should run every 10", None)
+                    elif latest.check_failed:
+                        add(label, "warning", f"Running, but the last check couldn't reach {provider}: {latest.error_message}", None)
+                    else:
+                        add(label, "ok", f"Last ran {age_min:.0f} minutes ago", None)
+
+        # 2. Payouts stuck 'processing' for a long time — the reconcile jobs
+        # should have confirmed or failed these within minutes, not days.
+        stuck_cutoff = now - timedelta(hours=6)
+        stuck = db.query(Payout).filter(
+            Payout.status == "processing",
+            Payout.requested_at.isnot(None),
+            Payout.requested_at < stuck_cutoff,
+        ).count()
+        add(
+            "Stuck processing payouts", "critical" if stuck else "ok",
+            f"{stuck} payout(s) stuck 'processing' for over 6 hours — the reconcile jobs aren't resolving them" if stuck
+            else "No payouts stuck in limbo",
+            stuck,
+        )
+
+        # 3. Failed payouts whose commission is still 'pending' with a
+        # real, usable payout account on file — the settle jobs should
+        # have retried these already (every 10 minutes).
+        retry_cutoff = now - timedelta(minutes=30)
+        stuck_failed = (
+            db.query(Commission)
+            .join(Payout, Payout.id == Commission.payout_id)
+            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .filter(
+                Commission.status == "pending",
+                Payout.status == "failed",
+                Payout.requested_at < retry_cutoff,
+            )
+            .count()
+        )
+        add(
+            "Unretried failed payouts", "critical" if stuck_failed else "ok",
+            f"{stuck_failed} commission(s) with a failed payout and a usable payout account haven't been retried in 30+ minutes — the settle jobs may be down" if stuck_failed
+            else "Every failed payout with a usable account is being retried",
+            stuck_failed,
+        )
+
+        # 4. Pending commissions with a real payout account that have
+        # NEVER been attempted at all (payout_id still null) — should only
+        # ever be momentary, between creation and the first attempt.
+        never_attempted_cutoff = now - timedelta(hours=1)
+        never_attempted = (
+            db.query(Commission)
+            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .filter(
+                Commission.status == "pending",
+                Commission.payout_id.is_(None),
+                Commission.created_at < never_attempted_cutoff,
+            )
+            .count()
+        )
+        add(
+            "Commissions never attempted", "critical" if never_attempted else "ok",
+            f"{never_attempted} commission(s) with a usable payout account have sat over an hour with no payout attempt at all" if never_attempted
+            else "No commission with a usable account has gone unattempted",
+            never_attempted,
+        )
+
+        worst = "healthy"
+        if any(c["status"] == "critical" for c in checks):
+            worst = "broken"
+        elif any(c["status"] == "warning" for c in checks):
+            worst = "degraded"
+
+        return {"status": worst, "checked_at": now.isoformat(), "checks": checks}
+
     @staticmethod
     def process_stripe_transfer_payout(
         payout: Payout, db: Session, manage_transaction: bool = True,

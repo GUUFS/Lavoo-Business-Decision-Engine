@@ -803,6 +803,49 @@ async def run_stripe_balance_monitor_job():
             logger.error("[stripe-balance-job] error: %s", exc)
 
 
+async def run_payout_integrity_check_job():
+    """
+    Runs every 15 minutes. Answers "is the payout system actually working
+    right now" by directly checking the same tables every payout job
+    writes to — see PayoutService.check_payout_system_integrity for the
+    exact checks. Alerts the admin on the transition into trouble (status
+    changes away from 'healthy'), and again at most once every 6 hours
+    while it stays unhealthy, instead of emailing every single cycle.
+    """
+    from datetime import timedelta
+    from fastapi import BackgroundTasks
+    while True:
+        await asyncio.sleep(15 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.payout_service import PayoutService
+            bg = BackgroundTasks()
+            with SessionLocal() as db:
+                result = await asyncio.to_thread(PayoutService.check_payout_system_integrity, db)
+            logger.info("[payout-integrity-job] status=%s checks=%s", result["status"], result["checks"])
+
+            if result["status"] != "healthy":
+                now = datetime.now(timezone.utc)
+                became_unhealthy = PayoutService._last_integrity_status == "healthy"
+                last_alert = PayoutService._last_integrity_alert
+                due_for_reminder = last_alert is None or (now - last_alert) > timedelta(hours=6)
+                if became_unhealthy or due_for_reminder:
+                    problems = "\n".join(
+                        f"- [{c['status'].upper()}] {c['name']}: {c['detail']}"
+                        for c in result["checks"] if c["status"] != "ok"
+                    )
+                    PayoutService._queue_admin_alert(
+                        bg,
+                        subject=f"⚠️ Payout system integrity check: {result['status']}",
+                        body=f"The payout system health check found real problems:\n\n{problems}\n\nSee the admin Revenue page for full detail.",
+                    )
+                    PayoutService._last_integrity_alert = now
+            PayoutService._last_integrity_status = result["status"]
+            await bg()
+        except Exception as exc:
+            logger.error("[payout-integrity-job] error: %s", exc)
+
+
 async def run_stripe_commission_settlement_job():
     """
     Runs every 10 minutes. Pays commissions that are waiting to go out through
@@ -1474,6 +1517,7 @@ async def startup_event():
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_balance_monitor_job())
+    asyncio.create_task(run_payout_integrity_check_job())
     asyncio.create_task(run_stripe_commission_settlement_job())
     asyncio.create_task(run_flutterwave_commission_settlement_job())
     asyncio.create_task(run_stripe_payout_reconcile_job())

@@ -766,6 +766,26 @@ async def get_platform_balance(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/payout-health")
+async def get_payout_system_health(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Live answer to "is the payout system actually working right now" —
+    see PayoutService.check_payout_system_integrity for exactly what it
+    checks. Computed fresh on every call (not a stored snapshot), so this
+    always reflects the current, real state of the tables underneath it.
+    """
+    verify_admin(current_user)
+    try:
+        result = PayoutService.check_payout_system_integrity(db)
+        return result
+    except Exception as e:
+        print(f"Error checking payout system health: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/payouts")
 async def get_all_payouts(
     limit: int = 50,
