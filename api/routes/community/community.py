@@ -2005,7 +2005,7 @@ async def get_public_discussion(
             "user_id": r.user_id,
             "content": r.content,
             "like_count": r.like_count or 0,
-            "chops_gifted": r.chops_gifted or 0,
+            "chops_gifted": getattr(r, 'chops_gifted', 0) or 0,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "author": {
                 "id": r.user_id,
