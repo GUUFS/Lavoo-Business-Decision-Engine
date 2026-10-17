@@ -18,6 +18,15 @@ router = APIRouter(prefix="", tags=["earnings"])
 COMMISSION_RATE = 0.4           # 40% — fallback/legacy flat rate; see CommissionService._get_rate_for_referrer
 COMMISSION_RATE_PARTNER = 0.5   # 50% — actual payout for partners/staff (not shown)
 
+# A successful payment lands in Subscriptions.status under a different
+# word depending on which provider wrote it — Flutterwave uses
+# "successful", Stripe uses "completed" (see subscriptions/stripe.py).
+# "succeeded"/"paid"/"active" cover older/other write paths. Matches the
+# same set already used elsewhere (api/main.py, api/utils/sub_utils.py,
+# api/routes/admin/revenue.py) — filtering on "successful" alone silently
+# drops every Stripe-paid referral from "paid this month" counts.
+PAID_SUBSCRIPTION_STATUSES = ('completed', 'active', 'paid', 'successful', 'succeeded')
+
 
 # Remove local get_user_id_from_request and risky SECRET_KEY fallback
 
@@ -316,7 +325,7 @@ async def get_monthly_performance(
                 Subscriptions.status
             ).filter(
                 Subscriptions.user_id.in_(referred_user_ids),
-                Subscriptions.status == "successful",
+                Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
                 Subscriptions.created_at >= oldest_date
             ).all()
             
@@ -475,7 +484,7 @@ async def get_monthly_metrics_for_period(
 
         paid_referral_count = db.query(func.count(func.distinct(Subscriptions.user_id))).filter(
             Subscriptions.user_id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
-            Subscriptions.status == "successful",
+            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
             Subscriptions.created_at >= month_start,
             Subscriptions.created_at <= month_end
         ).scalar() or 0
@@ -493,7 +502,7 @@ async def get_monthly_metrics_for_period(
             func.coalesce(func.sum(Subscriptions.amount), 0).label('total_amount')
         ).select_from(Subscriptions).filter(
             Subscriptions.user_id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
-            Subscriptions.status == "successful",
+            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
             Subscriptions.created_at >= month_start,
             Subscriptions.created_at <= month_end
         ).group_by(Subscriptions.currency).all()
