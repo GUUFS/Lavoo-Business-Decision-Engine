@@ -145,7 +145,7 @@ class PayoutService:
         """
         Reads Lavoo's live Flutterwave balance, compares it against both a
         configurable safety floor (FLUTTERWAVE_MIN_BALANCE_NGN, default
-        50,000) and whatever Lavoo currently owes (pending/processing
+        1,000) and whatever Lavoo currently owes (pending/processing
         Flutterwave payouts already queued in this currency), and records a
         PlatformBalanceSnapshot either way so the admin Revenue page has a
         real number and trend to show instead of nothing.
@@ -165,7 +165,7 @@ class PayoutService:
             Payout.status.in_(['pending', 'processing']),
         ).scalar() or Decimal("0.00")
 
-        min_floor = Decimal(os.getenv("FLUTTERWAVE_MIN_BALANCE_NGN", "50000"))
+        min_floor = Decimal(os.getenv("FLUTTERWAVE_MIN_BALANCE_NGN", "1000"))
         threshold = max(min_floor, pending_obligations)
 
         balance = PayoutService.get_platform_flutterwave_available(currency)
