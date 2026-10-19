@@ -16,11 +16,38 @@ COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partne
 COMMISSION_RATE_FREE     = Decimal("0.15")   # 15% — paid to a referrer who is on the free plan themselves
 COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides the normal 40/15/50% logic regardless of that staff member's own plan
 
-# Awarded once to the SUBSCRIBER themselves (not a referrer) the moment
-# their first-ever subscription payment succeeds — every plan currently
-# sold is the "Pro" plan (a Premium tier is planned later, once payment
-# testing is complete; this constant is the hook for that when it exists).
-PRO_PLAN_SIGNUP_CHOPS = 1500
+# Awarded to the SUBSCRIBER themselves (not a referrer) EVERY time one of
+# their subscription payments succeeds — initial purchase or renewal alike,
+# not just the first ever. Which amount depends on which plan they paid
+# for, told apart by the actual amount charged (see PLAN_PRICES below):
+# there's no separate "tier" column on Subscriptions, and the checkout flow
+# itself doesn't pass a tier through yet — the home page's pricing section
+# (lib/currency.ts's LAVOO_PRICING on the frontend) already prices both
+# tiers for every currency/billing-period, which is what PLAN_PRICES
+# mirrors here.
+PLAN_CHOPS = {"pro": 1500, "premium": 3000}
+
+# Mirrors lib/currency.ts's LAVOO_PRICING on the frontend — each tier's
+# actual discounted "price" per currency/billing-period (never "regular",
+# which is only ever shown struck-through, never charged). Keep both files
+# in sync by hand if either changes; there's no shared source between a
+# Python backend and a TypeScript frontend to enforce it automatically.
+PLAN_PRICES = {
+    "pro": {
+        "GBP": {"monthly": Decimal("22.49"), "quarterly": Decimal("60.00"), "yearly": Decimal("269.78")},
+        "USD": {"monthly": Decimal("29.95"), "quarterly": Decimal("84.25"), "yearly": Decimal("336.98")},
+        "NGN": {"monthly": Decimal("34000"), "quarterly": Decimal("102600"), "yearly": Decimal("410000")},
+    },
+    "premium": {
+        "GBP": {"monthly": Decimal("29.58"), "quarterly": Decimal("78.98"), "yearly": Decimal("354.96")},
+        "USD": {"monthly": Decimal("36.95"), "quarterly": Decimal("110.85"), "yearly": Decimal("443.40")},
+        "NGN": {"monthly": Decimal("45000"), "quarterly": Decimal("135000"), "yearly": Decimal("540000")},
+    },
+}
+# A charged amount is matched to a plan within this tolerance — covers minor
+# rounding (e.g. minor-unit conversion) without being loose enough to
+# confuse two genuinely different price points.
+PLAN_PRICE_MATCH_TOLERANCE = Decimal("0.50")
 
 # A payment is "real" for chops/stats purposes under a different word per
 # provider (Flutterwave writes "successful", Stripe "completed") — same set
@@ -58,39 +85,66 @@ class CommissionService:
         return COMMISSION_RATE_FREE
 
     @staticmethod
-    def _award_first_subscription_chops(subscription, db: Session) -> None:
-        """Pay the subscriber themselves PRO_PLAN_SIGNUP_CHOPS, once, the
-        moment their FIRST-EVER subscription payment succeeds — not on
-        every renewal. Every plan currently sold is "Pro" (see
-        PRO_PLAN_SIGNUP_CHOPS's own comment for the Premium-tier note).
+    def _resolve_plan_tier(amount: Decimal, currency: str) -> "str | None":
+        """Tell a Pro payment from a Premium one by matching the amount
+        actually charged against PLAN_PRICES — see that constant's comment
+        for why there's nothing more direct to check yet. Returns None if
+        nothing matches closely enough (an old/legacy price point, a beta
+        discount, a manually-adjusted amount, …) so the caller can skip
+        awarding rather than guess at which tier it was."""
+        currency = (currency or "USD").upper()
+        for tier, by_currency in PLAN_PRICES.items():
+            periods = by_currency.get(currency)
+            if not periods:
+                continue
+            for period_price in periods.values():
+                if abs(amount - period_price) <= PLAN_PRICE_MATCH_TOLERANCE:
+                    return tier
+        return None
 
-        "First ever" is checked by absence of any OTHER paid Subscriptions
-        row for this user (id != this one) rather than a dedicated flag
-        column, so a user with 0 prior paid rows gets it exactly once in
-        the overwhelmingly common case. Chops are a gamification/leaderboard
-        score, not money, so this intentionally doesn't add locking against
-        a rare webhook-retry double-fire the way a real payout would.
+    @staticmethod
+    def _award_plan_signup_chops(subscription, db: Session) -> None:
+        """Pay the subscriber themselves chops EVERY time one of their
+        subscription payments succeeds — initial purchase or renewal alike.
+        Amount depends on which plan (Pro vs Premium) they actually paid
+        for, resolved via _resolve_plan_tier; skipped entirely if that
+        can't be determined.
+
+        No idempotency guard against a webhook redelivering the same
+        payment event: most of this codebase's payment-success paths
+        already dedupe on Subscriptions.transaction_id before even
+        reaching calculate_commission, but at least one (
+        _create_active_subscription_record in stripe.py, for an
+        incomplete -> active transition) reuses an existing row and still
+        calls it — a retry there WOULD double-award. Chops are a
+        gamification/leaderboard score, not money, so this is an accepted
+        risk rather than one worth a new DB column for; flag it if a
+        bulletproof guard turns out to matter in practice.
         """
         if (subscription.status or "").lower() not in PAID_SUBSCRIPTION_STATUSES:
             return
 
-        had_prior_paid_subscription = db.query(Subscriptions).filter(
-            Subscriptions.user_id == subscription.user_id,
-            Subscriptions.id != subscription.id,
-            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
-        ).first() is not None
-        if had_prior_paid_subscription:
+        tier = CommissionService._resolve_plan_tier(
+            Decimal(str(subscription.amount)), subscription.currency
+        )
+        if tier is None:
+            logger.info(
+                f"[PLAN SIGNUP CHOPS] subscription={subscription.id} amount="
+                f"{subscription.amount} {subscription.currency} didn't match a known "
+                f"Pro/Premium price point — skipping chops"
+            )
             return
 
         user = db.query(User).filter(User.id == subscription.user_id).first()
         if not user:
             return
 
-        user.total_chops = (user.total_chops or 0) + PRO_PLAN_SIGNUP_CHOPS
+        chops = PLAN_CHOPS[tier]
+        user.total_chops = (user.total_chops or 0) + chops
         db.flush()
         logger.info(
-            f"[PRO SIGNUP CHOPS] Awarded {PRO_PLAN_SIGNUP_CHOPS} chops to user {user.id} "
-            f"for first subscription payment (subscription={subscription.id})"
+            f"[PLAN SIGNUP CHOPS] Awarded {chops} chops ({tier}) to user {user.id} "
+            f"for subscription={subscription.id} ({subscription.amount} {subscription.currency})"
         )
 
     @staticmethod
@@ -114,11 +168,12 @@ class CommissionService:
         approve/payout flow once they add one.
         """
         try:
-            # Award the subscriber's own one-time "became Pro" chops bonus
-            # before anything referral-specific — this must fire for every
-            # subscriber, not just referred ones, which the early-return
-            # right below would otherwise skip entirely.
-            CommissionService._award_first_subscription_chops(subscription, db)
+            # Award the subscriber's own plan chops (every successful
+            # payment, not just the first) before anything referral-
+            # specific — this must fire for every subscriber, not just
+            # referred ones, which the early-return right below would
+            # otherwise skip entirely.
+            CommissionService._award_plan_signup_chops(subscription, db)
 
             # Check if user was referred
             referral = db.query(Referral).filter(
