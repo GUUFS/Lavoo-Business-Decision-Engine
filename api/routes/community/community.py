@@ -3,7 +3,7 @@ Community Feature — Channels, Discussions, Events, Leaderboard, Saved Items
 """
 import logging
 import re
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple, Any
 from datetime import datetime, timezone, timedelta
 import json
 import os
@@ -862,6 +862,9 @@ class UpdateDiscussionRequest(BaseModel):
     type: Optional[str] = None
     channel_id: Optional[int] = None
     visibility: Optional[str] = None
+    analysis_id: Optional[int] = None
+    step_id: Optional[str] = None
+    task_id: Optional[str] = None
 
 
 class VotePollRequest(BaseModel):
@@ -1387,7 +1390,14 @@ def _get_cached_mission_reflections(db: Session) -> List[dict]:
                         'test', 'testing', 'tes', 'tesst', 'text', 'test2', 'tessssst', 'reesss', 'done', 'testtt'
                     ):
                         continue
-                    comment_id = comment.get('id', f"rc_{analysis.id}_{task_id}")
+                    raw_cid = str(comment.get('id') or f"{analysis.id}_{task_id}")
+                    if raw_cid.startswith('rc_'):
+                        raw_cid = raw_cid[3:]
+                    if not raw_cid.startswith(f"{analysis.id}_"):
+                        comment_id = f"{analysis.id}_{raw_cid}"
+                    else:
+                        comment_id = raw_cid
+
                     ref_key = f"{analysis.id}_{comment_id}"
                     if ref_key in seen_reflection_keys:
                         continue
@@ -1403,6 +1413,9 @@ def _get_cached_mission_reflections(db: Session) -> List[dict]:
                         "mission_task": full_title if full_title else text[:80],
                         "analysis_goal": analysis.business_goal,
                         "analysis_id": analysis.id,
+                        "step_id": str(task_id),
+                        "task_id": str(task_id),
+                        "comment_id": str(comment.get('id') or ''),
                         "content": text,
                         "excerpt": text[:160],
                         "tags": [],
@@ -1507,6 +1520,43 @@ async def get_discussions(
                             for item in items:
                                 if isinstance(item, dict) and item.get("id") in poll_map:
                                     item["poll"] = poll_map[item["id"]]
+
+                        # Rehydrate recent_likers in real-time for all cached items
+                        posts_needing_likers = [
+                            i.get("id") for i in items
+                            if isinstance(i, dict)
+                            and isinstance(i.get("id"), int)
+                            and ((i.get("like_count") or i.get("likes") or 0) > 0 or not i.get("recent_likers"))
+                        ]
+                        if posts_needing_likers:
+                            try:
+                                rl_rows = (
+                                    db.query(DiscussionLike.discussion_id, User.id, User.name, User.username)
+                                    .join(User, DiscussionLike.user_id == User.id)
+                                    .filter(DiscussionLike.discussion_id.in_(posts_needing_likers))
+                                    .order_by(DiscussionLike.discussion_id, DiscussionLike.created_at.desc())
+                                    .all()
+                                )
+                                rl_map: Dict[int, List[dict]] = {}
+                                for disc_id, u_id, u_name, u_uname in rl_rows:
+                                    if disc_id not in rl_map:
+                                        rl_map[disc_id] = []
+                                    if len(rl_map[disc_id]) < 3:
+                                        rl_map[disc_id].append({
+                                            "id": u_id,
+                                            "name": u_name or "Member",
+                                            "username": u_uname or ""
+                                        })
+                                for item in items:
+                                    if isinstance(item, dict) and isinstance(item.get("id"), int):
+                                        pid = item["id"]
+                                        if pid in rl_map:
+                                            item["recent_likers"] = rl_map[pid]
+                                        elif "recent_likers" not in item:
+                                            item["recent_likers"] = []
+                            except Exception as e:
+                                logger.warning(f"[community] Cache rehydrate recent_likers error: {e}")
+
                     return cached
 
         # Eager load user and channel relationships to eliminate N+1 queries
@@ -2025,6 +2075,133 @@ async def get_public_discussion(
     return resp
 
 
+def _resolve_reflection_target(
+    str_id: str,
+    body: Optional[UpdateDiscussionRequest] = None,
+    current_user: Optional[User] = None,
+    db: Optional[Session] = None
+) -> Tuple[Optional[BusinessAnalysis], bool, str, str]:
+    """
+    Robust resolver for mission reflections and roadmap comments.
+    Supports formats:
+      - mr_{analysis_id}_{step_id}
+      - rc_{comment_id}
+      - rc_{analysis_id}_{comment_id}
+      - rc_{analysis_id}_{task_id}_{comment_id}
+      - comment-... or comment_...
+      - Resolves by body.analysis_id and body.step_id/task_id
+      - Resolves by searching current_user's analyses and all analyses
+    Returns: (analysis, is_rc, clean_id, step_id)
+    """
+    if not db:
+        return None, False, str_id, ""
+
+    is_rc = str_id.startswith("rc_")
+    clean_id = str_id
+    while clean_id.startswith("mr_") or clean_id.startswith("rc_"):
+        if clean_id.startswith("rc_"):
+            is_rc = True
+        clean_id = clean_id[3:]
+
+    analysis = None
+    step_id = ""
+
+    # Strategy 1: clean_id starts with numeric analysis_id
+    parts = clean_id.split("_", 1)
+    if parts and parts[0].isdigit():
+        cand_id = int(parts[0])
+        analysis = db.query(BusinessAnalysis).filter_by(id=cand_id).first()
+        if analysis:
+            step_id = parts[1] if len(parts) > 1 else ""
+
+    # Strategy 2: Explicit analysis_id in request body
+    if not analysis and body and getattr(body, "analysis_id", None):
+        try:
+            cand_id = int(body.analysis_id)
+            analysis = db.query(BusinessAnalysis).filter_by(id=cand_id).first()
+            if analysis:
+                step_id = getattr(body, "step_id", None) or getattr(body, "task_id", None) or clean_id
+        except Exception:
+            pass
+
+    # Search helper for user_progress
+    def search_in_analyses(analyses_list):
+        nonlocal analysis, is_rc, step_id, clean_id
+        for a in analyses_list:
+            up = a.user_progress
+            if isinstance(up, str):
+                try:
+                    up = json.loads(up)
+                except Exception:
+                    up = {}
+            if not isinstance(up, dict):
+                continue
+
+            # Check roadmap_comments
+            rcs = up.get("roadmap_comments", {})
+            if isinstance(rcs, dict):
+                for tid, comms in rcs.items():
+                    if isinstance(comms, list):
+                        for c in comms:
+                            if isinstance(c, dict):
+                                cid = str(c.get("id") or "")
+                                ctext = (c.get("text") or "").strip()
+                                if cid and (
+                                    cid == clean_id
+                                    or cid == str_id
+                                    or str_id.endswith(cid)
+                                    or cid in str_id
+                                    or clean_id in cid
+                                    or (parts and len(parts) > 1 and parts[1] == cid)
+                                ):
+                                    analysis = a
+                                    is_rc = True
+                                    step_id = tid
+                                    clean_id = cid
+                                    return True
+                                if body and getattr(body, "content", None) and ctext and ctext == body.content.strip():
+                                    analysis = a
+                                    is_rc = True
+                                    step_id = tid
+                                    clean_id = cid
+                                    return True
+
+            # Check reflections dictionary
+            refs = up.get("reflections", {})
+            if isinstance(refs, dict):
+                for rid, rtext in refs.items():
+                    s_rid = str(rid)
+                    r_content = (rtext or "").strip() if isinstance(rtext, str) else ""
+                    if (
+                        s_rid == clean_id
+                        or s_rid == str_id
+                        or clean_id.endswith(s_rid)
+                        or (clean_id.startswith(f"{a.id}_") and s_rid == clean_id[len(f"{a.id}_"):])
+                    ):
+                        analysis = a
+                        is_rc = False
+                        step_id = s_rid
+                        return True
+                    if body and getattr(body, "content", None) and r_content and r_content == body.content.strip():
+                        analysis = a
+                        is_rc = False
+                        step_id = s_rid
+                        return True
+        return False
+
+    # Strategy 3: Search within current user's analyses
+    if not analysis and current_user:
+        user_analyses = db.query(BusinessAnalysis).filter_by(user_id=current_user.id).all()
+        search_in_analyses(user_analyses)
+
+    # Strategy 4: Fallback search across recent analyses in system
+    if not analysis:
+        all_analyses = db.query(BusinessAnalysis).order_by(BusinessAnalysis.id.desc()).limit(250).all()
+        search_in_analyses(all_analyses)
+
+    return analysis, is_rc, clean_id, step_id
+
+
 @router.put("/discussions/{discussion_id}")
 async def update_discussion(
     discussion_id: str,
@@ -2033,20 +2210,22 @@ async def update_discussion(
     db: Session = Depends(get_db)
 ):
     str_id = str(discussion_id).strip()
-    if str_id.startswith("mr_") or str_id.startswith("rc_"):
-        is_rc = str_id.startswith("rc_")
-        raw_id = str_id[3:]
-        if is_rc and raw_id.startswith("rc_"):
-            raw_id = raw_id[3:]
+    is_reflection_candidate = (
+        str_id.startswith("mr_")
+        or str_id.startswith("rc_")
+        or str_id.startswith("comment")
+        or (body and getattr(body, "type", None) in ("reflection", "reflections", "mission_reflection"))
+        or (body and getattr(body, "analysis_id", None) is not None)
+    )
 
-        parts = raw_id.split("_", 1)
-        if not parts or not parts[0].isdigit():
-            raise HTTPException(status_code=400, detail="Invalid reflection identifier")
+    if is_reflection_candidate:
+        analysis, is_rc, raw_id, step_id = _resolve_reflection_target(
+            str_id=str_id,
+            body=body,
+            current_user=current_user,
+            db=db
+        )
 
-        analysis_id = int(parts[0])
-        step_id = parts[1] if len(parts) > 1 else ""
-
-        analysis = db.query(BusinessAnalysis).filter_by(id=analysis_id).first()
         if not analysis:
             raise HTTPException(status_code=404, detail="Analysis or reflection not found")
 
@@ -2085,25 +2264,39 @@ async def update_discussion(
         new_content = (body.content or "").strip()
 
         if is_rc:
+            updated_comment = False
             if "roadmap_comments" in user_progress and isinstance(user_progress["roadmap_comments"], dict):
                 for t_id, comments in user_progress["roadmap_comments"].items():
                     if isinstance(comments, list):
                         for c in comments:
-                            if isinstance(c, dict) and (c.get("id") == raw_id or c.get("id") == str_id or t_id == step_id):
+                            if isinstance(c, dict) and (
+                                c.get("id") == raw_id
+                                or c.get("id") == str_id
+                                or str_id.endswith(str(c.get("id") or ""))
+                                or (raw_id and str(c.get("id") or "") in raw_id)
+                                or (t_id == step_id and len(comments) == 1)
+                            ):
                                 c["text"] = new_content
+                                updated_comment = True
+            if not updated_comment:
+                if step_id and "roadmap_comments" in user_progress and isinstance(user_progress["roadmap_comments"], dict):
+                    comms = user_progress["roadmap_comments"].get(step_id, [])
+                    if isinstance(comms, list) and comms:
+                        comms[0]["text"] = new_content
         else:
             if "reflections" not in user_progress or not isinstance(user_progress["reflections"], dict):
                 user_progress["reflections"] = {}
-            user_progress["reflections"][step_id] = new_content
-            if "_action_" in step_id:
-                try:
-                    action_num = step_id.split("_action_")[-1]
-                    user_progress["reflections"][action_num] = new_content
-                    user_progress["reflections"][int(action_num)] = new_content
-                except Exception:
-                    pass
-            elif step_id.isdigit():
-                user_progress["reflections"][f"{analysis_id}_action_{step_id}"] = new_content
+            if step_id:
+                user_progress["reflections"][step_id] = new_content
+                if "_action_" in step_id:
+                    try:
+                        action_num = step_id.split("_action_")[-1]
+                        user_progress["reflections"][action_num] = new_content
+                        user_progress["reflections"][int(action_num)] = new_content
+                    except Exception:
+                        pass
+                elif step_id.isdigit():
+                    user_progress["reflections"][f"{analysis.id}_action_{step_id}"] = new_content
 
         analysis.user_progress = user_progress
         flag_modified(analysis, "user_progress")
@@ -2249,18 +2442,17 @@ async def delete_discussion(
     db: Session = Depends(get_db)
 ):
     str_id = str(discussion_id).strip()
-    if str_id.startswith("mr_") or str_id.startswith("rc_"):
-        is_rc = str_id.startswith("rc_")
-        raw_id = str_id[3:]
-        if is_rc and raw_id.startswith("rc_"):
-            raw_id = raw_id[3:]
-        parts = raw_id.split("_", 1)
-        if not parts or not parts[0].isdigit():
-            raise HTTPException(status_code=400, detail="Invalid reflection identifier")
-        analysis_id = int(parts[0])
-        step_id = parts[1] if len(parts) > 1 else ""
-
-        analysis = db.query(BusinessAnalysis).filter_by(id=analysis_id).first()
+    is_reflection_candidate = (
+        str_id.startswith("mr_")
+        or str_id.startswith("rc_")
+        or str_id.startswith("comment")
+    )
+    if is_reflection_candidate:
+        analysis, is_rc, raw_id, step_id = _resolve_reflection_target(
+            str_id=str_id,
+            current_user=current_user,
+            db=db
+        )
         if not analysis:
             raise HTTPException(status_code=404, detail="Analysis or reflection not found")
         if analysis.user_id != current_user.id and not getattr(current_user, 'is_admin', False):
@@ -2282,19 +2474,24 @@ async def delete_discussion(
                 for t_id, comments in list(user_progress["roadmap_comments"].items()):
                     if isinstance(comments, list):
                         user_progress["roadmap_comments"][t_id] = [
-                            c for c in comments if isinstance(c, dict) and c.get("id") != raw_id and c.get("id") != str_id
+                            c for c in comments
+                            if isinstance(c, dict)
+                            and c.get("id") != raw_id
+                            and c.get("id") != str_id
+                            and not str_id.endswith(str(c.get("id") or ""))
                         ]
         else:
             if "reflections" in user_progress and isinstance(user_progress["reflections"], dict):
-                user_progress["reflections"].pop(step_id, None)
-                if "_action_" in step_id:
-                    try:
-                        action_num = step_id.split("_action_")[-1]
-                        user_progress["reflections"].pop(action_num, None)
-                    except Exception:
-                        pass
-                elif step_id.isdigit():
-                    user_progress["reflections"].pop(f"{analysis_id}_action_{step_id}", None)
+                if step_id:
+                    user_progress["reflections"].pop(step_id, None)
+                    if "_action_" in step_id:
+                        try:
+                            action_num = step_id.split("_action_")[-1]
+                            user_progress["reflections"].pop(action_num, None)
+                        except Exception:
+                            pass
+                    elif step_id.isdigit():
+                        user_progress["reflections"].pop(f"{analysis.id}_action_{step_id}", None)
 
         analysis.user_progress = user_progress
         flag_modified(analysis, "user_progress")
@@ -2368,11 +2565,27 @@ async def like_discussion(
         db.delete(existing)
         d.like_count = max(0, (d.like_count or 0) - 1)
         db.commit()
-        return {"success": True, "liked": False, "like_count": d.like_count}
+        await delete_cached("community:discussions:*")
+        await delete_cached(f"community:public_post:{discussion_id}")
+        recent_likes_rows = (
+            db.query(User.id, User.name, User.username)
+            .join(DiscussionLike, DiscussionLike.user_id == User.id)
+            .filter(DiscussionLike.discussion_id == discussion_id)
+            .order_by(DiscussionLike.created_at.desc())
+            .limit(3)
+            .all()
+        )
+        recent_likers = [
+            {"id": r[0], "name": r[1] or "Member", "username": r[2] or ""}
+            for r in recent_likes_rows
+        ]
+        return {"success": True, "liked": False, "like_count": d.like_count, "recent_likers": recent_likers}
 
     db.add(DiscussionLike(user_id=current_user.id, discussion_id=discussion_id))
     d.like_count = (d.like_count or 0) + 1
     db.commit()
+    await delete_cached("community:discussions:*")
+    await delete_cached(f"community:public_post:{discussion_id}")
 
     # Notify post owner (skip when liking own post)
     try:
@@ -2387,7 +2600,20 @@ async def like_discussion(
         logger.warning(f"Cooked notification creation failed: {notif_err}")
 
     _log_activity(db, current_user.id, "cooked", discussion_id, "discussion", d.title)
-    return {"success": True, "liked": True, "like_count": d.like_count}
+
+    recent_likes_rows = (
+        db.query(User.id, User.name, User.username)
+        .join(DiscussionLike, DiscussionLike.user_id == User.id)
+        .filter(DiscussionLike.discussion_id == discussion_id)
+        .order_by(DiscussionLike.created_at.desc())
+        .limit(3)
+        .all()
+    )
+    recent_likers = [
+        {"id": r[0], "name": r[1] or "Member", "username": r[2] or ""}
+        for r in recent_likes_rows
+    ]
+    return {"success": True, "liked": True, "like_count": d.like_count, "recent_likers": recent_likers}
 
 
 @router.post("/discussions/{discussion_id}/gift_chops")
