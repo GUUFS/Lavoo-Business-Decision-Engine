@@ -168,6 +168,19 @@ class PayoutService:
         min_floor = Decimal(os.getenv("FLUTTERWAVE_MIN_BALANCE_NGN", "1000"))
         threshold = max(min_floor, pending_obligations)
 
+        # Money that was EARNED in this currency but actually SENT through a
+        # different rail — e.g. a GBP commission with no Flutterwave bank
+        # account on file gets converted and paid out as NGN instead
+        # (_attempt_immediate_payout in commission_service.py). The NGN left
+        # this balance; the GBP it was converted from never did — it's still
+        # sitting in the Flutterwave NGN account's own currency origin, which
+        # is why the live balance alone doesn't tally with "what we've paid
+        # out": a chunk of what's "paid" never actually left here.
+        # original_currency is only ever set on a real cross-rail conversion
+        # (see Payout.original_currency's own comment), so filtering on it
+        # already excludes every same-currency, same-rail payout.
+        held_via_other_rail = PayoutService.get_cross_rail_settled_total(db, currency)
+
         balance = PayoutService.get_platform_flutterwave_available(currency)
 
         previous = db.query(PlatformBalanceSnapshot).filter(
@@ -221,7 +234,22 @@ class PayoutService:
             "threshold": float(threshold),
             "below_threshold": snapshot.below_threshold,
             "check_failed": snapshot.check_failed,
+            "held_via_other_rail": float(held_via_other_rail),
         }
+
+    @staticmethod
+    def get_cross_rail_settled_total(db: Session, currency: str) -> Decimal:
+        """Total of this currency's commissions that were actually settled
+        by converting and sending them through a DIFFERENT provider's rail —
+        money earned in `currency` that never physically left this
+        provider's balance. See the call site's comment for why this
+        matters for reconciliation."""
+        return db.query(
+            func.coalesce(func.sum(Payout.original_amount), 0)
+        ).filter(
+            Payout.original_currency == currency,
+            Payout.status == 'completed',
+        ).scalar() or Decimal("0.00")
 
     @staticmethod
     def check_stripe_balance(db: Session, background_tasks: BackgroundTasks, currency: str = "USD") -> Dict[str, Any]:
@@ -243,6 +271,13 @@ class PayoutService:
 
         min_floor = Decimal(os.getenv(f"STRIPE_MIN_BALANCE_{currency.upper()}", "0"))
         threshold = max(min_floor, pending_obligations)
+
+        # See check_flutterwave_balance's held_via_other_rail comment — same
+        # reasoning, mirrored direction: a NGN commission with no verified
+        # Stripe Connect referrer gets converted and paid out via Flutterwave
+        # instead, so the NGN never left Flutterwave and the equivalent in
+        # this currency never left Stripe.
+        held_via_other_rail = PayoutService.get_cross_rail_settled_total(db, currency)
 
         available_minor = PayoutService.get_platform_stripe_available(currency)
         available = (Decimal(available_minor) / 100) if available_minor is not None else None
@@ -295,6 +330,7 @@ class PayoutService:
             "threshold": float(threshold),
             "below_threshold": snapshot.below_threshold,
             "check_failed": snapshot.check_failed,
+            "held_via_other_rail": float(held_via_other_rail),
         }
 
     # Tracks whether the system was already unhealthy last time this ran,

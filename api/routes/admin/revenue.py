@@ -86,10 +86,6 @@ async def get_revenue_stats(
             Payout.amount, Payout.currency,
             Payout.status == 'completed',
         )
-        refunds_by_ccy = sum_by_currency(
-            Subscriptions.amount, Subscriptions.currency,
-            Subscriptions.status == 'refunded',
-        )
 
         # Builder bonus EARNED (not just paid) in the same currency the
         # subscription was charged in — Commission.currency always matches
@@ -115,8 +111,23 @@ async def get_revenue_stats(
 
         currencies = sorted(
             set(monthly_gross_by_ccy) | set(total_subscription_gross_by_ccy)
-            | set(commissions_paid_by_ccy) | set(refunds_by_ccy)
+            | set(commissions_paid_by_ccy)
         )
+
+        # Money earned in this currency but actually settled through a
+        # DIFFERENT provider's rail — see PayoutService.get_cross_rail_
+        # settled_total's docstring. It's still sitting in this currency's
+        # own account (never physically sent), which is why the available
+        # balance alone doesn't tally with "what we've paid out": a chunk
+        # of referral_commissions_paid above left a DIFFERENT currency's
+        # balance, not this one's.
+        held_via_other_rail_by_ccy = {
+            ccy: float(PayoutService.get_cross_rail_settled_total(db, ccy))
+            for ccy in (set(currencies) | {"NGN", "USD", "GBP"})
+        }
+        currencies = sorted(set(currencies) | {
+            ccy for ccy, amt in held_via_other_rail_by_ccy.items() if amt > 0
+        })
 
         by_currency = {}
         for ccy in currencies:
@@ -130,7 +141,7 @@ async def get_revenue_stats(
                 "monthly_revenue": this_month,
                 "total_subscription_revenue": total_subscription_gross_by_ccy.get(ccy, 0.0) - total_bonus_by_ccy.get(ccy, 0.0),
                 "referral_commissions_paid": commissions_paid_by_ccy.get(ccy, 0.0),
-                "refunds": refunds_by_ccy.get(ccy, 0.0),
+                "held_via_other_rail": held_via_other_rail_by_ccy.get(ccy, 0.0),
                 "growth_rate": round(growth, 1),
             }
 
@@ -235,104 +246,139 @@ async def get_commissions(
     try:
         from database.pg_models import PayoutAccount
 
-        def status_sum(status: str):
-            return func.coalesce(
-                func.sum(case((Commission.status == status, Commission.amount), else_=0)), 0
-            )
+        # A commission's OWN currency (Commission.currency) is only the
+        # right thing to group/sum by when nothing special happened to it.
+        # When it was actually settled by converting it and sending it
+        # through a DIFFERENT provider's rail (_attempt_immediate_payout /
+        # _attempt_stripe_immediate_payout in commission_service.py — e.g. a
+        # GBP commission with no Stripe Connect account on file gets paid
+        # out as NGN via Flutterwave instead), the money that actually moved
+        # is the linked Payout's amount/currency/provider, not the
+        # commission's own. Grouping by Commission.currency alone (the
+        # previous version) reported a GBP referrer as having been "paid
+        # $0.40" when they were really paid ₦712.55 — right currency symbol
+        # for the wrong number, wrong currency entirely, and no sign a
+        # second provider was ever involved. A LEFT JOIN onto the linked
+        # Payout (via Commission.payout_id) and COALESCE-ing onto it is what
+        # finds that real amount/currency; Commission's own values are the
+        # correct fallback for pending/approved rows, which have no payout
+        # yet, and for auto_settled rows that were never routed through our
+        # own Payout table at all (a Flutterwave subaccount split happening
+        # directly at charge time — see flutterwave_split.py — settles in
+        # exactly the commission's own currency with nothing to join to).
+        real_currency = func.coalesce(Payout.currency, Commission.currency)
+        real_amount = func.coalesce(Payout.amount, Commission.amount)
 
-        commission_query = db.query(
+        breakdown_query = db.query(
+            Commission.user_id,
+            Commission.status,
+            real_currency.label('settled_currency'),
+            Payout.provider.label('provider'),
+            func.sum(real_amount).label('amount'),
+            func.sum(case((Payout.original_currency.isnot(None), Payout.original_amount), else_=0)).label('original_amount_sum'),
+            func.max(Payout.original_currency).label('original_currency'),
+        ).outerjoin(
+            Payout, Commission.payout_id == Payout.id
+        )
+        if currency:
+            # Scoping by currency means "everything that ended up in this
+            # currency" (the real settled currency), not "every commission
+            # that was originally earned in it" — a GBP commission actually
+            # paid out as NGN belongs on the NGN page, since that's the
+            # money that actually exists to reconcile there.
+            breakdown_query = breakdown_query.filter(real_currency == currency.upper())
+
+        breakdown_rows = breakdown_query.group_by(
+            Commission.user_id, Commission.status, real_currency, Payout.provider
+        ).all()
+
+        # Per-user metadata (name, email, last activity, total count) — a
+        # separate simple query since the breakdown above is intentionally
+        # fragmented across (status, currency, provider).
+        meta_query = db.query(
             Commission.user_id,
             User.name.label('user_name'),
             User.email.label('user_email'),
-            func.coalesce(func.sum(Commission.amount), 0).label('total_commissions'),
-            status_sum('pending').label('pending_commissions'),
-            status_sum('approved').label('approved_commissions'),
-            status_sum('processing').label('processing_commissions'),
-            status_sum('paid').label('paid_commissions'),
-            status_sum('auto_settled').label('auto_settled_commissions'),
             func.max(Commission.created_at).label('last_commission_date'),
-            func.count(Commission.id).label('commission_count')
-        ).join(
-            User, Commission.user_id == User.id
-        )
+            func.count(Commission.id).label('commission_count'),
+        ).join(User, Commission.user_id == User.id)
         if currency:
-            commission_query = commission_query.filter(Commission.currency == currency.upper())
-
-        commission_data = commission_query.group_by(
+            meta_query = meta_query.outerjoin(Payout, Commission.payout_id == Payout.id).filter(real_currency == currency.upper())
+        meta_rows = meta_query.group_by(
             Commission.user_id, User.name, User.email
-        ).order_by(
-            func.max(Commission.created_at).desc()
-        ).limit(limit).offset(offset).all()
-        
-        # Get total unique users with commissions
+        ).order_by(func.max(Commission.created_at).desc()).limit(limit).offset(offset).all()
+
         total_query = db.query(func.count(func.distinct(Commission.user_id)))
         if currency:
-            total_query = total_query.filter(Commission.currency == currency.upper())
+            total_query = total_query.outerjoin(Payout, Commission.payout_id == Payout.id).filter(real_currency == currency.upper())
         total = total_query.scalar()
-        
+
+        user_ids_in_page = [m.user_id for m in meta_rows]
+        breakdown_by_user: dict = {}
+        for row in breakdown_rows:
+            if row.user_id not in user_ids_in_page:
+                continue
+            breakdown_by_user.setdefault(row.user_id, []).append({
+                "status": row.status,
+                "currency": row.settled_currency,
+                "amount": float(row.amount or 0),
+                "provider": row.provider,
+                "cross_settled": row.original_currency is not None,
+                "original_currency": row.original_currency,
+                "original_amount": float(row.original_amount_sum) if row.original_amount_sum else None,
+            })
+
         result = []
-        for data in commission_data:
-            # Calculate amounts for each status
-            pending = float(data.pending_commissions)
-            approved = float(data.approved_commissions)
-            processing = float(data.processing_commissions)
-            paid = float(data.paid_commissions)
-            auto_settled = float(data.auto_settled_commissions)
+        for meta in meta_rows:
+            breakdown = breakdown_by_user.get(meta.user_id, [])
 
             # Determine overall payout status — ordered so the status needing
-            # the most urgent admin attention wins when a user has a mix.
-            if pending > 0:
-                payout_status = "pending"  # Has pending commissions to approve
-            elif processing > 0:
-                payout_status = "processing"  # Awaiting payout confirmation
-            elif approved > 0:
-                # Approved by CommissionService but /commissions/approve
-                # below can't act on it yet (see docstring) — surfaced
-                # distinctly so this isn't mistaken for "nothing owed."
+            # the most urgent admin attention wins when a user has a mix,
+            # regardless of which currency it's in.
+            statuses_present = {b["status"] for b in breakdown if b["amount"] > 0}
+            if "pending" in statuses_present:
+                payout_status = "pending"
+            elif "processing" in statuses_present:
+                payout_status = "processing"
+            elif "approved" in statuses_present:
                 payout_status = "approved"
-            elif auto_settled > 0:
-                payout_status = "auto_settled"  # Already paid, no admin action was needed
-            elif paid > 0:
-                payout_status = "paid"  # All paid
+            elif "auto_settled" in statuses_present:
+                payout_status = "auto_settled"
+            elif "paid" in statuses_present:
+                payout_status = "paid"
             else:
                 payout_status = "pending"
-            
-            # Get payout account for this user
+
             payout_account = db.query(PayoutAccount).filter(
-                PayoutAccount.user_id == data.user_id
+                PayoutAccount.user_id == meta.user_id
             ).first()
-            
+
             available_methods = []
             if payout_account:
                 if payout_account.stripe_account_id:
                     available_methods.append("stripe")
                 if payout_account.bank_name and payout_account.account_number:
                     available_methods.append("flutterwave")
-            
+
             result.append({
-                "user_id": data.user_id,
-                "user": data.user_name,
-                "user_email": data.user_email,
-                "total_commissions": float(data.total_commissions),
-                "pending_commissions": pending,
-                "approved_commissions": approved,
-                "processing_commissions": processing,
-                "paid_commissions": paid,
-                "auto_settled_commissions": auto_settled,
+                "user_id": meta.user_id,
+                "user": meta.user_name,
+                "user_email": meta.user_email,
+                "breakdown": breakdown,
                 "payout_status": payout_status,
-                "last_commission_date": data.last_commission_date.strftime("%Y-%m-%d %H:%M") if data.last_commission_date else None,
-                "commission_count": data.commission_count,
+                "last_commission_date": meta.last_commission_date.strftime("%Y-%m-%d %H:%M") if meta.last_commission_date else None,
+                "commission_count": meta.commission_count,
                 "available_payment_methods": available_methods,
                 "has_payout_account": len(available_methods) > 0
             })
-        
+
         return {
             "commissions": result,
             "total": total,
             "limit": limit,
             "offset": offset
         }
-        
+
     except Exception as e:
         print(f"Error in commissions: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -740,11 +786,21 @@ async def get_platform_balance(
             PlatformBalanceSnapshot.currency == currency,
         ).order_by(PlatformBalanceSnapshot.checked_at.desc()).first()
 
+        # Computed live, not read off the snapshot (the 10-minute job never
+        # persisted this) — see PayoutService.get_cross_rail_settled_total's
+        # docstring: money earned in this currency but actually paid out
+        # through a DIFFERENT provider's rail, so it's still sitting here
+        # even though it already counts as "paid" in Builder Bonuses.
+        # Without this, available_balance alone never tallies with what's
+        # been paid out.
+        held_via_other_rail = float(PayoutService.get_cross_rail_settled_total(db, currency))
+
         if not snapshot:
             return {
                 "status": "no_data_yet",
                 "provider": provider,
                 "currency": currency,
+                "held_via_other_rail": held_via_other_rail,
             }
 
         return {
@@ -759,6 +815,7 @@ async def get_platform_balance(
             "check_failed": snapshot.check_failed,
             "error_message": snapshot.error_message,
             "checked_at": snapshot.checked_at.isoformat() if snapshot.checked_at else None,
+            "held_via_other_rail": held_via_other_rail,
         }
 
     except Exception as e:
