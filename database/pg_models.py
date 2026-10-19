@@ -21,9 +21,13 @@ from uuid import uuid4
 from typing import Optional, List, Dict
 
 class UserRole(enum.Enum):
-    """Community role for a user. Maps to User.role (stored as plain string)."""
+    """Community role for a user. Maps to User.role (stored as plain string).
+    Distinct from User.is_admin (full platform admin access) — STAFF marks
+    someone with elevated trust/visibility (e.g. a Lavoo team member) without
+    granting admin panel access."""
     NORMAL = "normal_user"
     MODERATOR = "moderator"
+    STAFF = "staff"
 
 class User(Base):
     """
