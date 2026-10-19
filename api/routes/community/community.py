@@ -11,6 +11,7 @@ import os
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import func, or_, String
 
 from database.pg_connections import get_db, SessionLocal
@@ -1349,6 +1350,7 @@ def _get_cached_mission_reflections(db: Session) -> List[dict]:
                     "mission_task": full_title if full_title else clean_text[:80],
                     "analysis_goal": analysis.business_goal,
                     "analysis_id": analysis.id,
+                    "step_id": str(step_id),
                     "content": clean_text,
                     "excerpt": clean_text[:160],
                     "tags": [],
@@ -1760,7 +1762,7 @@ async def get_discussion(
 
     liked = {d.id} if (current_user and db.query(DiscussionLike.id).filter_by(user_id=current_user.id, discussion_id=d.id).first()) else set()
     saved = {d.id} if (current_user and db.query(SavedItem.id).filter_by(user_id=current_user.id, item_id=d.id).first()) else set()
-    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db, recent_likers_map={d.id: []})
+    data = _discussion_dict(d, liked_ids=liked, saved_ids=saved, current_user=current_user, db=db, recent_likers_map=None)
     data["replies"] = replies
     return {"success": True, "data": data}
 
@@ -1974,7 +1976,7 @@ async def get_public_discussion(
     if getattr(d, 'visibility', 'public') == 'tagged_only':
         raise HTTPException(status_code=403, detail="This post is private to tagged members")
         
-    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None, db=db, recent_likers_map={d.id: []})
+    discussion_data = _discussion_dict(d, liked_ids=set(), saved_ids=set(), current_user=None, db=db, recent_likers_map=None)
     
     replies_raw = (
         db.query(DiscussionReply)
@@ -2025,12 +2027,143 @@ async def get_public_discussion(
 
 @router.put("/discussions/{discussion_id}")
 async def update_discussion(
-    discussion_id: int,
+    discussion_id: str,
     body: UpdateDiscussionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
+    str_id = str(discussion_id).strip()
+    if str_id.startswith("mr_") or str_id.startswith("rc_"):
+        is_rc = str_id.startswith("rc_")
+        raw_id = str_id[3:]
+        if is_rc and raw_id.startswith("rc_"):
+            raw_id = raw_id[3:]
+
+        parts = raw_id.split("_", 1)
+        if not parts or not parts[0].isdigit():
+            raise HTTPException(status_code=400, detail="Invalid reflection identifier")
+
+        analysis_id = int(parts[0])
+        step_id = parts[1] if len(parts) > 1 else ""
+
+        analysis = db.query(BusinessAnalysis).filter_by(id=analysis_id).first()
+        if not analysis:
+            raise HTTPException(status_code=404, detail="Analysis or reflection not found")
+
+        # 1. Author / Admin Ownership check
+        if analysis.user_id != current_user.id and not getattr(current_user, 'is_admin', False):
+            raise HTTPException(status_code=403, detail="You can only edit your own reflections")
+
+        # 2. Paid / Pro Account Requirement check
+        sub_status = getattr(current_user, 'subscription_status', '') or ''
+        is_subscribed = bool(sub_status.lower() in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(current_user, 'is_admin', False))
+        if not is_subscribed:
+            raise HTTPException(
+                status_code=403,
+                detail="Editing reflections is exclusive to Lavoo Pro members. Please upgrade your account to edit reflections."
+            )
+
+        # 3. Content moderation check
+        if body.content and _contains_derogatory_content(body.content):
+            raise HTTPException(
+                status_code=422,
+                detail="Your reflection content contains language that isn't allowed in the Lavoo Build Room."
+            )
+
+        # 4. Apply update to user_progress
+        up_raw = analysis.user_progress
+        if isinstance(up_raw, str):
+            try:
+                user_progress = json.loads(up_raw)
+            except Exception:
+                user_progress = {}
+        elif isinstance(up_raw, dict):
+            user_progress = up_raw
+        else:
+            user_progress = {}
+
+        new_content = (body.content or "").strip()
+
+        if is_rc:
+            if "roadmap_comments" in user_progress and isinstance(user_progress["roadmap_comments"], dict):
+                for t_id, comments in user_progress["roadmap_comments"].items():
+                    if isinstance(comments, list):
+                        for c in comments:
+                            if isinstance(c, dict) and (c.get("id") == raw_id or c.get("id") == str_id or t_id == step_id):
+                                c["text"] = new_content
+        else:
+            if "reflections" not in user_progress or not isinstance(user_progress["reflections"], dict):
+                user_progress["reflections"] = {}
+            user_progress["reflections"][step_id] = new_content
+            if "_action_" in step_id:
+                try:
+                    action_num = step_id.split("_action_")[-1]
+                    user_progress["reflections"][action_num] = new_content
+                    user_progress["reflections"][int(action_num)] = new_content
+                except Exception:
+                    pass
+            elif step_id.isdigit():
+                user_progress["reflections"][f"{analysis_id}_action_{step_id}"] = new_content
+
+        analysis.user_progress = user_progress
+        flag_modified(analysis, "user_progress")
+        analysis.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(analysis)
+
+        # 5. Invalidate caches so reflection updates instantly
+        global _MISSION_REFLECTIONS_CACHE
+        _MISSION_REFLECTIONS_CACHE["data"] = []
+        _MISSION_REFLECTIONS_CACHE["expires_at"] = 0
+        await delete_cached("community:discussions:*")
+        await delete_cached(f"community:public_post:{str_id}")
+
+        full_title = (body.title or "").strip() or (new_content[:80] if new_content else "Reflection")
+        return {
+            "success": True,
+            "data": {
+                "id": str_id,
+                "type": "mission_reflection",
+                "title": full_title,
+                "mission_task": full_title,
+                "analysis_goal": analysis.business_goal,
+                "analysis_id": analysis.id,
+                "step_id": step_id,
+                "content": new_content,
+                "excerpt": new_content[:160],
+                "tags": [],
+                "like_count": 0,
+                "reply_count": 0,
+                "likes": 0,
+                "replies": 0,
+                "pinned": False,
+                "is_pinned": False,
+                "hot": False,
+                "view_count": 0,
+                "has_liked": False,
+                "liked_by_user": False,
+                "chops_gifted": 0,
+                "author": {
+                    "id": current_user.id,
+                    "name": current_user.name or "Member",
+                    "initials": (current_user.name or "M")[:2].upper(),
+                    "gradient": _AUTHOR_GRADIENTS[current_user.id % len(_AUTHOR_GRADIENTS)],
+                    "role": getattr(current_user, 'role', '') or 'Founder',
+                    "total_chops": current_user.total_chops or 0,
+                },
+                "channel": "reflections",
+                "created_at": analysis.updated_at.isoformat() if analysis.updated_at else None,
+                "timeAgo": analysis.updated_at.isoformat() if analysis.updated_at else None,
+                "updated_at": analysis.updated_at.isoformat() if analysis.updated_at else None,
+            }
+        }
+
+    try:
+        disc_id = int(str_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid post ID")
+
+    d = db.query(CommunityDiscussion).filter_by(id=disc_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Post not found")
     
@@ -2087,7 +2220,7 @@ async def update_discussion(
     db.commit()
     db.refresh(d)
     await delete_cached("community:discussions:*")
-    await delete_cached(f"community:public_post:{discussion_id}")
+    await delete_cached(f"community:public_post:{disc_id}")
 
     liked = {l.discussion_id for l in db.query(DiscussionLike).filter_by(user_id=current_user.id).all()} if current_user else set()
     saved = {b.discussion_id for b in db.query(DiscussionBookmark).filter_by(user_id=current_user.id).all()} if current_user else set()
@@ -2098,13 +2231,88 @@ async def update_discussion(
     }
 
 
-@router.delete("/discussions/{discussion_id}")
-async def delete_discussion(
-    discussion_id: int,
+@router.put("/reflections/{reflection_id}")
+async def update_reflection_endpoint(
+    reflection_id: str,
+    body: UpdateDiscussionRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
+    """Direct alias for editing a mission reflection"""
+    return await update_discussion(discussion_id=reflection_id, body=body, current_user=current_user, db=db)
+
+
+@router.delete("/discussions/{discussion_id}")
+async def delete_discussion(
+    discussion_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    str_id = str(discussion_id).strip()
+    if str_id.startswith("mr_") or str_id.startswith("rc_"):
+        is_rc = str_id.startswith("rc_")
+        raw_id = str_id[3:]
+        if is_rc and raw_id.startswith("rc_"):
+            raw_id = raw_id[3:]
+        parts = raw_id.split("_", 1)
+        if not parts or not parts[0].isdigit():
+            raise HTTPException(status_code=400, detail="Invalid reflection identifier")
+        analysis_id = int(parts[0])
+        step_id = parts[1] if len(parts) > 1 else ""
+
+        analysis = db.query(BusinessAnalysis).filter_by(id=analysis_id).first()
+        if not analysis:
+            raise HTTPException(status_code=404, detail="Analysis or reflection not found")
+        if analysis.user_id != current_user.id and not getattr(current_user, 'is_admin', False):
+            raise HTTPException(status_code=403, detail="You can only delete your own reflections")
+
+        up_raw = analysis.user_progress
+        if isinstance(up_raw, str):
+            try:
+                user_progress = json.loads(up_raw)
+            except Exception:
+                user_progress = {}
+        elif isinstance(up_raw, dict):
+            user_progress = up_raw
+        else:
+            user_progress = {}
+
+        if is_rc:
+            if "roadmap_comments" in user_progress and isinstance(user_progress["roadmap_comments"], dict):
+                for t_id, comments in list(user_progress["roadmap_comments"].items()):
+                    if isinstance(comments, list):
+                        user_progress["roadmap_comments"][t_id] = [
+                            c for c in comments if isinstance(c, dict) and c.get("id") != raw_id and c.get("id") != str_id
+                        ]
+        else:
+            if "reflections" in user_progress and isinstance(user_progress["reflections"], dict):
+                user_progress["reflections"].pop(step_id, None)
+                if "_action_" in step_id:
+                    try:
+                        action_num = step_id.split("_action_")[-1]
+                        user_progress["reflections"].pop(action_num, None)
+                    except Exception:
+                        pass
+                elif step_id.isdigit():
+                    user_progress["reflections"].pop(f"{analysis_id}_action_{step_id}", None)
+
+        analysis.user_progress = user_progress
+        flag_modified(analysis, "user_progress")
+        analysis.updated_at = datetime.now(timezone.utc)
+        db.commit()
+
+        global _MISSION_REFLECTIONS_CACHE
+        _MISSION_REFLECTIONS_CACHE["data"] = []
+        _MISSION_REFLECTIONS_CACHE["expires_at"] = 0
+        await delete_cached("community:discussions:*")
+        return {"success": True, "message": "Reflection deleted successfully"}
+
+    try:
+        disc_id = int(str_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid post ID")
+
+    d = db.query(CommunityDiscussion).filter_by(id=disc_id).first()
     if not d:
         raise HTTPException(status_code=404, detail="Post not found")
     if d.user_id != current_user.id:
@@ -2117,6 +2325,16 @@ async def delete_discussion(
     await delete_cached(f"community:discussions:user:{current_user.id}:ch:{d.channel_id}:lim:20:off:0")
     await delete_cached(f"community:discussions:user:{current_user.id}:ch:None:lim:20:off:0")
     return {"success": True}
+
+
+@router.delete("/reflections/{reflection_id}")
+async def delete_reflection_endpoint(
+    reflection_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Direct alias for deleting a mission reflection"""
+    return await delete_discussion(discussion_id=reflection_id, current_user=current_user, db=db)
 
 
 @router.post("/discussions/{discussion_id}/pin")
