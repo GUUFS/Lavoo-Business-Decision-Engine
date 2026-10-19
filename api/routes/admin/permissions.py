@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
 from datetime import datetime
@@ -10,13 +11,19 @@ from api.routes.admin.users import get_user_avatar
 
 router = APIRouter(prefix="/control/permissions", tags=["admin-permissions"])
 
+ASSIGNABLE_ROLES = {UserRole.NORMAL.value, UserRole.MODERATOR.value, UserRole.STAFF.value}
+
+
+class SetRoleRequest(BaseModel):
+    role: str
+
 
 @router.get("")
 async def get_users_for_permissions(
     limit: int = 10,
     page: int = 1,
     search: str = "",
-    role: str = "",          # filter: "moderator" | "normal_user" | None = all
+    role: str = "",          # filter: "moderator" | "staff" | "normal_user" | None = all
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ):
@@ -33,10 +40,8 @@ async def get_users_for_permissions(
             or_(User.name.ilike(term), User.email.ilike(term))
         )
 
-    if role == "moderator":
-        query = query.filter(User.role == UserRole.MODERATOR.value)
-    elif role == "normal_user":
-        query = query.filter(User.role == UserRole.NORMAL.value)
+    if role in ASSIGNABLE_ROLES:
+        query = query.filter(User.role == role)
 
     total = query.count()
 
@@ -71,15 +76,26 @@ async def get_users_for_permissions(
 
 
 @router.patch("/{user_id}/role")
-async def toggle_user_role(
+async def set_user_role(
     user_id: int,
+    request: SetRoleRequest,
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ):
     """
-    Toggle a user's community role between normal_user and moderator.
+    Assign a user's community role directly (normal_user / moderator /
+    staff) rather than only toggling moderator on and off — STAFF marks
+    someone with elevated trust/visibility (e.g. a Lavoo team member)
+    without granting admin panel access, and is shown as a badge on that
+    user's own profile (see User.role's own comment on pg_models.py).
     Cannot change your own role or another admin's role.
     """
+    if request.role not in ASSIGNABLE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid role '{request.role}'. Must be one of: {', '.join(sorted(ASSIGNABLE_ROLES))}",
+        )
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -101,21 +117,13 @@ async def toggle_user_role(
             status_code=400, detail="Cannot change the role of a platform admin"
         )
 
-    # Toggle between normal_user ↔ moderator
-    if user.role == UserRole.MODERATOR.value:
-        user.role = UserRole.NORMAL.value
-        new_role = UserRole.NORMAL.value
-        action = "removed as moderator"
-    else:
-        user.role = UserRole.MODERATOR.value
-        new_role = UserRole.MODERATOR.value
-        action = "made a moderator"
-
+    user.role = request.role
     db.commit()
 
+    role_label = request.role.replace('_', ' ')
     return {
         "status": "success",
-        "message": f"{user.name} has been {action}",
-        "new_role": new_role,
+        "message": f"{user.name} is now a {role_label}",
+        "new_role": request.role,
         "user_id": user.id,
     }

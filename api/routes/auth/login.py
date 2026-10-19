@@ -97,7 +97,7 @@ def get_effective_role(user: User) -> str:
     if getattr(user, "is_admin", False):
         return "admin"
     user_role = getattr(user, "role", None)
-    if user_role in {UserRole.MODERATOR.value, UserRole.NORMAL.value}:
+    if user_role in {UserRole.MODERATOR.value, UserRole.STAFF.value, UserRole.NORMAL.value}:
         return user_role
     return "user"
 
