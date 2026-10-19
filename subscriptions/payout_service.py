@@ -431,7 +431,21 @@ class PayoutService:
         # 4. Pending commissions with a real payout account that have
         # NEVER been attempted at all (payout_id still null) — should only
         # ever be momentary, between creation and the first attempt.
+        #
+        # Capped at 30 days old (settle_pending_flutterwave_commissions /
+        # settle_pending_stripe_commissions's own lookback_days default in
+        # commission_service.py): a commission older than that was never
+        # going to be picked up by the settle jobs in the first place — it's
+        # a known, separate "needs manual handling" case, not a sign those
+        # jobs are down. Without this cap, two of Clinton's own commissions
+        # (#52, #55 — both outside that 30-day window) permanently tripped
+        # this into "broken" even though the settle jobs were working fine
+        # the whole time; every FUTURE commission outside the window would
+        # do the same, alarming on something this check isn't meant to
+        # catch instead of the real thing it's for: a commission that's new
+        # enough to still be in-window but hasn't been touched yet.
         never_attempted_cutoff = now - timedelta(hours=1)
+        settle_job_lookback_cutoff = now - timedelta(days=30)
         never_attempted = (
             db.query(Commission)
             .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
@@ -439,6 +453,7 @@ class PayoutService:
                 Commission.status == "pending",
                 Commission.payout_id.is_(None),
                 Commission.created_at < never_attempted_cutoff,
+                Commission.created_at >= settle_job_lookback_cutoff,
             )
             .count()
         )
