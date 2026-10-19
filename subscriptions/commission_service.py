@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
-from database.pg_models import Commission, Referral, CommissionSummary, User, NotificationType
+from database.pg_models import Commission, Referral, CommissionSummary, User, NotificationType, Subscriptions
 from api.services.notification_service import NotificationService
 from emailing.email_service import email_service
 import os
@@ -15,6 +15,19 @@ COMMISSION_RATE_STANDARD = Decimal("0.40")   # 40% — shown on screen, paid to 
 COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff (screen still shows 40%)
 COMMISSION_RATE_FREE     = Decimal("0.15")   # 15% — paid to a referrer who is on the free plan themselves
 COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides the normal 40/15/50% logic regardless of that staff member's own plan
+
+# Awarded once to the SUBSCRIBER themselves (not a referrer) the moment
+# their first-ever subscription payment succeeds — every plan currently
+# sold is the "Pro" plan (a Premium tier is planned later, once payment
+# testing is complete; this constant is the hook for that when it exists).
+PRO_PLAN_SIGNUP_CHOPS = 1500
+
+# A payment is "real" for chops/stats purposes under a different word per
+# provider (Flutterwave writes "successful", Stripe "completed") — same set
+# already used in api/main.py, api/utils/sub_utils.py, and
+# api/routes/admin/revenue.py; duplicated here rather than imported since
+# none of those are modules this one already depends on.
+PAID_SUBSCRIPTION_STATUSES = ('completed', 'active', 'paid', 'successful', 'succeeded')
 
 # Keep legacy alias so any other callsite referencing COMMISSION_RATE still works
 COMMISSION_RATE = COMMISSION_RATE_STANDARD
@@ -45,6 +58,42 @@ class CommissionService:
         return COMMISSION_RATE_FREE
 
     @staticmethod
+    def _award_first_subscription_chops(subscription, db: Session) -> None:
+        """Pay the subscriber themselves PRO_PLAN_SIGNUP_CHOPS, once, the
+        moment their FIRST-EVER subscription payment succeeds — not on
+        every renewal. Every plan currently sold is "Pro" (see
+        PRO_PLAN_SIGNUP_CHOPS's own comment for the Premium-tier note).
+
+        "First ever" is checked by absence of any OTHER paid Subscriptions
+        row for this user (id != this one) rather than a dedicated flag
+        column, so a user with 0 prior paid rows gets it exactly once in
+        the overwhelmingly common case. Chops are a gamification/leaderboard
+        score, not money, so this intentionally doesn't add locking against
+        a rare webhook-retry double-fire the way a real payout would.
+        """
+        if (subscription.status or "").lower() not in PAID_SUBSCRIPTION_STATUSES:
+            return
+
+        had_prior_paid_subscription = db.query(Subscriptions).filter(
+            Subscriptions.user_id == subscription.user_id,
+            Subscriptions.id != subscription.id,
+            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
+        ).first() is not None
+        if had_prior_paid_subscription:
+            return
+
+        user = db.query(User).filter(User.id == subscription.user_id).first()
+        if not user:
+            return
+
+        user.total_chops = (user.total_chops or 0) + PRO_PLAN_SIGNUP_CHOPS
+        db.flush()
+        logger.info(
+            f"[PRO SIGNUP CHOPS] Awarded {PRO_PLAN_SIGNUP_CHOPS} chops to user {user.id} "
+            f"for first subscription payment (subscription={subscription.id})"
+        )
+
+    @staticmethod
     def calculate_commission(subscription, db: Session, already_settled: bool = False):
         """
         Calculate and create a Commission record when a referred user makes
@@ -65,6 +114,12 @@ class CommissionService:
         approve/payout flow once they add one.
         """
         try:
+            # Award the subscriber's own one-time "became Pro" chops bonus
+            # before anything referral-specific — this must fire for every
+            # subscriber, not just referred ones, which the early-return
+            # right below would otherwise skip entirely.
+            CommissionService._award_first_subscription_chops(subscription, db)
+
             # Check if user was referred
             referral = db.query(Referral).filter(
                 Referral.referred_user_id == subscription.user_id
