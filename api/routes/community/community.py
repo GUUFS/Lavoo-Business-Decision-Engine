@@ -426,19 +426,24 @@ def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
         f"Analyze this founder post from the Lavoo Build Room:\n\n"
         f"Headline: {title}\n"
         f"Content: {content}\n\n"
-        f"Break down what the author is sharing into clear, readable summary points.\n"
+        f"Break down what the author is sharing into EXACTLY 3 clear, concise summary points.\n\n"
         f"CRITICAL RULES:\n"
-        f"1. Break down ONLY what the author explicitly communicated (their core thesis, stated goal, vision, observation, or result).\n"
-        f"2. DO NOT add unsolicited business advice, generic recommendations, next steps, or action items not mentioned in the post.\n"
-        f"3. DO NOT lecture, coach, or tell the author what they should do.\n"
-        f"4. DO NOT add meta-commentary about what is missing or brief (do not say 'no additional info provided').\n"
-        f"5. Match bullet count to content: If the post only shares a single thought, affirmation, or short win, return EXACTLY 1 concise bullet point summarizing it. For longer or multi-part posts, provide 2 to 3 bullet points.\n\n"
-        f"Format your response as a strict JSON object: {{\"takeaways\": [\"Point 1\"]}}"
+        f"1. Output EXACTLY 3 distinct bullet points.\n"
+        f"2. Break down ONLY what the author explicitly communicated (their focus, stated observation, experience, vision, or thesis).\n"
+        f"3. Frame the 3 points as a faithful breakdown:\n"
+        f"   - Point 1: Context or current focus (what the founder is building or experiencing).\n"
+        f"   - Point 2: Stated observation or experience (what they gained, learned, or shared).\n"
+        f"   - Point 3: Core thesis or sentiment (the author's underlying message or takeaway).\n"
+        f"4. Do NOT prefix bullets with labels like 'Point 1:' or 'Context:'. Start directly with the summary sentence.\n"
+        f"5. DO NOT add unsolicited business advice, recommendations, next steps, or coaching.\n"
+        f"6. DO NOT lecture the author or tell them what they should do.\n"
+        f"7. DO NOT add meta-commentary (do not say 'details are brief').\n\n"
+        f"Format your response as a strict JSON object: {{\"takeaways\": [\"First breakdown point\", \"Second breakdown point\", \"Third breakdown point\"]}}"
     )
     system_prompt = (
         "You are Voo, the AI assistant for the Lavoo Build Room. Your role is to provide a clean, objective, "
-        "and faithful breakdown of what the author actually wrote. You summarize the author's own statements and ideas, "
-        "never adding external advice, consulting steps, or unprompted suggestions."
+        "and faithful 3-point breakdown of what the author actually wrote. You summarize the author's own statements, "
+        "experiences, and perspective across exactly 3 concise points, never adding external consulting advice, generic tips, or unprompted suggestions."
     )
 
     from openai import OpenAI
@@ -507,8 +512,15 @@ def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
             parsed = json.loads(raw_text)
             takeaways = parsed.get("takeaways", [])
             if isinstance(takeaways, list) and len(takeaways) > 0:
-                cleaned = [re.sub(r"^[›\-*\d.\s]+", "", str(t)).strip() for t in takeaways[:3]]
-                return cleaned
+                cleaned = []
+                for t in takeaways[:3]:
+                    s = str(t).strip()
+                    s = re.sub(r"^Point\s*\d+[:\-.]\s*", "", s, flags=re.IGNORECASE)
+                    s = re.sub(r"^[›\-*\d.\s]+", "", s).strip()
+                    if s:
+                        cleaned.append(s)
+                if cleaned:
+                    return cleaned
         except Exception as err:
             provider_name = "NVIDIA" if call_fn == _call_nvidia else "Grok"
             logger.warning(f"Takeaways generation via {provider_name} failed: {err}")
