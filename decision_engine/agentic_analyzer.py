@@ -380,6 +380,74 @@ Return JSON only, no markdown:
             logger.warning(f"Safety check failed (defaulting to safe): {e}")
             return {"is_safe": True, "reason": "", "suggestions": []}
 
+    async def generate_clarifying_questions(self, user_query: str) -> Dict[str, Any]:
+        """
+        Before running the full pipeline, ask whether genuinely important
+        information is missing from the user's prompt — information that
+        would actually change what gets recommended, not just "nice to
+        know" — and if so, generate a SHORT list of specific questions to
+        fill exactly those gaps. Mirrors how Claude/Codex ask a handful of
+        targeted clarifying questions only when truly needed, never as a
+        reflex on every request, and never generic ("tell us about your
+        business") filler — each question must be something only THIS
+        query's own wording leaves ambiguous.
+
+        Returns {"needs_clarification": bool, "questions": [{"id", "question"}]}.
+        An empty list / needs_clarification=False means the query already
+        has enough to analyze — the overwhelmingly common case for a
+        detailed prompt, so most submissions skip straight to analysis
+        with no added step.
+        """
+        prompt = f"""You are a senior business strategist about to diagnose a founder's problem. Before you start, decide if you're missing anything you'd genuinely need to ask about first — the way a sharp consultant would, not a form asking for every field.
+
+USER'S BUSINESS CHALLENGE: "{user_query}"
+
+TASK: Would a real answer change what you'd recommend? If yes, write up to 3 short questions that fill EXACTLY those gaps — nothing generic, nothing the query already answers, nothing you could reasonably assume.
+
+Ask only when it matters. Most specific, detailed prompts need ZERO questions — return an empty list rather than manufacture one. Ask when something load-bearing is genuinely unknown: a number that changes the whole plan (current conversion rate, price point, team size, runway), a fork in approach the query doesn't resolve (B2B or B2C, which channel, in-house or outsourced), or a constraint that changes feasibility (budget, timeline, technical skill on hand).
+
+Never ask what the query already states or clearly implies. Never ask throwaway questions ("what's your industry?") when the query already names it. Never ask more than 3. Each question must be answerable in one short sentence or a number — not an essay prompt.
+
+Return JSON only, no markdown:
+{{
+    "needs_clarification": true | false,
+    "questions": [
+        {{"id": "q1", "question": "One short, specific question"}}
+    ]
+}}"""
+
+        try:
+            response = await self._llm(
+                model=self.fast_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=400,
+            )
+            result_text = response.choices[0].message.content.strip()
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0].strip()
+            result = _safe_json_loads(result_text)
+            questions = result.get("questions", []) or []
+            # Defensive cap — even if the model ignores the instruction, the
+            # UI contract (and the "efficient" ask here) is at most 3.
+            questions = [
+                {"id": q.get("id") or f"q{i+1}", "question": q.get("question", "")}
+                for i, q in enumerate(questions[:3])
+                if q.get("question")
+            ]
+            return {
+                "needs_clarification": bool(result.get("needs_clarification", False)) and len(questions) > 0,
+                "questions": questions,
+            }
+        except Exception as e:
+            # On error, default to "no clarification needed" so a failure
+            # here never blocks a user from getting their analysis — same
+            # fail-open posture as _check_query_safety above.
+            logger.warning(f"Clarifying-question generation failed (skipping): {e}")
+            return {"needs_clarification": False, "questions": []}
+
     # =========================================================================
     # STAGE 1: PRIMARY BOTTLENECK AGENT
     # =========================================================================

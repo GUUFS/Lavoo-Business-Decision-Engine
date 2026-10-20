@@ -79,7 +79,7 @@ from api.routes.auth import login, signup, forgot_password, google_oauth
 from api.routes.decision_engine import analyzer as business_analyzer
 from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions, profile as user_profile
 from api.routes.support import customer_service, reviews, contact as support_contact
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact, staff_referrals
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact, staff_referrals, fraud as admin_fraud
 
 # Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
@@ -1008,6 +1008,28 @@ def run_heavy_schema_migrations():
             except Exception as e:
                 logger.warning(f"Failed to add flutterwave_card_token: {e}")
 
+            try:
+                # Staff is a role a user can hold ALONGSIDE moderator (and
+                # independently of is_admin) — not a mutually-exclusive
+                # value of users.role, which stays moderator/normal_user
+                # only. See api/routes/admin/permissions.py.
+                db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_staff BOOLEAN DEFAULT FALSE"))
+                db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to add is_staff: {e}")
+
+            try:
+                # Idempotency key for CommissionService._award_plan_signup_chops
+                # (subscriptions/commission_service.py): one row = one real
+                # payment, so "has THIS row already paid out chops" is a
+                # direct, reliable per-renewal guard against a webhook retry
+                # double-awarding — unlike checking subscription STATUS,
+                # which a retry would see as unchanged-and-already-paid.
+                db.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS chops_awarded BOOLEAN DEFAULT FALSE"))
+                db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to add subscriptions.chops_awarded: {e}")
+
             # Security table fixes
             try:
                 db.execute(text("""
@@ -1668,6 +1690,7 @@ app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(permissions.router, prefix="/api")
+app.include_router(admin_fraud.router, prefix="/api")
 app.include_router(staff_referrals.router, prefix="/api")
 app.include_router(admin_contact.router, prefix="/api")
 app.include_router(signals.router, prefix="/api")

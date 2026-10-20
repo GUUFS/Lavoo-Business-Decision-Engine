@@ -22,12 +22,11 @@ from typing import Optional, List, Dict
 
 class UserRole(enum.Enum):
     """Community role for a user. Maps to User.role (stored as plain string).
-    Distinct from User.is_admin (full platform admin access) — STAFF marks
-    someone with elevated trust/visibility (e.g. a Lavoo team member) without
-    granting admin panel access."""
+    Staff is a SEPARATE flag (User.is_staff), not a third value here — a
+    user can be both moderator and staff at once, which a single-select
+    column can't represent."""
     NORMAL = "normal_user"
     MODERATOR = "moderator"
-    STAFF = "staff"
 
 class User(Base):
     """
@@ -64,9 +63,17 @@ class User(Base):
     # Admin, bot, and subscription
     is_admin = Column(Boolean, default=False)
     is_bot = Column(Boolean, default=False, server_default="false")
-    is_partner = Column(Boolean, default=False)   # partners/staff receive 50% payout; display shows 40%
+    is_partner = Column(Boolean, default=False)   # partners/staff receive 50% payout; display shows 40% — a COMMISSION-RATE flag, unrelated to is_staff below
     is_active = Column(Boolean, default=True)
     user_status = Column(String(20), server_default="active", nullable=False)
+
+    # A Lavoo team member — elevated trust/visibility (shown as a badge on
+    # their profile), with NO admin panel access and NO effect on commission
+    # rate. Independent of is_admin and is_partner (do not confuse this with
+    # is_partner above, an unrelated 50%-payout flag), and independent of
+    # role below too — a user can be moderator AND staff at once, so this is
+    # its own flag rather than a third value of that single-select column.
+    is_staff = Column(Boolean, default=False)
 
     # Community role — distinct from is_admin (platform access vs. community standing).
     # Valid values: UserRole.NORMAL ("normal_user"), UserRole.MODERATOR ("moderator").
@@ -442,6 +449,15 @@ class Subscriptions(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     start_date = Column(DateTime(timezone=True), nullable=False)
     end_date = Column(DateTime(timezone=True), nullable=False)
+
+    # Idempotency key for the subscriber's plan chops (1500 Pro / 3000
+    # Premium — see CommissionService._award_plan_signup_chops): one row is
+    # one real payment, so this is set True the moment that row's chops are
+    # given, and checked first so a webhook retry for the SAME row can't
+    # double-award. Default False, not nullable-and-unset, so an old row
+    # that predates this column reads as "not yet awarded" rather than NULL
+    # being ambiguous between "never checked" and "already awarded."
+    chops_awarded = Column(Boolean, default=False, server_default="false")
 
     user = relationship("User", back_populates="subscriptions")
     commission = relationship("Commission", back_populates="subscription", uselist=False)

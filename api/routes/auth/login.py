@@ -97,7 +97,7 @@ def get_effective_role(user: User) -> str:
     if getattr(user, "is_admin", False):
         return "admin"
     user_role = getattr(user, "role", None)
-    if user_role in {UserRole.MODERATOR.value, UserRole.STAFF.value, UserRole.NORMAL.value}:
+    if user_role in {UserRole.MODERATOR.value, UserRole.NORMAL.value}:
         return user_role
     return "user"
 
@@ -116,6 +116,7 @@ def build_auth_response_payload(
         "email": user.email,
         "role": get_effective_role(user),
         "is_admin": bool(getattr(user, "is_admin", False)),
+        "is_staff": bool(getattr(user, "is_staff", False)),
         "subscription_status": getattr(user, "subscription_status", None),
         "subscription_plan": getattr(user, "subscription_plan", None),
         "referral_code": getattr(user, "referral_code", None),

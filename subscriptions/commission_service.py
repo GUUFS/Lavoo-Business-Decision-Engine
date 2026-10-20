@@ -16,11 +16,38 @@ COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partne
 COMMISSION_RATE_FREE     = Decimal("0.15")   # 15% — paid to a referrer who is on the free plan themselves
 COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides the normal 40/15/50% logic regardless of that staff member's own plan
 
-# Awarded once to the SUBSCRIBER themselves (not a referrer) the moment
-# their first-ever subscription payment succeeds — every plan currently
-# sold is the "Pro" plan (a Premium tier is planned later, once payment
-# testing is complete; this constant is the hook for that when it exists).
-PRO_PLAN_SIGNUP_CHOPS = 1500
+# Awarded to the SUBSCRIBER themselves (not a referrer) EVERY time one of
+# their subscription payments succeeds — initial purchase or renewal alike,
+# not just the first ever. Which amount depends on which plan they paid
+# for, told apart by the actual amount charged (see PLAN_PRICES below):
+# there's no separate "tier" column on Subscriptions, and the checkout flow
+# itself doesn't pass a tier through yet — the home page's pricing section
+# (lib/currency.ts's LAVOO_PRICING on the frontend) already prices both
+# tiers for every currency/billing-period, which is what PLAN_PRICES
+# mirrors here.
+PLAN_CHOPS = {"pro": 1500, "premium": 3000}
+
+# Mirrors lib/currency.ts's LAVOO_PRICING on the frontend — each tier's
+# actual discounted "price" per currency/billing-period (never "regular",
+# which is only ever shown struck-through, never charged). Keep both files
+# in sync by hand if either changes; there's no shared source between a
+# Python backend and a TypeScript frontend to enforce it automatically.
+PLAN_PRICES = {
+    "pro": {
+        "GBP": {"monthly": Decimal("22.49"), "quarterly": Decimal("60.00"), "yearly": Decimal("269.78")},
+        "USD": {"monthly": Decimal("29.95"), "quarterly": Decimal("84.25"), "yearly": Decimal("336.98")},
+        "NGN": {"monthly": Decimal("34000"), "quarterly": Decimal("102600"), "yearly": Decimal("410000")},
+    },
+    "premium": {
+        "GBP": {"monthly": Decimal("29.58"), "quarterly": Decimal("78.98"), "yearly": Decimal("354.96")},
+        "USD": {"monthly": Decimal("36.95"), "quarterly": Decimal("110.85"), "yearly": Decimal("443.40")},
+        "NGN": {"monthly": Decimal("45000"), "quarterly": Decimal("135000"), "yearly": Decimal("540000")},
+    },
+}
+# A charged amount is matched to a plan within this tolerance — covers minor
+# rounding (e.g. minor-unit conversion) without being loose enough to
+# confuse two genuinely different price points.
+PLAN_PRICE_MATCH_TOLERANCE = Decimal("0.50")
 
 # A payment is "real" for chops/stats purposes under a different word per
 # provider (Flutterwave writes "successful", Stripe "completed") — same set
@@ -42,55 +69,87 @@ class CommissionService:
     @staticmethod
     def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
         """Return the actual payout rate for a referrer.
-        Partners/staff earn 50% regardless of their own subscription (the
-        displayed rate on the earnings dashboard still shows 40% for them,
-        same as before). Otherwise the rate depends on the referrer's own
-        subscription: an active/paying referrer earns the standard 40%; a
-        referrer on the free plan earns 15%.
+        Partners AND staff (is_partner OR is_staff — see User.is_staff's own
+        comment: an admin-assignable role, independent of is_partner) earn
+        50% regardless of their own subscription — assigning the Staff role
+        on the admin Permissions page is what's supposed to grant this, so
+        it has to actually change the rate, not just show a badge.
+        Otherwise the rate depends on the referrer's own subscription: an
+        active/paying referrer earns the standard 40%; a referrer on the
+        free plan earns 15%.
         """
         referrer = db.query(User).filter(User.id == referrer_id).first()
         if not referrer:
             return COMMISSION_RATE_STANDARD
-        if getattr(referrer, "is_partner", False):
+        if getattr(referrer, "is_partner", False) or getattr(referrer, "is_staff", False):
             return COMMISSION_RATE_PARTNER
         if (referrer.subscription_status or "").lower() == "active":
             return COMMISSION_RATE_STANDARD
         return COMMISSION_RATE_FREE
 
     @staticmethod
-    def _award_first_subscription_chops(subscription, db: Session) -> None:
-        """Pay the subscriber themselves PRO_PLAN_SIGNUP_CHOPS, once, the
-        moment their FIRST-EVER subscription payment succeeds — not on
-        every renewal. Every plan currently sold is "Pro" (see
-        PRO_PLAN_SIGNUP_CHOPS's own comment for the Premium-tier note).
+    def _resolve_plan_tier(amount: Decimal, currency: str) -> "str | None":
+        """Tell a Pro payment from a Premium one by matching the amount
+        actually charged against PLAN_PRICES — see that constant's comment
+        for why there's nothing more direct to check yet. Returns None if
+        nothing matches closely enough (an old/legacy price point, a beta
+        discount, a manually-adjusted amount, …) so the caller can skip
+        awarding rather than guess at which tier it was."""
+        currency = (currency or "USD").upper()
+        for tier, by_currency in PLAN_PRICES.items():
+            periods = by_currency.get(currency)
+            if not periods:
+                continue
+            for period_price in periods.values():
+                if abs(amount - period_price) <= PLAN_PRICE_MATCH_TOLERANCE:
+                    return tier
+        return None
 
-        "First ever" is checked by absence of any OTHER paid Subscriptions
-        row for this user (id != this one) rather than a dedicated flag
-        column, so a user with 0 prior paid rows gets it exactly once in
-        the overwhelmingly common case. Chops are a gamification/leaderboard
-        score, not money, so this intentionally doesn't add locking against
-        a rare webhook-retry double-fire the way a real payout would.
+    @staticmethod
+    def _award_plan_signup_chops(subscription, db: Session) -> None:
+        """Pay the subscriber themselves chops once per successful
+        subscription payment — initial purchase and every renewal each
+        earn it once, but never twice for the SAME payment. Amount depends
+        on which plan (Pro vs Premium) they actually paid for, resolved via
+        _resolve_plan_tier; skipped entirely if that can't be determined.
+
+        Idempotency: Subscriptions.chops_awarded is the guard, checked and
+        set on the SAME row this payment created/updated — not derived from
+        status or counted some other indirect way. This is what makes a
+        webhook redelivery for the same payment event safe even on the one
+        path (_create_active_subscription_record in stripe.py, for an
+        incomplete -> active transition) that reuses an existing row and
+        calls calculate_commission again on it: the second call sees
+        chops_awarded already True and does nothing.
         """
         if (subscription.status or "").lower() not in PAID_SUBSCRIPTION_STATUSES:
             return
 
-        had_prior_paid_subscription = db.query(Subscriptions).filter(
-            Subscriptions.user_id == subscription.user_id,
-            Subscriptions.id != subscription.id,
-            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
-        ).first() is not None
-        if had_prior_paid_subscription:
+        if getattr(subscription, "chops_awarded", False):
+            return
+
+        tier = CommissionService._resolve_plan_tier(
+            Decimal(str(subscription.amount)), subscription.currency
+        )
+        if tier is None:
+            logger.info(
+                f"[PLAN SIGNUP CHOPS] subscription={subscription.id} amount="
+                f"{subscription.amount} {subscription.currency} didn't match a known "
+                f"Pro/Premium price point — skipping chops"
+            )
             return
 
         user = db.query(User).filter(User.id == subscription.user_id).first()
         if not user:
             return
 
-        user.total_chops = (user.total_chops or 0) + PRO_PLAN_SIGNUP_CHOPS
+        chops = PLAN_CHOPS[tier]
+        user.total_chops = (user.total_chops or 0) + chops
+        subscription.chops_awarded = True
         db.flush()
         logger.info(
-            f"[PRO SIGNUP CHOPS] Awarded {PRO_PLAN_SIGNUP_CHOPS} chops to user {user.id} "
-            f"for first subscription payment (subscription={subscription.id})"
+            f"[PLAN SIGNUP CHOPS] Awarded {chops} chops ({tier}) to user {user.id} "
+            f"for subscription={subscription.id} ({subscription.amount} {subscription.currency})"
         )
 
     @staticmethod
@@ -114,11 +173,12 @@ class CommissionService:
         approve/payout flow once they add one.
         """
         try:
-            # Award the subscriber's own one-time "became Pro" chops bonus
-            # before anything referral-specific — this must fire for every
-            # subscriber, not just referred ones, which the early-return
-            # right below would otherwise skip entirely.
-            CommissionService._award_first_subscription_chops(subscription, db)
+            # Award the subscriber's own plan chops (every successful
+            # payment, not just the first) before anything referral-
+            # specific — this must fire for every subscriber, not just
+            # referred ones, which the early-return right below would
+            # otherwise skip entirely.
+            CommissionService._award_plan_signup_chops(subscription, db)
 
             # Check if user was referred
             referral = db.query(Referral).filter(
@@ -235,6 +295,84 @@ class CommissionService:
             logger.error(f"❌ Commission creation error: {str(e)}")
             db.rollback()
             raise
+
+    @staticmethod
+    def reverse_commission_for_subscription(subscription: "Subscriptions", reason: str, db: Session) -> None:
+        """Revoke paid access and claw back any commission tied to a
+        subscription that got refunded or disputed (a chargeback) —
+        called from the Stripe webhook handlers for charge.refunded and
+        charge.dispute.created. Before this, a refund/chargeback left
+        Lavoo's own records completely unaware: the subscriber kept Pro
+        access, and a referrer who'd already been auto-paid kept the
+        commission, on money Lavoo no longer has.
+
+        reason: 'refund' or 'dispute' — only affects the status string
+        recorded, not the clawback logic itself.
+
+        What this does NOT do: reach into Stripe/Flutterwave and pull
+        money back out of a referrer's account — that's not something
+        either provider's API lets us do unilaterally. For a commission
+        already paid out, this instead records a negative Commission row
+        (status='clawback', excluded from every payout-eligibility query
+        elsewhere in this file — it's pure bookkeeping) so the loss is
+        visible on the referrer's own earnings totals and nets against
+        whatever they earn next, and alerts the admin so a human knows a
+        real payout needs manual recovery.
+        """
+        from api.utils.sub_utils import sync_user_subscription
+
+        subscription.status = "refunded" if reason == "refund" else "disputed"
+        subscription.subscription_status = "Payment failed"
+        db.flush()
+
+        user = db.query(User).filter(User.id == subscription.user_id).first()
+        if user:
+            # Recomputes the user's CURRENT plan/status from their latest
+            # still-valid subscription (this one no longer qualifies,
+            # having just been marked refunded/disputed above) — correctly
+            # leaves them on Pro if some OTHER subscription of theirs is
+            # still genuinely active, instead of blindly downgrading.
+            sync_user_subscription(db, user)
+
+        commission = db.query(Commission).filter(Commission.subscription_id == subscription.id).first()
+        if not commission:
+            logger.info(f"[CHARGEBACK] subscription={subscription.id} {reason} — no commission was ever created for it, nothing to claw back")
+            return
+
+        if commission.status in ("pending", "approved"):
+            commission.status = "reversed"
+            db.flush()
+            logger.info(f"[CHARGEBACK] commission={commission.id} reversed (was never paid) for subscription={subscription.id} {reason}")
+            return
+
+        if commission.status in ("paid", "auto_settled"):
+            clawback = Commission(
+                user_id=commission.user_id,
+                referred_user_id=commission.referred_user_id,
+                subscription_id=commission.subscription_id,
+                amount=-commission.amount,
+                currency=commission.currency,
+                commission_rate=commission.commission_rate,
+                status="clawback",
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(clawback)
+            db.flush()
+            referrer = db.query(User).filter(User.id == commission.user_id).first()
+            reason_past = "refunded" if reason == "refund" else "disputed (charged back)"
+            msg = (
+                f"Commission #{commission.id} ({commission.amount} {commission.currency}, already paid to "
+                f"{referrer.email if referrer else commission.user_id}) is being clawed back — the underlying "
+                f"subscription (id={subscription.id}) was {reason_past}. A negative commission "
+                f"(#{clawback.id}, {clawback.amount} {clawback.currency}) has been recorded and will net "
+                f"against this referrer's future earnings, but the original payout already left Lavoo's "
+                f"account — manual recovery (contacting the referrer, adjusting a future payout) may be needed."
+            )
+            logger.warning(f"[CHARGEBACK] {msg}")
+            CommissionService._alert_admin(f"⚠️ Commission clawback needed — subscription #{subscription.id} {reason_past}", msg)
+            return
+
+        logger.info(f"[CHARGEBACK] commission={commission.id} status={commission.status} for subscription={subscription.id} {reason} — no action needed (already {commission.status})")
 
     @staticmethod
     def _attempt_immediate_payout(

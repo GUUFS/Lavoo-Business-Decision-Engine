@@ -313,6 +313,43 @@ def get_subscription_dates_from_stripe(subscription_result: dict, plan_type: str
     return start, start + timedelta(days=delta_map.get(plan_type, 30))
 
 
+def _find_subscription_for_stripe_charge(db, payment_intent_id, invoice_id):
+    """Resolve the Subscriptions row a refunded/disputed Stripe charge
+    belongs to, for CommissionService.reverse_commission_for_subscription.
+    Subscriptions.transaction_id is set to different Stripe IDs depending
+    on which code path created the row (see _create_active_subscription_record
+    vs. the payment_intent.succeeded handler), so this tries both:
+
+    1. Direct match: transaction_id == payment_intent_id (true for rows
+       created by the payment_intent.succeeded handler).
+    2. Via the invoice: fetch the Invoice to get its subscription ID, then
+       match transaction_id against THAT (true for rows created by
+       _create_active_subscription_record, which stores the Stripe
+       Subscription ID as transaction_id, not the PaymentIntent ID).
+
+    Returns None if neither resolves — logged by the caller, not raised,
+    since a webhook handler failing a lookup must never 500 back to Stripe
+    (Stripe would just retry the same unresolvable event forever).
+    """
+    if payment_intent_id:
+        found = db.query(Subscriptions).filter(Subscriptions.transaction_id == payment_intent_id).first()
+        if found:
+            return found
+
+    if invoice_id:
+        try:
+            invoice = stripe.Invoice.retrieve(invoice_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
+            sub_id = invoice.get("subscription") if isinstance(invoice, dict) else getattr(invoice, "subscription", None)
+            if sub_id:
+                found = db.query(Subscriptions).filter(Subscriptions.transaction_id == sub_id).first()
+                if found:
+                    return found
+        except Exception as e:
+            logger.warning(f"[CHARGEBACK] could not resolve invoice {invoice_id} to a subscription: {e}")
+
+    return None
+
+
 def _get_invoice_amount_and_currency(sub_result):
     """
     Read the actual charged amount and currency from the subscription's latest invoice.
@@ -1614,6 +1651,34 @@ async def stripe_webhook(
                 from subscriptions.commission_service import CommissionService
                 CommissionService.calculate_commission(subscription=subscription, db=db)
                 db.commit()
+
+        elif event.type == "charge.refunded":
+            charge = event.data.object
+            # Only a FULL refund revokes access/claws back — a partial
+            # refund (support goodwill, proration) isn't "this subscription
+            # didn't happen," so leave those alone rather than guess.
+            if charge.get("amount_refunded") == charge.get("amount"):
+                sub_record = _find_subscription_for_stripe_charge(
+                    db, charge.get("payment_intent"), charge.get("invoice")
+                )
+                if sub_record:
+                    from subscriptions.commission_service import CommissionService
+                    CommissionService.reverse_commission_for_subscription(sub_record, "refund", db)
+                    db.commit()
+                else:
+                    logger.warning(f"[CHARGEBACK] charge.refunded for charge={charge.get('id')} — no matching Subscriptions row found")
+
+        elif event.type == "charge.dispute.created":
+            dispute = event.data.object
+            sub_record = _find_subscription_for_stripe_charge(
+                db, dispute.get("payment_intent"), None
+            )
+            if sub_record:
+                from subscriptions.commission_service import CommissionService
+                CommissionService.reverse_commission_for_subscription(sub_record, "dispute", db)
+                db.commit()
+            else:
+                logger.warning(f"[CHARGEBACK] charge.dispute.created for charge={dispute.get('charge')} — no matching Subscriptions row found")
 
         elif event.type == "payout.paid":
             handle_payout_paid(event, db)
