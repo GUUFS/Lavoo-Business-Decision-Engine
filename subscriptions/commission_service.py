@@ -69,16 +69,19 @@ class CommissionService:
     @staticmethod
     def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
         """Return the actual payout rate for a referrer.
-        Partners/staff earn 50% regardless of their own subscription (the
-        displayed rate on the earnings dashboard still shows 40% for them,
-        same as before). Otherwise the rate depends on the referrer's own
-        subscription: an active/paying referrer earns the standard 40%; a
-        referrer on the free plan earns 15%.
+        Partners AND staff (is_partner OR is_staff — see User.is_staff's own
+        comment: an admin-assignable role, independent of is_partner) earn
+        50% regardless of their own subscription — assigning the Staff role
+        on the admin Permissions page is what's supposed to grant this, so
+        it has to actually change the rate, not just show a badge.
+        Otherwise the rate depends on the referrer's own subscription: an
+        active/paying referrer earns the standard 40%; a referrer on the
+        free plan earns 15%.
         """
         referrer = db.query(User).filter(User.id == referrer_id).first()
         if not referrer:
             return COMMISSION_RATE_STANDARD
-        if getattr(referrer, "is_partner", False):
+        if getattr(referrer, "is_partner", False) or getattr(referrer, "is_staff", False):
             return COMMISSION_RATE_PARTNER
         if (referrer.subscription_status or "").lower() == "active":
             return COMMISSION_RATE_STANDARD
@@ -104,24 +107,25 @@ class CommissionService:
 
     @staticmethod
     def _award_plan_signup_chops(subscription, db: Session) -> None:
-        """Pay the subscriber themselves chops EVERY time one of their
-        subscription payments succeeds — initial purchase or renewal alike.
-        Amount depends on which plan (Pro vs Premium) they actually paid
-        for, resolved via _resolve_plan_tier; skipped entirely if that
-        can't be determined.
+        """Pay the subscriber themselves chops once per successful
+        subscription payment — initial purchase and every renewal each
+        earn it once, but never twice for the SAME payment. Amount depends
+        on which plan (Pro vs Premium) they actually paid for, resolved via
+        _resolve_plan_tier; skipped entirely if that can't be determined.
 
-        No idempotency guard against a webhook redelivering the same
-        payment event: most of this codebase's payment-success paths
-        already dedupe on Subscriptions.transaction_id before even
-        reaching calculate_commission, but at least one (
-        _create_active_subscription_record in stripe.py, for an
-        incomplete -> active transition) reuses an existing row and still
-        calls it — a retry there WOULD double-award. Chops are a
-        gamification/leaderboard score, not money, so this is an accepted
-        risk rather than one worth a new DB column for; flag it if a
-        bulletproof guard turns out to matter in practice.
+        Idempotency: Subscriptions.chops_awarded is the guard, checked and
+        set on the SAME row this payment created/updated — not derived from
+        status or counted some other indirect way. This is what makes a
+        webhook redelivery for the same payment event safe even on the one
+        path (_create_active_subscription_record in stripe.py, for an
+        incomplete -> active transition) that reuses an existing row and
+        calls calculate_commission again on it: the second call sees
+        chops_awarded already True and does nothing.
         """
         if (subscription.status or "").lower() not in PAID_SUBSCRIPTION_STATUSES:
+            return
+
+        if getattr(subscription, "chops_awarded", False):
             return
 
         tier = CommissionService._resolve_plan_tier(
@@ -141,6 +145,7 @@ class CommissionService:
 
         chops = PLAN_CHOPS[tier]
         user.total_chops = (user.total_chops or 0) + chops
+        subscription.chops_awarded = True
         db.flush()
         logger.info(
             f"[PLAN SIGNUP CHOPS] Awarded {chops} chops ({tier}) to user {user.id} "
