@@ -297,6 +297,84 @@ class CommissionService:
             raise
 
     @staticmethod
+    def reverse_commission_for_subscription(subscription: "Subscriptions", reason: str, db: Session) -> None:
+        """Revoke paid access and claw back any commission tied to a
+        subscription that got refunded or disputed (a chargeback) —
+        called from the Stripe webhook handlers for charge.refunded and
+        charge.dispute.created. Before this, a refund/chargeback left
+        Lavoo's own records completely unaware: the subscriber kept Pro
+        access, and a referrer who'd already been auto-paid kept the
+        commission, on money Lavoo no longer has.
+
+        reason: 'refund' or 'dispute' — only affects the status string
+        recorded, not the clawback logic itself.
+
+        What this does NOT do: reach into Stripe/Flutterwave and pull
+        money back out of a referrer's account — that's not something
+        either provider's API lets us do unilaterally. For a commission
+        already paid out, this instead records a negative Commission row
+        (status='clawback', excluded from every payout-eligibility query
+        elsewhere in this file — it's pure bookkeeping) so the loss is
+        visible on the referrer's own earnings totals and nets against
+        whatever they earn next, and alerts the admin so a human knows a
+        real payout needs manual recovery.
+        """
+        from api.utils.sub_utils import sync_user_subscription
+
+        subscription.status = "refunded" if reason == "refund" else "disputed"
+        subscription.subscription_status = "Payment failed"
+        db.flush()
+
+        user = db.query(User).filter(User.id == subscription.user_id).first()
+        if user:
+            # Recomputes the user's CURRENT plan/status from their latest
+            # still-valid subscription (this one no longer qualifies,
+            # having just been marked refunded/disputed above) — correctly
+            # leaves them on Pro if some OTHER subscription of theirs is
+            # still genuinely active, instead of blindly downgrading.
+            sync_user_subscription(db, user)
+
+        commission = db.query(Commission).filter(Commission.subscription_id == subscription.id).first()
+        if not commission:
+            logger.info(f"[CHARGEBACK] subscription={subscription.id} {reason} — no commission was ever created for it, nothing to claw back")
+            return
+
+        if commission.status in ("pending", "approved"):
+            commission.status = "reversed"
+            db.flush()
+            logger.info(f"[CHARGEBACK] commission={commission.id} reversed (was never paid) for subscription={subscription.id} {reason}")
+            return
+
+        if commission.status in ("paid", "auto_settled"):
+            clawback = Commission(
+                user_id=commission.user_id,
+                referred_user_id=commission.referred_user_id,
+                subscription_id=commission.subscription_id,
+                amount=-commission.amount,
+                currency=commission.currency,
+                commission_rate=commission.commission_rate,
+                status="clawback",
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(clawback)
+            db.flush()
+            referrer = db.query(User).filter(User.id == commission.user_id).first()
+            reason_past = "refunded" if reason == "refund" else "disputed (charged back)"
+            msg = (
+                f"Commission #{commission.id} ({commission.amount} {commission.currency}, already paid to "
+                f"{referrer.email if referrer else commission.user_id}) is being clawed back — the underlying "
+                f"subscription (id={subscription.id}) was {reason_past}. A negative commission "
+                f"(#{clawback.id}, {clawback.amount} {clawback.currency}) has been recorded and will net "
+                f"against this referrer's future earnings, but the original payout already left Lavoo's "
+                f"account — manual recovery (contacting the referrer, adjusting a future payout) may be needed."
+            )
+            logger.warning(f"[CHARGEBACK] {msg}")
+            CommissionService._alert_admin(f"⚠️ Commission clawback needed — subscription #{subscription.id} {reason_past}", msg)
+            return
+
+        logger.info(f"[CHARGEBACK] commission={commission.id} status={commission.status} for subscription={subscription.id} {reason} — no action needed (already {commission.status})")
+
+    @staticmethod
     def _attempt_immediate_payout(
         commission: "Commission", db: Session, notify_admin: bool = True,
         balance_override: "Decimal | None" = None,
