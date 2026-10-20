@@ -426,10 +426,20 @@ def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
         f"Analyze this founder post from the Lavoo Build Room:\n\n"
         f"Headline: {title}\n"
         f"Content: {content}\n\n"
-        f"Extract EXACTLY 3 concise, highly actionable 'Decision Takeaways' for solo founders.\n"
-        f"Format your response as a strict JSON object: {{\"takeaways\": [\"Takeaway 1\", \"Takeaway 2\", \"Takeaway 3\"]}}"
+        f"Break down what the author is sharing into clear, readable summary points.\n"
+        f"CRITICAL RULES:\n"
+        f"1. Break down ONLY what the author explicitly communicated (their core thesis, stated goal, vision, observation, or result).\n"
+        f"2. DO NOT add unsolicited business advice, generic recommendations, next steps, or action items not mentioned in the post.\n"
+        f"3. DO NOT lecture, coach, or tell the author what they should do.\n"
+        f"4. DO NOT add meta-commentary about what is missing or brief (do not say 'no additional info provided').\n"
+        f"5. Match bullet count to content: If the post only shares a single thought, affirmation, or short win, return EXACTLY 1 concise bullet point summarizing it. For longer or multi-part posts, provide 2 to 3 bullet points.\n\n"
+        f"Format your response as a strict JSON object: {{\"takeaways\": [\"Point 1\"]}}"
     )
-    system_prompt = "You are the Lavoo Business Decision Engine AI. Extract 3 actionable decision takeaways for solo founders in strict JSON format."
+    system_prompt = (
+        "You are Voo, the AI assistant for the Lavoo Build Room. Your role is to provide a clean, objective, "
+        "and faithful breakdown of what the author actually wrote. You summarize the author's own statements and ideas, "
+        "never adding external advice, consulting steps, or unprompted suggestions."
+    )
 
     from openai import OpenAI
 
@@ -449,7 +459,7 @@ def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
+            temperature=0.2,
             max_tokens=300,
         )
         if completion and completion.choices:
@@ -474,7 +484,7 @@ def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.3,
+                    temperature=0.2,
                     max_tokens=300,
                 )
                 if completion and completion.choices:
@@ -492,6 +502,8 @@ def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
                 continue
             if "```" in raw_text:
                 raw_text = re.sub(r"^```(?:json)?|```$", "", raw_text, flags=re.MULTILINE).strip()
+            # Strip trailing commas before closing braces/brackets to avoid JSONDecodeError
+            raw_text = re.sub(r",\s*([\]}])", r"\1", raw_text)
             parsed = json.loads(raw_text)
             takeaways = parsed.get("takeaways", [])
             if isinstance(takeaways, list) and len(takeaways) > 0:
@@ -504,7 +516,7 @@ def _generate_grok_takeaways(title: str, content: str) -> Optional[List[str]]:
     return None
 
 
-def generate_ai_takeaways_for_discussion(discussion_id: int, db: Session) -> Optional[List[str]]:
+def generate_ai_takeaways_for_discussion(discussion_id: int, db: Session, force: bool = False) -> Optional[List[str]]:
     """
     Synchronous / On-demand helper to generate and store takeaways for a discussion.
     Used for Strategy 2 (on-demand lazy generation for previous posts).
@@ -517,7 +529,7 @@ def generate_ai_takeaways_for_discussion(discussion_id: int, db: Session) -> Opt
         if _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or ""):
             logger.info(f"[takeaways] Skipping takeaway generation for discussion {d.id} because it is a question.")
             return None
-        if d.ai_takeaways and isinstance(d.ai_takeaways, list) and len(d.ai_takeaways) > 0:
+        if not force and d.ai_takeaways and isinstance(d.ai_takeaways, list) and len(d.ai_takeaways) > 0:
             return d.ai_takeaways
 
         takeaways = _generate_grok_takeaways(d.title, d.content)
@@ -533,13 +545,13 @@ def generate_ai_takeaways_for_discussion(discussion_id: int, db: Session) -> Opt
     return None
 
 
-def _async_generate_takeaways_worker(discussion_id: int):
+def _async_generate_takeaways_worker(discussion_id: int, force: bool = False):
     """
     Background worker that runs after FastAPI HTTP response is sent.
     """
     db = SessionLocal()
     try:
-        generate_ai_takeaways_for_discussion(discussion_id, db)
+        generate_ai_takeaways_for_discussion(discussion_id, db, force=force)
     finally:
         db.close()
 
@@ -1825,6 +1837,7 @@ async def get_discussion(
 async def get_discussion_takeaways(
     discussion_id: int,
     background_tasks: BackgroundTasks,
+    force: bool = False,
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
@@ -1843,11 +1856,11 @@ async def get_discussion_takeaways(
     if not author_is_paid:
         return {"status": "none", "has_takeaways": False, "takeaways": None}
 
-    if d.ai_takeaways and isinstance(d.ai_takeaways, list) and len(d.ai_takeaways) > 0:
+    if not force and d.ai_takeaways and isinstance(d.ai_takeaways, list) and len(d.ai_takeaways) > 0:
         return {"status": "ready", "takeaways": d.ai_takeaways}
 
     # Strategy 2: On-Demand Lazy Generation for paid authors (schedule in background and return status)
-    background_tasks.add_task(_async_generate_takeaways_worker, d.id)
+    background_tasks.add_task(_async_generate_takeaways_worker, d.id, force=force)
     return {"status": "generating", "takeaways": None}
 
 
