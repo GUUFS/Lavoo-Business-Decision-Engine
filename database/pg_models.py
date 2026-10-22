@@ -1890,6 +1890,22 @@ class DiscussionReply(Base):
     )
 
 
+class VooAngleLog(Base):
+    __tablename__ = "voo_angle_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey("community_discussions.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    opening = Column(Text, nullable=False)
+    test = Column(Text, nullable=False)
+    angle_type = Column(String(100), nullable=False)
+    reasoning = Column(Text, nullable=True)
+    obvious_answer = Column(Text, nullable=True)
+    model = Column(String(100), nullable=True)
+
+    discussion = relationship("CommunityDiscussion")
+
+
 class DiscussionLike(Base):
     __tablename__ = "discussion_likes"
     id = Column(Integer, primary_key=True, index=True)
