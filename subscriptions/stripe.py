@@ -1507,8 +1507,16 @@ async def stripe_webhook(
             # Find user — try Subscriptions table first, then customer ID
             user = None
             if sub_id:
+                # Subscriptions has no stripe_subscription_id column — this
+                # used to query one that doesn't exist, which raised
+                # AttributeError on every invoice.payment_failed event and
+                # was silently swallowed by the outer except, so payment-
+                # failed notifications never actually sent. transaction_id
+                # is what _create_active_subscription_record stores the
+                # Stripe Subscription ID as (see that function's own
+                # comment in this file).
                 sub_record = db.query(Subscriptions).filter(
-                    Subscriptions.stripe_subscription_id == sub_id
+                    Subscriptions.transaction_id == sub_id
                 ).first()
                 if sub_record:
                     user = db.query(User).filter(User.id == sub_record.user_id).first()
@@ -1536,9 +1544,15 @@ async def stripe_webhook(
 
         elif event.type == "customer.subscription.deleted":
             stripe_sub = event.data.object
-            # User model has no stripe_subscription_id column — look up via Subscriptions table
+            # Neither User nor Subscriptions has a stripe_subscription_id
+            # column — this used to query one that doesn't exist on
+            # Subscriptions, raising AttributeError on every
+            # customer.subscription.deleted event (swallowed by the outer
+            # except, so cancellations from Stripe's side never actually
+            # synced). transaction_id is what _create_active_subscription_
+            # record stores the Stripe Subscription ID as.
             sub_record = db.query(Subscriptions).filter(
-                Subscriptions.stripe_subscription_id == stripe_sub.id
+                Subscriptions.transaction_id == stripe_sub.id
             ).first()
             user = db.query(User).filter(User.id == sub_record.user_id).first() if sub_record else None
             if not user:
@@ -1578,10 +1592,15 @@ async def stripe_webhook(
             if uid:
                 user = db.query(User).filter(User.id == int(uid)).first()
 
-            # Strategy 2: match via Subscriptions table (User has no stripe_subscription_id column)
+            # Strategy 2: match via Subscriptions table — transaction_id is
+            # what _create_active_subscription_record stores the Stripe
+            # Subscription ID as (neither User nor Subscriptions has a
+            # stripe_subscription_id column; querying one that doesn't
+            # exist used to raise AttributeError here whenever metadata
+            # lookup above missed, silently swallowed by the outer except).
             if not user:
                 sub_rec = db.query(Subscriptions).filter(
-                    Subscriptions.stripe_subscription_id == stripe_sub.id
+                    Subscriptions.transaction_id == stripe_sub.id
                 ).first()
                 if sub_rec:
                     user = db.query(User).filter(User.id == sub_rec.user_id).first()
