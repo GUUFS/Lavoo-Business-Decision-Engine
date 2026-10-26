@@ -41,9 +41,16 @@ def expire_old_subscriptions():
         now = datetime.now(timezone.utc)
         logger.info(f"Starting subscription expiry check at {now}")
 
-        # Find all active subscriptions with past end_date
+        # Subscriptions.status is the ORIGINAL PAYMENT status (see that
+        # column's own comment on the model) — 'active' is never one of its
+        # values, so this always matched zero rows. The real lifecycle
+        # field is Subscriptions.subscription_status, but the payment
+        # status itself still needs the full multi-provider "paid" set
+        # (Flutterwave writes 'successful'/'succeeded', Stripe 'completed')
+        # to find every row that's actually eligible to expire — same set
+        # api/main.py's own run_subscription_expiry_job already uses.
         expired_subs = db.query(Subscriptions).filter(
-            Subscriptions.status == 'active',
+            Subscriptions.status.in_(('active', 'completed', 'paid', 'successful', 'succeeded')),
             Subscriptions.end_date < now
         ).all()
 

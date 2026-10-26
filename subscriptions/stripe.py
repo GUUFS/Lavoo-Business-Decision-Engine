@@ -1528,6 +1528,25 @@ async def stripe_webhook(
 
             if user:
                 logger.warning(f"⚠️ Payment failed for user {user.id}, sub {sub_id or 'unknown'}")
+                # Unlike invoice.payment_succeeded just above (which dedupes
+                # on transaction_id before acting at all), this had no guard
+                # against a redelivered webhook — Stripe's retries are
+                # normal, not an edge case, and each one used to queue a
+                # fresh duplicate "Payment Failed" notification. One hour is
+                # comfortably past any realistic webhook-retry window while
+                # still letting a genuinely NEW failure on the next billing
+                # cycle notify normally.
+                from database.pg_models import UserNotification
+                from datetime import timedelta as _timedelta
+                recent_dup = db.query(UserNotification).filter(
+                    UserNotification.user_id == user.id,
+                    UserNotification.type == "payment_failed",
+                    UserNotification.created_at >= datetime.now(timezone.utc) - _timedelta(hours=1),
+                ).first()
+                if recent_dup:
+                    logger.info(f"[STRIPE] payment_failed notification already sent to user {user.id} in the last hour — skipping duplicate")
+                    db.commit()
+                    return {"status": "success"}
                 NotificationService.create_notification(
                     db=db, user_id=user.id,
                     type="payment_failed",

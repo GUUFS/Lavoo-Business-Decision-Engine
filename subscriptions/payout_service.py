@@ -578,15 +578,32 @@ class PayoutService:
         if not user:
             raise ValueError(f"User {user_id} not found")
         
-        # Check available balance
-        available = db.query(
-            func.sum(Commission.amount)
+        # Check available balance — grouped by currency, not blended. This
+        # function has no currency parameter of its own (see PayoutRequest
+        # in pg_models.py), so rather than guess which currency `amount`
+        # is meant to be (a Stripe account's own currency isn't knowable
+        # here without an extra API call, and assuming NGN for Flutterwave
+        # would be wrong the moment a referrer has commissions in more
+        # than one currency), this fails closed: refuses to proceed if the
+        # user's approved-and-unpaid commissions span more than one
+        # currency, rather than silently summing incompatible currencies
+        # into one number the way this used to.
+        available_rows = db.query(
+            Commission.currency, func.sum(Commission.amount)
         ).filter(
             Commission.user_id == user_id,
             Commission.status == 'approved',
             Commission.payout_id.is_(None)
-        ).scalar() or Decimal("0.00")
-        
+        ).group_by(Commission.currency).all()
+        available_by_currency = {(row[0] or 'USD'): (row[1] or Decimal("0.00")) for row in available_rows}
+
+        if len(available_by_currency) > 1:
+            raise ValueError(
+                f"Approved balance spans multiple currencies ({', '.join(available_by_currency)}) — "
+                f"cannot determine which one this payout request is for."
+            )
+        available = next(iter(available_by_currency.values()), Decimal("0.00"))
+
         if available < amount:
             raise ValueError(
                 f"Insufficient balance. Available: ${available}, Requested: ${amount}"
