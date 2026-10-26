@@ -346,6 +346,15 @@ class CommissionService:
             return
 
         if commission.status in ("paid", "auto_settled"):
+            # Flip the ORIGINAL commission's status before anything else so
+            # a redelivered webhook for the same refund/dispute (normal
+            # at-least-once behavior, not an edge case) sees "already
+            # clawed_back" here instead of still "paid"/"auto_settled" —
+            # without this, a retry would fall through to this same branch
+            # again and create a SECOND negative clawback row for the one
+            # real refund, double-counting the loss on the referrer's
+            # earnings totals.
+            commission.status = "clawed_back"
             clawback = Commission(
                 user_id=commission.user_id,
                 referred_user_id=commission.referred_user_id,

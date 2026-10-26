@@ -1421,11 +1421,21 @@ class PayoutService:
         Complete Stripe payout (simulated or via potential webhook)
         """
         payout = db.query(Payout).filter(Payout.id == payout_id).first()
-        
+
         if not payout:
             logger.error(f"Payout {payout_id} not found")
             return
-        
+
+        # Same reasoning as complete_flutterwave_payout's own guard: the
+        # same outcome can arrive twice. Without this, a second "paid" call
+        # re-runs _update_summary_on_payout, which does
+        # summary.paid_commissions += amount with no idempotency of its
+        # own — doubling that total — and queues a second "payout
+        # succeeded" email.
+        if status == "paid" and payout.status == "completed":
+            logger.info(f"Stripe payout {payout_id} already completed — ignoring duplicate success")
+            return
+
         if status == "paid":
             payout.status = 'completed'
             payout.completed_at = datetime.now(timezone.utc)
