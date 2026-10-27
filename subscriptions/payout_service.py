@@ -362,7 +362,7 @@ class PayoutService:
         "checks": [{"name", "status", "detail", "count"}, ...]}. "degraded"
         means something is stale/slow; "broken" means money is stuck.
         """
-        from database.pg_models import PlatformBalanceSnapshot, Commission, PayoutAccount
+        from database.pg_models import PlatformBalanceSnapshot, Commission, PayoutAccount, Subscriptions
 
         now = datetime.now(timezone.utc)
         checks = []
@@ -463,6 +463,109 @@ class PayoutService:
             else "No commission with a usable account has gone unattempted",
             never_attempted,
         )
+
+        # 5 & 6. Cross-check against the providers THEMSELVES, not just our
+        # own tables. Every check above this point only ever looks at data
+        # already inside our database — none of them can notice a payment
+        # that genuinely succeeded on Stripe or Flutterwave's side but
+        # never made it into our records at all (a webhook that silently
+        # no-ops looks IDENTICAL to "nothing happened" from inside our own
+        # tables). This happened in production: a real Stripe renewal
+        # succeeded, confirmed via Stripe's own dashboard, with zero trace
+        # in Subscriptions — see the subscription_id idempotency fix in
+        # subscriptions/stripe.py. Comparing live balances (which the
+        # checks above this comment effectively already do, indirectly,
+        # via PlatformBalanceSnapshot) would NOT have caught that bug
+        # either — the money was still sitting in Stripe's balance either
+        # way; what was missing was the transaction RECORD, not the
+        # balance total. So this instead lists each provider's recent
+        # successful transactions directly and checks each one has a
+        # matching Subscriptions row.
+        reconciliation_lookback_hours = 48
+        # A transaction younger than this is given time to actually be
+        # processed before being flagged — a webhook can take a few
+        # minutes, not seconds, especially under retry/backoff.
+        reconciliation_min_age_minutes = 15
+        age_cutoff = now - timedelta(minutes=reconciliation_min_age_minutes)
+
+        try:
+            lookback_ts = int((now - timedelta(hours=reconciliation_lookback_hours)).timestamp())
+            missing_stripe = []
+            checked_stripe = 0
+            invoices = stripe.Invoice.list(status='paid', created={'gte': lookback_ts}, limit=100)
+            for inv in invoices.auto_paging_iter():
+                paid_at = getattr(getattr(inv, 'status_transitions', None), 'paid_at', None) or getattr(inv, 'created', None)
+                if paid_at and datetime.fromtimestamp(paid_at, tz=timezone.utc) > age_cutoff:
+                    continue
+                checked_stripe += 1
+                payment_intent_id = getattr(inv, 'payment_intent', None)
+                charge_id = getattr(inv, 'charge', None)
+                candidates = [c for c in (payment_intent_id, charge_id, inv.id) if c]
+                found = db.query(Subscriptions).filter(Subscriptions.transaction_id.in_(candidates)).first()
+                if not found:
+                    missing_stripe.append(inv.id)
+            add(
+                "Stripe transactions recorded in our database",
+                "critical" if missing_stripe else "ok",
+                (
+                    f"{len(missing_stripe)} of {checked_stripe} Stripe invoice(s) paid in the last "
+                    f"{reconciliation_lookback_hours}h have no matching Subscriptions row: "
+                    f"{', '.join(missing_stripe[:5])}" + (" …" if len(missing_stripe) > 5 else "")
+                ) if missing_stripe else
+                f"All {checked_stripe} Stripe invoice(s) paid in the last {reconciliation_lookback_hours}h are recorded",
+                len(missing_stripe),
+            )
+        except Exception as e:
+            logger.warning(f"[integrity-check] Stripe reconciliation failed: {e}")
+            add("Stripe transactions recorded in our database", "warning", f"Could not reach Stripe to reconcile: {e}", None)
+
+        try:
+            flw_key = os.getenv("NEXT_PUBLIC_FLUTTERWAVE_SECRET_KEY")
+            if not flw_key:
+                add("Flutterwave transactions recorded in our database", "warning", "Flutterwave secret key not configured — cannot reconcile", None)
+            else:
+                from_date = (now - timedelta(hours=reconciliation_lookback_hours)).strftime("%Y-%m-%d")
+                to_date = now.strftime("%Y-%m-%d")
+                resp = requests.get(
+                    "https://api.flutterwave.com/v3/transactions",
+                    headers={"Authorization": f"Bearer {flw_key}"},
+                    params={"from": from_date, "to": to_date, "status": "successful"},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                txns = resp.json().get("data", []) or []
+                missing_flw = []
+                checked_flw = 0
+                for txn in txns:
+                    created_at_str = txn.get("created_at")
+                    if created_at_str:
+                        try:
+                            txn_time = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                            if txn_time > age_cutoff:
+                                continue
+                        except ValueError:
+                            pass
+                    checked_flw += 1
+                    txn_id = str(txn.get("id")) if txn.get("id") is not None else None
+                    if not txn_id:
+                        continue
+                    found = db.query(Subscriptions).filter(Subscriptions.transaction_id == txn_id).first()
+                    if not found:
+                        missing_flw.append(txn_id)
+                add(
+                    "Flutterwave transactions recorded in our database",
+                    "critical" if missing_flw else "ok",
+                    (
+                        f"{len(missing_flw)} of {checked_flw} Flutterwave transaction(s) succeeded in the last "
+                        f"{reconciliation_lookback_hours}h with no matching Subscriptions row: "
+                        f"{', '.join(missing_flw[:5])}" + (" …" if len(missing_flw) > 5 else "")
+                    ) if missing_flw else
+                    f"All {checked_flw} Flutterwave transaction(s) succeeded in the last {reconciliation_lookback_hours}h are recorded",
+                    len(missing_flw),
+                )
+        except Exception as e:
+            logger.warning(f"[integrity-check] Flutterwave reconciliation failed: {e}")
+            add("Flutterwave transactions recorded in our database", "warning", f"Could not reach Flutterwave to reconcile: {e}", None)
 
         worst = "healthy"
         if any(c["status"] == "critical" for c in checks):
