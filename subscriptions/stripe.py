@@ -1395,15 +1395,37 @@ async def stripe_webhook(
             if hasattr(user, 'stripe_subscription_id') and user.stripe_subscription_id != subscription_id:
                 user.stripe_subscription_id = subscription_id
 
-            # Idempotency — skip if this payment event was already recorded.
-            # The direct API path stores transaction_id = subscription_id.
-            # The webhook path falls back to the invoice_id when no
-            # payment_intent exists. Check all three identifiers so that
-            # a subscription created by the API and then confirmed by the
-            # webhook does not produce a second row.
+            # Idempotency — skip if THIS payment event was already recorded.
+            #
+            # subscription_id (the Stripe Subscription object id) is
+            # CONSTANT for the subscription's entire lifetime — it does not
+            # change between billing cycles. Including it in ident_checks
+            # unconditionally (the previous version) meant: the very first
+            # payment gets recorded with transaction_id=subscription_id by
+            # the synchronous /confirm-subscription path
+            # (_create_active_subscription_record), and from that moment on
+            # EVERY SUBSEQUENT RENEWAL's webhook for this same subscription
+            # matched that same old row on subscription_id and silently
+            # skipped — no new Subscriptions row, no subscription_expires_at
+            # update, no commission, nothing — even though Stripe genuinely
+            # charged the card and the renewal succeeded. Confirmed in
+            # production: a real $1 USD renewal charge (Stripe dashboard
+            # shows "Payment succeeded") left no trace anywhere in this
+            # table for that subscription, and user.subscription_status
+            # stayed 'Free' past expiry.
+            #
+            # subscription_id is still worth checking, but ONLY for the
+            # subscription's first invoice (billing_reason ==
+            # 'subscription_create') — that's the one case where the
+            # synchronous confirm path and this webhook can race for the
+            # exact same payment. A renewal must only ever be deduped
+            # against its own unique identifier (payment_intent_id, or the
+            # charge/invoice id fallback), never against the subscription's
+            # permanent id.
+            is_initial_payment = getattr(invoice, 'billing_reason', None) == 'subscription_create'
             _lock_user_billing(db, user.id)  # wait out an in-flight /confirm-subscription
             ident_checks = [payment_intent_id]
-            if subscription_id:
+            if subscription_id and is_initial_payment:
                 ident_checks.append(subscription_id)
             existing = db.query(Subscriptions).filter(
                 Subscriptions.transaction_id.in_([i for i in ident_checks if i])
@@ -1436,12 +1458,8 @@ async def stripe_webhook(
             amount_paid = _invoice_val(invoice, 'amount_paid', 'total', 'amount_due')
             currency = getattr(invoice, 'currency', None) or 'usd'
 
-            # Stripe states which this is: 'subscription_create' is the
-            # customer's first-ever invoice on this subscription; anything
-            # else ('subscription_cycle', 'subscription_update', ...) is a
-            # later charge. Previously every paid invoice was recorded and
-            # announced as a "renewal", including the very first payment.
-            is_initial_payment = getattr(invoice, 'billing_reason', None) == 'subscription_create'
+            # is_initial_payment computed earlier, alongside the
+            # idempotency check that now also depends on it.
 
             new_sub = Subscriptions(
                 user_id=user.id, subscription_plan=plan_type,
