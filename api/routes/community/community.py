@@ -700,8 +700,18 @@ def _generate_grok_takeaways(title: str, content: str, author_name: str = "A bui
         logger.warning("Neither NVIDIA_API_KEY nor XAI_API_KEY set in environment — skipping AI takeaway generation")
         return None
 
+    # Clean author display name
+    clean_author = "The author"
+    if author_name and author_name.strip():
+        stripped = author_name.strip()
+        if stripped.lower() not in ("a builder", "builder", "anonymous", "someone", "unknown", "user"):
+            parts = stripped.split()
+            first_name = parts[0].lstrip("@")
+            if first_name:
+                clean_author = first_name
+
     prompt = (
-        f"Author: {author_name}\n"
+        f"Author: {clean_author}\n"
         f"Headline: {title}\n"
         f"Content: {content}\n\n"
         f"Summarise this Build Room post following your instructions. Return only the JSON."
@@ -720,14 +730,19 @@ def _generate_grok_takeaways(title: str, content: str, author_name: str = "A bui
         "Each point is one plain sentence, 8 to 20 words, in simple everyday English.\n"
         "Keep specifics that matter: numbers, timeframes, outcomes, names of products or tools.\n"
         "Prioritise what a reader needs to know, not everything that was said.\n\n"
-        "THE ATTRIBUTION RULE (MOST IMPORTANT)\n"
-        "Every point must make clear whose claim, plan, question or feeling it is. Use \"They\" or the author's name.\n"
+        "THE ATTRIBUTION AND CADENCE RULE (MOST IMPORTANT)\n"
+        "Make clear whose claim, plan, question or feeling it is without sounding repetitive:\n"
+        "- First point (Point 1): Mention the author by name (e.g. \"[Author] reports that...\", \"[Author] is aiming for...\", \"[Author] shared...\"). If the author is \"The author\", use \"The author\".\n"
+        "  CRITICAL GENDER-NEUTRAL RULE: Never guess or assume gender. NEVER use \"he\", \"his\", \"she\", or \"her\" for the author. Always use gender-neutral phrasing like \"their\", \"they\", or \"the business\".\n"
+        "- Second point (Point 2, if needed): Do NOT repeat the author's name and do NOT say \"the author\". State the context, finding, or fact directly (e.g., \"The store had 5,000 visitors...\", \"The key is starting small...\").\n"
+        "- Third point (Point 3, if needed): Do NOT repeat the author's name. Use \"The author\" or state the point directly (e.g., \"The author emphasizes...\", \"The author is asking...\").\n"
+        "- Single-point summaries: If the post only needs one point, use the author's name.\n\n"
         "Match the author's certainty and tense exactly:\n"
-        "  a goal or affirmation: \"They're aiming for...\" / \"They're affirming the goal of...\"\n"
-        "  a prediction: \"They expect...\"\n"
-        "  a hope: \"They're hoping...\"\n"
-        "  a claim about results: \"They say...\" / \"They report...\"\n"
-        "  a question: \"They're asking...\"\n"
+        "  a goal or affirmation: \"[Author] is aiming for...\" / \"[Author] affirms the goal of...\"\n"
+        "  a prediction: \"[Author] expects...\"\n"
+        "  a hope: \"[Author] is hoping...\"\n"
+        "  a claim about results: \"[Author] says...\" / \"[Author] reports that...\"\n"
+        "  a question: \"[Author] is asking...\"\n"
         "Never turn a goal, hope, prediction or claim into an accomplished or verified fact.\n\n"
         "NEVER\n"
         "Invent facts, results, motives or emotions the author didn't state.\n"
@@ -739,18 +754,25 @@ def _generate_grok_takeaways(title: str, content: str, author_name: str = "A bui
         "LANGUAGE\n"
         "Write in English. If the post uses Pidgin or another language, summarise the meaning in plain English and keep any key phrase that carries the author's voice.\n\n"
         "EXAMPLES\n\n"
+        "Post title: My SaaS product crossed $1,000\n"
+        "Post content: I am building a SaaS product and it has earned over $1,000. The key is to start small and keep building gradually until you start hitting profit. Build a mindset to win and win is the goal.\n"
+        "Author: Kingsley\n"
+        "Output: {\"skip\":false,\"type\":\"win\",\"takeaways\":[\"Kingsley reports that their SaaS product has earned over $1,000.\",\"The key is starting small and building gradually until profit appears.\",\"The author emphasizes building with a winning mindset as the main goal.\"]}\n\n"
         "Post title: Affirmation - Lavoo becomes the number one global brand for diagnostic and decision intelligence\n"
         "Post content: Manifesting\n"
-        "Output: {\"skip\":false,\"type\":\"goal\",\"takeaways\":[\"They're affirming a goal for Lavoo to become the world's leading brand in diagnostic and decision intelligence.\"]}\n"
-        "(Note: a goal, stated as a goal. One idea, one point.)\n\n"
+        "Author: Tunde\n"
+        "Output: {\"skip\":false,\"type\":\"goal\",\"takeaways\":[\"Tunde is affirming a goal for Lavoo to become the world's leading brand in diagnostic and decision intelligence.\"]}\n\n"
         "Post title: We're getting visitors but nobody is buying\n"
         "Post content: Our store had 5,000 visitors this month but only 12 people bought. We've checked the checkout and it works. Has anyone been through this?\n"
-        "Output: {\"skip\":false,\"type\":\"struggle\",\"takeaways\":[\"Their store had 5,000 visitors this month but only 12 sales.\",\"They've ruled out a broken checkout and still don't know the cause.\",\"They're asking if other founders have dealt with the same thing.\"]}\n\n"
-        "Post title: First paying client!\n"
-        "Post content: After 4 months of building, someone just paid ₦150k for the full package. Still shaking lol\n"
-        "Output: {\"skip\":false,\"type\":\"win\",\"takeaways\":[\"They landed their first paying client after four months of building, for ₦150k.\",\"They're clearly still buzzing about it.\"]}\n\n"
+        "Author: Adaeze\n"
+        "Output: {\"skip\":false,\"type\":\"struggle\",\"takeaways\":[\"Adaeze reports that their store had 5,000 visitors this month but only 12 sales.\",\"A broken checkout has been ruled out and the cause remains unknown.\",\"The author is asking if other founders have dealt with the same thing.\"]}\n\n"
+        "Post title: Lesson learned after losing $5k in Facebook ads\n"
+        "Post content: Don't run ads to a broken landing page. Test your funnel manually with 10 real users before spending money on Meta ads.\n"
+        "Author: The author\n"
+        "Output: {\"skip\":false,\"type\":\"lesson\",\"takeaways\":[\"The author lost $5,000 on Facebook ads because of a broken landing page.\",\"Funnels should be tested manually with ten real users before paying for Meta ads.\"]}\n\n"
         "Post title: gm\n"
         "Post content: Back to work\n"
+        "Author: Alex\n"
         "Output: {\"skip\":true,\"type\":\"other\",\"takeaways\":[]}\n\n"
         "OUTPUT\n"
         "Return only valid JSON:\n"
@@ -789,10 +811,10 @@ def _generate_grok_takeaways(title: str, content: str, author_name: str = "A bui
         client = OpenAI(
             api_key=xai_key,
             base_url="https://api.x.ai/v1",
-            timeout=25.0,
+            timeout=30.0,
             max_retries=1,
         )
-        models_to_try = ["grok-4-1-fast-reasoning", "grok-2-latest", "grok-4-1-fast-non-reasoning"]
+        models_to_try = ["grok-4-1-fast-non-reasoning", "grok-3-mini", "grok-3", "grok-4-1-fast-reasoning"]
         for m in models_to_try:
             try:
                 completion = client.chat.completions.create(
@@ -806,7 +828,8 @@ def _generate_grok_takeaways(title: str, content: str, author_name: str = "A bui
                 )
                 if completion and completion.choices:
                     return completion.choices[0].message.content.strip()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Grok model {m} failed: {e}")
                 continue
         return None
 
@@ -829,12 +852,34 @@ def _generate_grok_takeaways(title: str, content: str, author_name: str = "A bui
             takeaways = parsed.get("takeaways", [])
             if isinstance(takeaways, list):
                 cleaned = []
-                for t in takeaways[:3]:
+                for idx, t in enumerate(takeaways[:3]):
                     s = str(t).strip()
                     # Strip em-dashes and en-dashes, leaving standard hyphens alone
                     s = re.sub(r"[—–]", ", ", s)
                     s = re.sub(r"^Point\s*\d+[:\-.]\s*", "", s, flags=re.IGNORECASE)
                     s = re.sub(r"^[›\-*\d.\s]+", "", s).strip()
+
+                    # Point 1: If generic "They" was used instead of the author's name when name is known
+                    if idx == 0 and clean_author != "The author":
+                        if re.match(r"^They\s+report\b", s, flags=re.IGNORECASE):
+                            s = re.sub(r"^They\s+report\b", f"{clean_author} reports", s, flags=re.IGNORECASE)
+                        elif re.match(r"^They\s+say\b", s, flags=re.IGNORECASE):
+                            s = re.sub(r"^They\s+say\b", f"{clean_author} says", s, flags=re.IGNORECASE)
+                        elif re.match(r"^They're\b", s, flags=re.IGNORECASE):
+                            s = re.sub(r"^They're\b", f"{clean_author} is", s, flags=re.IGNORECASE)
+
+                    # Point 2: If the model accidentally repeated author name or "The author"
+                    if idx == 1:
+                        prefix_pat = rf"^(?:{re.escape(clean_author)}|The author|They)\s+(?:reports?|says?|notes?|stated|found|emphasizes?)\s+that\s+"
+                        if re.match(prefix_pat, s, flags=re.IGNORECASE):
+                            s = re.sub(prefix_pat, "", s, flags=re.IGNORECASE)
+                            s = s[0].upper() + s[1:] if s else ""
+
+                    # Gender-neutral safety net for Point 1
+                    if idx == 0 and clean_author != "The author":
+                        s = re.sub(r"\bhis\b", "their", s, flags=re.IGNORECASE)
+                        s = re.sub(r"\bher\b", "their", s, flags=re.IGNORECASE)
+
                     if s:
                         cleaned.append(s)
                 return cleaned
