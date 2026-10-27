@@ -57,10 +57,17 @@ def expire_old_subscriptions():
         expired_count = len(expired_subs)
         logger.info(f"Found {expired_count} expired subscriptions")
 
-        # Mark them as expired
+        # Mark them as expired — subscription_status is the LIFECYCLE field;
+        # status itself (the original payment-success record) is never
+        # touched, for the same reason api/main.py's own expiry job
+        # doesn't: a payment that succeeded stays recorded as succeeded
+        # forever, and overwriting it here used to silently corrupt every
+        # revenue query that filters on payment-success status the moment
+        # a subscription's period lapsed. sync_user_subscription below
+        # (called per affected user) is what actually updates each row's
+        # subscription_status and the user's own current status.
         for sub in expired_subs:
-            sub.status = 'expired'
-            logger.info(f"Marked subscription {sub.id} as expired (user {sub.user_id})")
+            logger.info(f"Expired subscription {sub.id} (user {sub.user_id}) — syncing lifecycle status")
 
         db.commit()
 
