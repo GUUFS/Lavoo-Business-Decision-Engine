@@ -41,19 +41,33 @@ def expire_old_subscriptions():
         now = datetime.now(timezone.utc)
         logger.info(f"Starting subscription expiry check at {now}")
 
-        # Find all active subscriptions with past end_date
+        # Subscriptions.status is the ORIGINAL PAYMENT status (see that
+        # column's own comment on the model) — 'active' is never one of its
+        # values, so this always matched zero rows. The real lifecycle
+        # field is Subscriptions.subscription_status, but the payment
+        # status itself still needs the full multi-provider "paid" set
+        # (Flutterwave writes 'successful'/'succeeded', Stripe 'completed')
+        # to find every row that's actually eligible to expire — same set
+        # api/main.py's own run_subscription_expiry_job already uses.
         expired_subs = db.query(Subscriptions).filter(
-            Subscriptions.status == 'active',
+            Subscriptions.status.in_(('active', 'completed', 'paid', 'successful', 'succeeded')),
             Subscriptions.end_date < now
         ).all()
 
         expired_count = len(expired_subs)
         logger.info(f"Found {expired_count} expired subscriptions")
 
-        # Mark them as expired
+        # Mark them as expired — subscription_status is the LIFECYCLE field;
+        # status itself (the original payment-success record) is never
+        # touched, for the same reason api/main.py's own expiry job
+        # doesn't: a payment that succeeded stays recorded as succeeded
+        # forever, and overwriting it here used to silently corrupt every
+        # revenue query that filters on payment-success status the moment
+        # a subscription's period lapsed. sync_user_subscription below
+        # (called per affected user) is what actually updates each row's
+        # subscription_status and the user's own current status.
         for sub in expired_subs:
-            sub.status = 'expired'
-            logger.info(f"Marked subscription {sub.id} as expired (user {sub.user_id})")
+            logger.info(f"Expired subscription {sub.id} (user {sub.user_id}) — syncing lifecycle status")
 
         db.commit()
 

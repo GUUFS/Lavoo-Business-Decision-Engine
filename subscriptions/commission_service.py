@@ -346,6 +346,15 @@ class CommissionService:
             return
 
         if commission.status in ("paid", "auto_settled"):
+            # Flip the ORIGINAL commission's status before anything else so
+            # a redelivered webhook for the same refund/dispute (normal
+            # at-least-once behavior, not an edge case) sees "already
+            # clawed_back" here instead of still "paid"/"auto_settled" —
+            # without this, a retry would fall through to this same branch
+            # again and create a SECOND negative clawback row for the one
+            # real refund, double-counting the loss on the referrer's
+            # earnings totals.
+            commission.status = "clawed_back"
             clawback = Commission(
                 user_id=commission.user_id,
                 referred_user_id=commission.referred_user_id,
@@ -1113,46 +1122,34 @@ class CommissionService:
     
     @staticmethod
     def get_user_earnings(user_id: int, db: Session):
-        """Get comprehensive earnings data for a user"""
-        
-        # Total commissions
-        totals = db.query(
-            func.coalesce(func.sum(Commission.amount), 0).label('total'),
-            func.count(Commission.id).label('count')
-        ).filter(
-            Commission.user_id == user_id
-        ).first()
-        
-        # Approved but unpaid (available for payout)
-        available = db.query(
-            func.coalesce(func.sum(Commission.amount), 0)
-        ).filter(
-            Commission.user_id == user_id,
-            Commission.status == 'approved',
-            Commission.payout_id.is_(None)
-        ).scalar() or Decimal("0.00")
-        
-        # Pending approval
-        pending = db.query(
-            func.coalesce(func.sum(Commission.amount), 0)
-        ).filter(
-            Commission.user_id == user_id,
-            Commission.status == 'pending'
-        ).scalar() or Decimal("0.00")
-        
-        # Already paid
-        paid = db.query(
-            func.coalesce(func.sum(Commission.amount), 0)
-        ).filter(
-            Commission.user_id == user_id,
-            Commission.status == 'paid'
-        ).scalar() or Decimal("0.00")
-        
+        """Get comprehensive earnings data for a user, broken down by
+        currency — summing every status across every currency into one
+        number and hardcoding "currency": "USD" regardless of what was
+        actually summed (the previous version) blends NGN/USD/GBP
+        commissions together and mislabels the result whenever a referrer
+        has commissions in more than one currency."""
+
+        def sum_by_currency(*filters):
+            rows = db.query(
+                Commission.currency,
+                func.coalesce(func.sum(Commission.amount), 0)
+            ).filter(Commission.user_id == user_id, *filters).group_by(Commission.currency).all()
+            return {(row[0] or 'USD'): float(row[1] or 0) for row in rows}
+
+        total_by_ccy = sum_by_currency()
+        count_by_ccy = {
+            (row[0] or 'USD'): row[1]
+            for row in db.query(Commission.currency, func.count(Commission.id))
+                .filter(Commission.user_id == user_id).group_by(Commission.currency).all()
+        }
+        available_by_ccy = sum_by_currency(Commission.status == 'approved', Commission.payout_id.is_(None))
+        pending_by_ccy = sum_by_currency(Commission.status == 'pending')
+        paid_by_ccy = sum_by_currency(Commission.status.in_(('paid', 'auto_settled')))
+
         return {
-            "total_earned": float(totals.total or 0),
-            "commission_count": totals.count or 0,
-            "available_for_payout": float(available),
-            "pending_approval": float(pending),
-            "already_paid": float(paid),
-            "currency": "USD"
+            "total_earned_by_currency": total_by_ccy,
+            "commission_count_by_currency": count_by_ccy,
+            "available_for_payout_by_currency": available_by_ccy,
+            "pending_approval_by_currency": pending_by_ccy,
+            "already_paid_by_currency": paid_by_ccy,
         }

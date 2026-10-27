@@ -34,21 +34,37 @@ async def get_dashboard_stats(
         # 2. Total Revenue
         # 2. Total Revenue
         try:
-            # Calculate Total Subscription Revenue (Sum of all 'completed' or 'active' subscriptions)
-            # Assuming 'completed' or 'active' means paid. Adjust 'status' based on actual data values (e.g., 'active', 'paid')
-            total_subscription_revenue = db.query(func.sum(Subscriptions.amount)).filter(
-                Subscriptions.status.in_(['active', 'completed', 'paid'])
-            ).scalar() or 0.0
+            # Grouped by currency — summing Subscriptions.amount across NGN/
+            # USD/GBP with no group_by blends incompatible currencies into
+            # one meaningless number (same bug class fixed in
+            # admin/revenue.py's /stats this session, missed here). Status
+            # filter also widened to cover every provider's spelling of
+            # "paid" — Flutterwave writes 'successful'/'succeeded', never
+            # 'active'/'paid', so every NGN subscription was previously
+            # excluded entirely.
+            revenue_rows = db.query(
+                Subscriptions.currency,
+                func.sum(Subscriptions.amount)
+            ).filter(
+                Subscriptions.status.in_(['active', 'completed', 'paid', 'successful', 'succeeded'])
+            ).group_by(Subscriptions.currency).all()
+            revenue_by_currency = {(row[0] or 'USD'): float(row[1] or 0) for row in revenue_rows}
 
-            # Calculate Total Payouts (Sum of 'completed' payouts)
-            total_payouts = db.query(func.sum(Payout.amount)).filter(
+            payout_rows = db.query(
+                Payout.currency,
+                func.sum(Payout.amount)
+            ).filter(
                 Payout.status == 'completed'
-            ).scalar() or 0.0
+            ).group_by(Payout.currency).all()
+            payouts_by_currency = {(row[0] or 'USD'): float(row[1] or 0) for row in payout_rows}
 
-            total_revenue = float(total_subscription_revenue) - float(total_payouts)
+            total_revenue_by_currency = {
+                ccy: revenue_by_currency.get(ccy, 0.0) - payouts_by_currency.get(ccy, 0.0)
+                for ccy in set(revenue_by_currency) | set(payouts_by_currency)
+            }
         except Exception as ex:
             logger.warning(f"Revenue calc error: {ex}")
-            total_revenue = 0.0
+            total_revenue_by_currency = {}
 
         # 3. Active Users (Active in last 30 days)
         # Ensure timezone awareness for PostgreSQL timestamptz comparison
@@ -95,7 +111,7 @@ async def get_dashboard_stats(
 
         return {
             "total_users": total_users,
-            "total_revenue": total_revenue,
+            "total_revenue_by_currency": total_revenue_by_currency,
             "active_users": active_users,
             "system_uptime": system_uptime,
             "recent_activity": activity_stream

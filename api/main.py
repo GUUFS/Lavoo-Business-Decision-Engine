@@ -514,9 +514,16 @@ async def run_subscription_expiry_job():
             try:
                 now = datetime.now(_tz.utc)
                 active_statuses = ('active', 'completed', 'paid', 'successful', 'succeeded')
+                # subscription_status != 'Free' is what makes this scan only
+                # pick up rows this job hasn't already processed — status
+                # (the original payment-success record) is deliberately
+                # never changed by this job (see below), so it can't be
+                # used to tell "already handled" apart from "still needs
+                # handling" the way it used to.
                 all_expired = db.query(Subscriptions).filter(
                     Subscriptions.end_date < now,
                     Subscriptions.status.in_(active_statuses),
+                    Subscriptions.subscription_status != 'Free',
                 ).order_by(Subscriptions.user_id, Subscriptions.end_date.desc()).all()
 
                 # Deduplicate: keep only the most-recent expired sub per user.
@@ -530,9 +537,20 @@ async def run_subscription_expiry_job():
                     else:
                         older_subs.append(sub)
 
-                # Silently expire older superseded rows
+                # Silently expire older superseded rows. Only
+                # subscription_status (the LIFECYCLE field) changes —
+                # Subscriptions.status is "Original payment status" (see
+                # that column's own comment on the model): a payment that
+                # succeeded stays recorded as succeeded forever, same as a
+                # bank statement entry doesn't un-happen when an account
+                # later closes. Overwriting it to 'expired' here used to
+                # permanently erase that this row ever represented real
+                # revenue, which silently corrupted every revenue query
+                # that filters on payment-success status the moment ANY
+                # subscription's period lapsed (confirmed: this alone
+                # explained a real account's "Subscription Revenue"
+                # reading negative on the admin Revenue page).
                 for sub in older_subs:
-                    sub.status = 'expired'
                     sub.subscription_status = 'Free'
 
                 renewed = 0
@@ -570,7 +588,10 @@ async def run_subscription_expiry_job():
                                 ),
                                 link="/dashboard/upgrade",
                             )
-                        sub.status = 'expired'
+                        # See the older_subs loop above for why status
+                        # (the immutable original-payment-success record)
+                        # is never overwritten here, only
+                        # subscription_status (the lifecycle field).
                         sub.subscription_status = 'Free'
                         affected_users.add(user_id)
                         expired_count += 1
@@ -604,7 +625,8 @@ async def run_subscription_expiry_job():
                         logger.warning("[expiry-job] %s renewal failed for user %s — trying fallback", method, user_id)
 
                     if not success:
-                        sub.status = 'expired'
+                        # See the older_subs loop above for why status is
+                        # left untouched here.
                         sub.subscription_status = 'Free'
                         affected_users.add(user_id)
                         expired_count += 1
