@@ -1,7 +1,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract, case
+from sqlalchemy import func, extract, case, or_
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
@@ -223,23 +223,32 @@ async def get_commissions(
     limit: int = 50,
     offset: int = 0,
     currency: Optional[str] = None,
+    search: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Get commission data grouped by user with payment methods.
+    One row PER COMMISSION, each with its own real status — not grouped or
+    totalled by user. A per-user "payout_status" used to be computed by
+    picking whichever status (pending/processing/approved/auto_settled/
+    paid) needed the most attention across that user's ENTIRE history and
+    showing only that one, with every individual record's actual status
+    collapsed into it — a user with one 3-month-old 'pending' commission
+    and ten 'paid' ones read as just "pending," and the amounts shown were
+    SUMS across however many records happened to share a status, not any
+    one real transaction. Explicit instruction: render each record by its
+    own individual nature, not totalled to the user. search filters by
+    name/email so an admin can still find one user's records without the
+    table pre-aggregating them.
 
-    Commission.status actually has five live values, not three:
-    pending, approved (set by CommissionService.approve_commission /
-    auto_approve_commissions — see commission_service.py — but never acted
-    on by this file's own /commissions/approve/{user_id} below, which only
-    ever reads 'pending' rows directly; that gap is real and unresolved,
-    flagged rather than silently worked around here), processing, paid,
-    and auto_settled (paid automatically at charge time or via immediate
-    FX payout, never touched by an admin). The previous version only
-    summed pending/processing/paid, so any approved or auto_settled
-    commission was invisible in every total below even though it's real
-    money already committed or already paid.
+    Commission.status has five live values: pending, approved (set by
+    CommissionService.approve_commission / auto_approve_commissions — see
+    commission_service.py — but never acted on by this file's own
+    /commissions/approve/{user_id} below, which only ever reads 'pending'
+    rows directly; that gap is real and unresolved, flagged rather than
+    silently worked around here), processing, paid, and auto_settled (paid
+    automatically at charge time or via immediate FX payout, never touched
+    by an admin).
     """
     verify_admin(current_user)
 
@@ -247,129 +256,89 @@ async def get_commissions(
         from database.pg_models import PayoutAccount
 
         # A commission's OWN currency (Commission.currency) is only the
-        # right thing to group/sum by when nothing special happened to it.
-        # When it was actually settled by converting it and sending it
-        # through a DIFFERENT provider's rail (_attempt_immediate_payout /
+        # right thing to show when nothing special happened to it. When it
+        # was actually settled by converting it and sending it through a
+        # DIFFERENT provider's rail (_attempt_immediate_payout /
         # _attempt_stripe_immediate_payout in commission_service.py — e.g. a
         # GBP commission with no Stripe Connect account on file gets paid
         # out as NGN via Flutterwave instead), the money that actually moved
         # is the linked Payout's amount/currency/provider, not the
-        # commission's own. Grouping by Commission.currency alone (the
-        # previous version) reported a GBP referrer as having been "paid
-        # $0.40" when they were really paid ₦712.55 — right currency symbol
-        # for the wrong number, wrong currency entirely, and no sign a
-        # second provider was ever involved. A LEFT JOIN onto the linked
-        # Payout (via Commission.payout_id) and COALESCE-ing onto it is what
-        # finds that real amount/currency; Commission's own values are the
-        # correct fallback for pending/approved rows, which have no payout
-        # yet, and for auto_settled rows that were never routed through our
-        # own Payout table at all (a Flutterwave subaccount split happening
+        # commission's own. A LEFT JOIN onto the linked Payout (via
+        # Commission.payout_id) and COALESCE-ing onto it is what finds that
+        # real amount/currency; Commission's own values are the correct
+        # fallback for pending/approved rows, which have no payout yet, and
+        # for auto_settled rows that were never routed through our own
+        # Payout table at all (a Flutterwave subaccount split happening
         # directly at charge time — see flutterwave_split.py — settles in
         # exactly the commission's own currency with nothing to join to).
         real_currency = func.coalesce(Payout.currency, Commission.currency)
         real_amount = func.coalesce(Payout.amount, Commission.amount)
 
-        breakdown_query = db.query(
+        query = db.query(
+            Commission.id.label('commission_id'),
             Commission.user_id,
             Commission.status,
+            Commission.created_at,
+            User.name.label('user_name'),
+            User.email.label('user_email'),
             real_currency.label('settled_currency'),
+            real_amount.label('amount'),
             Payout.provider.label('provider'),
-            func.sum(real_amount).label('amount'),
-            func.sum(case((Payout.original_currency.isnot(None), Payout.original_amount), else_=0)).label('original_amount_sum'),
-            func.max(Payout.original_currency).label('original_currency'),
+            Payout.original_currency.label('original_currency'),
+            Payout.original_amount.label('original_amount'),
+        ).join(
+            User, Commission.user_id == User.id
         ).outerjoin(
             Payout, Commission.payout_id == Payout.id
         )
+
         if currency:
-            # Scoping by currency means "everything that ended up in this
-            # currency" (the real settled currency), not "every commission
-            # that was originally earned in it" — a GBP commission actually
-            # paid out as NGN belongs on the NGN page, since that's the
-            # money that actually exists to reconcile there.
-            breakdown_query = breakdown_query.filter(real_currency == currency.upper())
+            # Scoping by currency means "ended up in this currency" (the
+            # real settled currency), not "originally earned in it" — a
+            # GBP commission actually paid out as NGN belongs on the NGN
+            # page, since that's the money that actually exists there.
+            query = query.filter(real_currency == currency.upper())
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(User.name.ilike(term), User.email.ilike(term)))
 
-        breakdown_rows = breakdown_query.group_by(
-            Commission.user_id, Commission.status, real_currency, Payout.provider
-        ).all()
+        total = query.with_entities(func.count(Commission.id)).scalar()
 
-        # Per-user metadata (name, email, last activity, total count) — a
-        # separate simple query since the breakdown above is intentionally
-        # fragmented across (status, currency, provider).
-        meta_query = db.query(
-            Commission.user_id,
-            User.name.label('user_name'),
-            User.email.label('user_email'),
-            func.max(Commission.created_at).label('last_commission_date'),
-            func.count(Commission.id).label('commission_count'),
-        ).join(User, Commission.user_id == User.id)
-        if currency:
-            meta_query = meta_query.outerjoin(Payout, Commission.payout_id == Payout.id).filter(real_currency == currency.upper())
-        meta_rows = meta_query.group_by(
-            Commission.user_id, User.name, User.email
-        ).order_by(func.max(Commission.created_at).desc()).limit(limit).offset(offset).all()
+        rows = query.order_by(Commission.created_at.desc()).limit(limit).offset(offset).all()
 
-        total_query = db.query(func.count(func.distinct(Commission.user_id)))
-        if currency:
-            total_query = total_query.outerjoin(Payout, Commission.payout_id == Payout.id).filter(real_currency == currency.upper())
-        total = total_query.scalar()
+        # Batch the payout-account lookup for the page's users, rather than
+        # one query per row.
+        page_user_ids = {r.user_id for r in rows}
+        accounts_by_user = {
+            a.user_id: a
+            for a in db.query(PayoutAccount).filter(PayoutAccount.user_id.in_(page_user_ids)).all()
+        } if page_user_ids else {}
 
-        user_ids_in_page = [m.user_id for m in meta_rows]
-        breakdown_by_user: dict = {}
-        for row in breakdown_rows:
-            if row.user_id not in user_ids_in_page:
-                continue
-            breakdown_by_user.setdefault(row.user_id, []).append({
+        result = []
+        for row in rows:
+            account = accounts_by_user.get(row.user_id)
+            available_methods = []
+            if account:
+                if account.stripe_account_id:
+                    available_methods.append("stripe")
+                if account.bank_name and account.account_number:
+                    available_methods.append("flutterwave")
+
+            result.append({
+                "commission_id": row.commission_id,
+                "user_id": row.user_id,
+                "user": row.user_name,
+                "user_email": row.user_email,
                 "status": row.status,
                 "currency": row.settled_currency,
                 "amount": float(row.amount or 0),
                 "provider": row.provider,
                 "cross_settled": row.original_currency is not None,
                 "original_currency": row.original_currency,
-                "original_amount": float(row.original_amount_sum) if row.original_amount_sum else None,
-            })
-
-        result = []
-        for meta in meta_rows:
-            breakdown = breakdown_by_user.get(meta.user_id, [])
-
-            # Determine overall payout status — ordered so the status needing
-            # the most urgent admin attention wins when a user has a mix,
-            # regardless of which currency it's in.
-            statuses_present = {b["status"] for b in breakdown if b["amount"] > 0}
-            if "pending" in statuses_present:
-                payout_status = "pending"
-            elif "processing" in statuses_present:
-                payout_status = "processing"
-            elif "approved" in statuses_present:
-                payout_status = "approved"
-            elif "auto_settled" in statuses_present:
-                payout_status = "auto_settled"
-            elif "paid" in statuses_present:
-                payout_status = "paid"
-            else:
-                payout_status = "pending"
-
-            payout_account = db.query(PayoutAccount).filter(
-                PayoutAccount.user_id == meta.user_id
-            ).first()
-
-            available_methods = []
-            if payout_account:
-                if payout_account.stripe_account_id:
-                    available_methods.append("stripe")
-                if payout_account.bank_name and payout_account.account_number:
-                    available_methods.append("flutterwave")
-
-            result.append({
-                "user_id": meta.user_id,
-                "user": meta.user_name,
-                "user_email": meta.user_email,
-                "breakdown": breakdown,
-                "payout_status": payout_status,
-                "last_commission_date": meta.last_commission_date.strftime("%Y-%m-%d %H:%M") if meta.last_commission_date else None,
-                "commission_count": meta.commission_count,
+                "original_amount": float(row.original_amount) if row.original_amount is not None else None,
+                "created_at": row.created_at.strftime("%Y-%m-%d %H:%M") if row.created_at else None,
                 "available_payment_methods": available_methods,
-                "has_payout_account": len(available_methods) > 0
+                "has_payout_account": len(available_methods) > 0,
             })
 
         return {
