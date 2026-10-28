@@ -230,7 +230,8 @@ class StripeService:
         price_id: str,
         payment_method_id: Optional[str] = None,
         metadata: Dict[str, Any] = None,
-        off_session: bool = False
+        off_session: bool = False,
+        cancel_at_period_end: bool = False
     ) -> Dict[str, Any]:
         """
         Create a Stripe Subscription using a saved payment method.
@@ -261,6 +262,15 @@ class StripeService:
 
         To test 3DS modal: use card 4000 0025 0000 3155 with off_session=False
         To test 3DS decline: use card 4000 0027 6000 3184 with off_session=False
+
+        cancel_at_period_end=True — the customer declined to save their card
+        for future billing. Stripe still charges the current period (a
+        Subscription is still the easiest way to reuse all of this app's
+        existing invoice/webhook/commission plumbing for that one charge),
+        but is told up front to cancel itself once this period ends instead
+        of attempting a next-cycle charge. Set via a follow-up
+        Subscription.modify() rather than a create-time param, since it must
+        apply whether the subscription starts 'active' or 'incomplete'.
         """
         try:
             print(f"🔵 Creating subscription for customer {customer_id} with price {price_id} "
@@ -292,7 +302,13 @@ class StripeService:
 
             create_params["api_key"] = _sk()
             subscription = stripe.Subscription.create(**create_params)
-            
+
+            if cancel_at_period_end:
+                subscription = stripe.Subscription.modify(
+                    subscription.id, cancel_at_period_end=True, api_key=_sk()
+                )
+                print(f"🚫 Subscription {subscription.id} set to cancel at period end — card not saved")
+
             print(f"✅ Subscription created: {subscription.id}, status: {subscription.status}")
             
             client_secret = None

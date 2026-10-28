@@ -218,35 +218,6 @@ async def get_transactions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/transactions/{subscription_id}")
-async def delete_subscription_transaction(
-    subscription_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Permanently remove a Subscriptions row, for records that never
-    corresponded to a real provider transaction (e.g. seeded/test rows
-    discovered to have no matching Stripe/Flutterwave object). Refuses to
-    delete a row that has a Commission linked to it, since removing that
-    would silently orphan real payout/commission history instead."""
-    verify_admin(current_user)
-
-    subscription = db.query(Subscriptions).filter(Subscriptions.id == subscription_id).first()
-    if not subscription:
-        raise HTTPException(status_code=404, detail="Subscription not found")
-
-    linked_commission = db.query(Commission).filter(Commission.subscription_id == subscription_id).first()
-    if linked_commission:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot delete: Commission #{linked_commission.id} is linked to this subscription"
-        )
-
-    db.delete(subscription)
-    db.commit()
-    return {"success": True, "deleted_id": subscription_id}
-
-
 @router.get("/commissions")
 async def get_commissions(
     limit: int = 50,

@@ -36,12 +36,12 @@ PLAN_PRICES = {
     "pro": {
         "GBP": {"monthly": Decimal("22.49"), "quarterly": Decimal("60.00"), "yearly": Decimal("269.78")},
         "USD": {"monthly": Decimal("29.95"), "quarterly": Decimal("84.25"), "yearly": Decimal("336.98")},
-        "NGN": {"monthly": Decimal("34000"), "quarterly": Decimal("102600"), "yearly": Decimal("410000")},
+        "NGN": {"monthly": Decimal("34000"), "quarterly": Decimal("22680"), "yearly": Decimal("20160")},
     },
     "premium": {
         "GBP": {"monthly": Decimal("29.58"), "quarterly": Decimal("78.98"), "yearly": Decimal("354.96")},
         "USD": {"monthly": Decimal("36.95"), "quarterly": Decimal("110.85"), "yearly": Decimal("443.40")},
-        "NGN": {"monthly": Decimal("45000"), "quarterly": Decimal("135000"), "yearly": Decimal("540000")},
+        "NGN": {"monthly": Decimal("45000"), "quarterly": Decimal("28080"), "yearly": Decimal("24960")},
     },
 }
 # A charged amount is matched to a plan within this tolerance — covers minor
