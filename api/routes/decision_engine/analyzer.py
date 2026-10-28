@@ -40,6 +40,19 @@ class AnalyzeRequest(BaseModel):
     )
 
 
+class ClarifyRequest(BaseModel):
+    """Request model for POST /clarify."""
+    business_goal: str = Field(..., min_length=10, max_length=2000)
+
+
+class ClarificationAnswer(BaseModel):
+    """One question/answer pair from the clarifying-questions step, sent
+    back on the actual /analyze(/stream) call so it can be folded into the
+    analyzed context."""
+    question: str
+    answer: str = ""
+
+
 class BottleneckResponse(BaseModel):
     """Bottleneck data structure."""
     id: int
@@ -104,6 +117,27 @@ def get_user_id(current_user) -> int:
                 return user_data.id
         return user_id
     return current_user.id
+
+
+def _merge_clarifications_into_goal(business_goal: str, clarifications_raw) -> str:
+    """Folds the clarifying-questions step's Q&A into the text that
+    actually gets analyzed — same "[Additional Context]" append pattern
+    already used for uploaded-file content just above this call site, so
+    the full pipeline sees one combined prompt with no code change needed
+    downstream. Unanswered questions (skipped by the user) are left out
+    rather than sent through as blank answers.
+    """
+    if not clarifications_raw:
+        return business_goal
+    try:
+        pairs = [ClarificationAnswer(**c) if not isinstance(c, ClarificationAnswer) else c for c in clarifications_raw]
+    except Exception:
+        return business_goal
+    qa_lines = [f"Q: {c.question}\nA: {c.answer}" for c in pairs if c.question and c.answer and c.answer.strip()]
+    if not qa_lines:
+        return business_goal
+    qa_text = "\n\n".join(qa_lines)
+    return f"{business_goal}\n\n[Clarifying Questions & Answers]:\n{qa_text}".strip()
 
 
 def parse_json_field(field_value, default=None):
@@ -208,6 +242,34 @@ async def _enrich_stacks_background(
 # =========================================================================
 # API ENDPOINTS
 # =========================================================================
+@router.post("/clarify")
+async def get_clarifying_questions(
+    request: ClarifyRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Called right after the user submits their business challenge, BEFORE
+    /analyze(/stream) runs — asks the LLM whether it's missing anything
+    load-bearing and, if so, returns up to 3 short targeted questions.
+    needs_clarification=False (the common case for an already-detailed
+    prompt) means the frontend should skip straight to analysis with no
+    added step; this call is intentionally fast and cheap (a single
+    non-reasoning-model call) so it never meaningfully delays that path.
+
+    The frontend collects answers for whatever questions_text are
+    returned, then sends them back as `clarifications` on the actual
+    /analyze(/stream) call — this endpoint does not itself start an
+    analysis or persist anything.
+    """
+    get_user_id(current_user)  # validates auth; raises if not resolvable
+
+    from decision_engine.agentic_analyzer import create_analyzer
+    analyzer = create_analyzer(db)
+    result = await analyzer.generate_clarifying_questions(request.business_goal)
+    return {"success": True, "data": result}
+
+
 @router.post("/analyze", response_model=dict)
 async def analyze_business_goal(
     request: Request,
@@ -229,16 +291,26 @@ async def analyze_business_goal(
         content_type = request.headers.get("content-type", "")
         business_goal = ""
         files = []
+        clarifications = None
 
         if "application/json" in content_type:
             body = await request.json()
             business_goal = body.get("business_goal", "")
+            clarifications = body.get("clarifications")
         elif "multipart/form-data" in content_type:
             form_data = await request.form()
             business_goal = form_data.get("business_goal", "")
             files = form_data.getlist("files")
+            raw_clar = form_data.get("clarifications")
+            if raw_clar:
+                try:
+                    clarifications = json.loads(raw_clar)
+                except Exception:
+                    clarifications = None
         else:
             raise HTTPException(status_code=400, detail="Invalid Content-Type")
+
+        business_goal = _merge_clarifications_into_goal(business_goal, clarifications)
 
         from sqlalchemy import desc as _desc
         _goal_str = business_goal or ""
@@ -457,15 +529,23 @@ async def analyze_business_goal_stream(
     content_type = request.headers.get("content-type", "")
     business_goal = ""
     files = []
+    clarifications = None
 
     try:
         if "application/json" in content_type:
             body = await request.json()
             business_goal = body.get("business_goal", "")
+            clarifications = body.get("clarifications")
         elif "multipart/form-data" in content_type:
             form_data = await request.form()
             business_goal = form_data.get("business_goal", "")
             files = form_data.getlist("files")
+            raw_clar = form_data.get("clarifications")
+            if raw_clar:
+                try:
+                    clarifications = json.loads(raw_clar)
+                except Exception:
+                    clarifications = None
         else:
             raise HTTPException(status_code=400, detail="Invalid Content-Type")
     except HTTPException:
@@ -475,6 +555,8 @@ async def analyze_business_goal_stream(
 
     if not business_goal and not files:
         raise HTTPException(status_code=400, detail="Business goal or file upload required")
+
+    business_goal = _merge_clarifications_into_goal(business_goal, clarifications)
 
     if files:
         image_bytes_list, document_bytes_list = [], []

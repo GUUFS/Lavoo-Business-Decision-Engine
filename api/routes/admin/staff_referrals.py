@@ -77,6 +77,16 @@ async def list_staff_referral_assignments(
             Commission.user_id == entry.user_id,
             Commission.referred_user_id == referral.referred_user_id,
         ).all()
+        # Grouped by currency — summing every commission's amount into one
+        # blended "commission_total" and labelling it with only the FIRST
+        # commission's currency was wrong whenever this referred user paid
+        # in more than one currency over time (same bug class fixed
+        # elsewhere this session: earnings.py, revenue.py).
+        totals_by_currency: dict = {}
+        for c in commissions:
+            ccy = c.currency or "USD"
+            totals_by_currency[ccy] = totals_by_currency.get(ccy, 0.0) + float(c.amount)
+
         rows.append({
             "referred_user_id": referral.referred_user_id,
             "name": referred.name if referred else None,
@@ -84,8 +94,7 @@ async def list_staff_referral_assignments(
             "assigned_at": referral.created_at.isoformat() if referral.created_at else None,
             "subscription_status": referred.subscription_status if referred else None,
             "commission_count": len(commissions),
-            "commission_total": sum(float(c.amount) for c in commissions) if commissions else 0.0,
-            "commission_currency": commissions[0].currency if commissions else None,
+            "commission_totals_by_currency": totals_by_currency,
         })
 
     return {"staff_name": entry.email, "referrals": rows}

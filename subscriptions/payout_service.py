@@ -145,7 +145,7 @@ class PayoutService:
         """
         Reads Lavoo's live Flutterwave balance, compares it against both a
         configurable safety floor (FLUTTERWAVE_MIN_BALANCE_NGN, default
-        50,000) and whatever Lavoo currently owes (pending/processing
+        1,000) and whatever Lavoo currently owes (pending/processing
         Flutterwave payouts already queued in this currency), and records a
         PlatformBalanceSnapshot either way so the admin Revenue page has a
         real number and trend to show instead of nothing.
@@ -165,8 +165,21 @@ class PayoutService:
             Payout.status.in_(['pending', 'processing']),
         ).scalar() or Decimal("0.00")
 
-        min_floor = Decimal(os.getenv("FLUTTERWAVE_MIN_BALANCE_NGN", "50000"))
+        min_floor = Decimal(os.getenv("FLUTTERWAVE_MIN_BALANCE_NGN", "1000"))
         threshold = max(min_floor, pending_obligations)
+
+        # Money that was EARNED in this currency but actually SENT through a
+        # different rail — e.g. a GBP commission with no Flutterwave bank
+        # account on file gets converted and paid out as NGN instead
+        # (_attempt_immediate_payout in commission_service.py). The NGN left
+        # this balance; the GBP it was converted from never did — it's still
+        # sitting in the Flutterwave NGN account's own currency origin, which
+        # is why the live balance alone doesn't tally with "what we've paid
+        # out": a chunk of what's "paid" never actually left here.
+        # original_currency is only ever set on a real cross-rail conversion
+        # (see Payout.original_currency's own comment), so filtering on it
+        # already excludes every same-currency, same-rail payout.
+        held_via_other_rail = PayoutService.get_cross_rail_settled_total(db, currency)
 
         balance = PayoutService.get_platform_flutterwave_available(currency)
 
@@ -221,7 +234,346 @@ class PayoutService:
             "threshold": float(threshold),
             "below_threshold": snapshot.below_threshold,
             "check_failed": snapshot.check_failed,
+            "held_via_other_rail": float(held_via_other_rail),
         }
+
+    @staticmethod
+    def get_cross_rail_settled_total(db: Session, currency: str) -> Decimal:
+        """Total of this currency's commissions that were actually settled
+        by converting and sending them through a DIFFERENT provider's rail —
+        money earned in `currency` that never physically left this
+        provider's balance. See the call site's comment for why this
+        matters for reconciliation."""
+        return db.query(
+            func.coalesce(func.sum(Payout.original_amount), 0)
+        ).filter(
+            Payout.original_currency == currency,
+            Payout.status == 'completed',
+        ).scalar() or Decimal("0.00")
+
+    @staticmethod
+    def check_stripe_balance(db: Session, background_tasks: BackgroundTasks, currency: str = "USD") -> Dict[str, Any]:
+        """
+        The Stripe-side counterpart to check_flutterwave_balance above — same
+        shape, same PlatformBalanceSnapshot table (provider="stripe"), same
+        edge-triggered admin alert, just reading get_platform_stripe_available
+        (pence/cents) instead of Flutterwave's balances endpoint.
+        """
+        from database.pg_models import PlatformBalanceSnapshot
+
+        pending_obligations = db.query(
+            func.coalesce(func.sum(Payout.amount), 0)
+        ).filter(
+            Payout.payment_method == 'stripe',
+            Payout.currency == currency,
+            Payout.status.in_(['pending', 'processing']),
+        ).scalar() or Decimal("0.00")
+
+        min_floor = Decimal(os.getenv(f"STRIPE_MIN_BALANCE_{currency.upper()}", "0"))
+        threshold = max(min_floor, pending_obligations)
+
+        # See check_flutterwave_balance's held_via_other_rail comment — same
+        # reasoning, mirrored direction: a NGN commission with no verified
+        # Stripe Connect referrer gets converted and paid out via Flutterwave
+        # instead, so the NGN never left Flutterwave and the equivalent in
+        # this currency never left Stripe.
+        held_via_other_rail = PayoutService.get_cross_rail_settled_total(db, currency)
+
+        available_minor = PayoutService.get_platform_stripe_available(currency)
+        available = (Decimal(available_minor) / 100) if available_minor is not None else None
+
+        previous = db.query(PlatformBalanceSnapshot).filter(
+            PlatformBalanceSnapshot.provider == "stripe",
+            PlatformBalanceSnapshot.currency == currency,
+        ).order_by(PlatformBalanceSnapshot.checked_at.desc()).first()
+        was_already_low = bool(previous and previous.below_threshold)
+        was_already_failing = bool(previous and previous.check_failed)
+
+        snapshot = PlatformBalanceSnapshot(
+            provider="stripe",
+            currency=currency,
+            pending_obligations=pending_obligations,
+            threshold=threshold,
+        )
+        if available is None:
+            snapshot.check_failed = True
+            snapshot.below_threshold = False
+            snapshot.error_message = "Could not reach Stripe's balance endpoint"
+        else:
+            snapshot.available_balance = available
+            snapshot.below_threshold = available < threshold
+
+        db.add(snapshot)
+        db.commit()
+
+        if snapshot.below_threshold and not was_already_low:
+            PayoutService._queue_admin_alert(
+                background_tasks,
+                f"⚠️ Stripe {currency} balance is low",
+                (
+                    f"Available: {snapshot.available_balance} {currency}. "
+                    f"Pending/processing payouts already owed: {pending_obligations} {currency}. "
+                    "Add funds to the Stripe balance (Dashboard > Balances > Add to balance) — "
+                    "Builder Bonus payouts via Stripe will start failing or stalling until then."
+                ),
+            )
+        elif snapshot.check_failed and not was_already_failing:
+            PayoutService._queue_admin_alert(
+                background_tasks,
+                "⚠️ Could not check Stripe balance",
+                f"The periodic Stripe {currency} balance check failed to reach Stripe's API. See server logs.",
+            )
+
+        return {
+            "available": float(snapshot.available_balance) if snapshot.available_balance is not None else None,
+            "pending_obligations": float(pending_obligations),
+            "threshold": float(threshold),
+            "below_threshold": snapshot.below_threshold,
+            "check_failed": snapshot.check_failed,
+            "held_via_other_rail": float(held_via_other_rail),
+        }
+
+    # Tracks whether the system was already unhealthy last time this ran,
+    # so the periodic job's admin alert fires on the transition into
+    # trouble (and a once-per-6-hours reminder while it stays broken),
+    # not on every single cycle.
+    _last_integrity_status: str = "healthy"
+    _last_integrity_alert: "datetime | None" = None
+
+    @staticmethod
+    def check_payout_system_integrity(db: Session) -> Dict[str, Any]:
+        """
+        A single live answer to "is the payout system actually working right
+        now" — not a guess, a direct read of the same tables everything else
+        in this file writes to. Every check here catches a DIFFERENT failure
+        mode a silently-dead background job would otherwise hide:
+
+        - balance jobs stop writing snapshots -> nobody notices the wallet
+          emptied out until a real payout fails
+        - the reconcile jobs stop running -> a payout sent to Flutterwave/
+          Stripe sits at 'processing' forever, neither confirmed nor retried
+        - the settle jobs stop running -> a commission with a real, usable
+          payout account and enough balance just never gets paid
+        - a failed payout's commission silently fell out of 'pending'
+          without ever actually being paid (payout_id/commission status
+          disagreeing about what happened)
+
+        Returns {"status": "healthy"|"degraded"|"broken", "checked_at":...,
+        "checks": [{"name", "status", "detail", "count"}, ...]}. "degraded"
+        means something is stale/slow; "broken" means money is stuck.
+        """
+        from database.pg_models import PlatformBalanceSnapshot, Commission, PayoutAccount, Subscriptions
+
+        now = datetime.now(timezone.utc)
+        checks = []
+
+        def add(name, status, detail, count=None):
+            checks.append({"name": name, "status": status, "detail": detail, "count": count})
+
+        # 1. Balance-monitor jobs: each runs every 10 minutes: a snapshot
+        # older than 25 minutes means the job itself has stopped running,
+        # not just that the balance hasn't changed.
+        for provider, currencies in (("flutterwave", ["NGN"]), ("stripe", ["USD", "GBP"])):
+            for ccy in currencies:
+                latest = db.query(PlatformBalanceSnapshot).filter(
+                    PlatformBalanceSnapshot.provider == provider,
+                    PlatformBalanceSnapshot.currency == ccy,
+                ).order_by(PlatformBalanceSnapshot.checked_at.desc()).first()
+                label = f"{provider} {ccy} balance monitor"
+                if not latest:
+                    add(label, "warning", "Has never run yet", None)
+                else:
+                    age_min = (now - latest.checked_at).total_seconds() / 60
+                    if age_min > 25:
+                        add(label, "critical", f"Last ran {age_min:.0f} minutes ago — should run every 10", None)
+                    elif latest.check_failed:
+                        add(label, "warning", f"Running, but the last check couldn't reach {provider}: {latest.error_message}", None)
+                    else:
+                        add(label, "ok", f"Last ran {age_min:.0f} minutes ago", None)
+
+        # 2. Payouts stuck 'processing' for a long time — the reconcile jobs
+        # should have confirmed or failed these within minutes, not days.
+        stuck_cutoff = now - timedelta(hours=6)
+        stuck = db.query(Payout).filter(
+            Payout.status == "processing",
+            Payout.requested_at.isnot(None),
+            Payout.requested_at < stuck_cutoff,
+        ).count()
+        add(
+            "Stuck processing payouts", "critical" if stuck else "ok",
+            f"{stuck} payout(s) stuck 'processing' for over 6 hours — the reconcile jobs aren't resolving them" if stuck
+            else "No payouts stuck in limbo",
+            stuck,
+        )
+
+        # 3. Failed payouts whose commission is still 'pending' with a
+        # real, usable payout account on file — the settle jobs should
+        # have retried these already (every 10 minutes).
+        retry_cutoff = now - timedelta(minutes=30)
+        stuck_failed = (
+            db.query(Commission)
+            .join(Payout, Payout.id == Commission.payout_id)
+            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .filter(
+                Commission.status == "pending",
+                Payout.status == "failed",
+                Payout.requested_at < retry_cutoff,
+            )
+            .count()
+        )
+        add(
+            "Unretried failed payouts", "critical" if stuck_failed else "ok",
+            f"{stuck_failed} commission(s) with a failed payout and a usable payout account haven't been retried in 30+ minutes — the settle jobs may be down" if stuck_failed
+            else "Every failed payout with a usable account is being retried",
+            stuck_failed,
+        )
+
+        # 4. Pending commissions with a real payout account that have
+        # NEVER been attempted at all (payout_id still null) — should only
+        # ever be momentary, between creation and the first attempt.
+        #
+        # Capped at 30 days old (settle_pending_flutterwave_commissions /
+        # settle_pending_stripe_commissions's own lookback_days default in
+        # commission_service.py): a commission older than that was never
+        # going to be picked up by the settle jobs in the first place — it's
+        # a known, separate "needs manual handling" case, not a sign those
+        # jobs are down. Without this cap, two of Clinton's own commissions
+        # (#52, #55 — both outside that 30-day window) permanently tripped
+        # this into "broken" even though the settle jobs were working fine
+        # the whole time; every FUTURE commission outside the window would
+        # do the same, alarming on something this check isn't meant to
+        # catch instead of the real thing it's for: a commission that's new
+        # enough to still be in-window but hasn't been touched yet.
+        never_attempted_cutoff = now - timedelta(hours=1)
+        settle_job_lookback_cutoff = now - timedelta(days=30)
+        never_attempted = (
+            db.query(Commission)
+            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
+            .filter(
+                Commission.status == "pending",
+                Commission.payout_id.is_(None),
+                Commission.created_at < never_attempted_cutoff,
+                Commission.created_at >= settle_job_lookback_cutoff,
+            )
+            .count()
+        )
+        add(
+            "Commissions never attempted", "critical" if never_attempted else "ok",
+            f"{never_attempted} commission(s) with a usable payout account have sat over an hour with no payout attempt at all" if never_attempted
+            else "No commission with a usable account has gone unattempted",
+            never_attempted,
+        )
+
+        # 5 & 6. Cross-check against the providers THEMSELVES, not just our
+        # own tables. Every check above this point only ever looks at data
+        # already inside our database — none of them can notice a payment
+        # that genuinely succeeded on Stripe or Flutterwave's side but
+        # never made it into our records at all (a webhook that silently
+        # no-ops looks IDENTICAL to "nothing happened" from inside our own
+        # tables). This happened in production: a real Stripe renewal
+        # succeeded, confirmed via Stripe's own dashboard, with zero trace
+        # in Subscriptions — see the subscription_id idempotency fix in
+        # subscriptions/stripe.py. Comparing live balances (which the
+        # checks above this comment effectively already do, indirectly,
+        # via PlatformBalanceSnapshot) would NOT have caught that bug
+        # either — the money was still sitting in Stripe's balance either
+        # way; what was missing was the transaction RECORD, not the
+        # balance total. So this instead lists each provider's recent
+        # successful transactions directly and checks each one has a
+        # matching Subscriptions row.
+        reconciliation_lookback_hours = 48
+        # A transaction younger than this is given time to actually be
+        # processed before being flagged — a webhook can take a few
+        # minutes, not seconds, especially under retry/backoff.
+        reconciliation_min_age_minutes = 15
+        age_cutoff = now - timedelta(minutes=reconciliation_min_age_minutes)
+
+        try:
+            lookback_ts = int((now - timedelta(hours=reconciliation_lookback_hours)).timestamp())
+            missing_stripe = []
+            checked_stripe = 0
+            invoices = stripe.Invoice.list(status='paid', created={'gte': lookback_ts}, limit=100)
+            for inv in invoices.auto_paging_iter():
+                paid_at = getattr(getattr(inv, 'status_transitions', None), 'paid_at', None) or getattr(inv, 'created', None)
+                if paid_at and datetime.fromtimestamp(paid_at, tz=timezone.utc) > age_cutoff:
+                    continue
+                checked_stripe += 1
+                payment_intent_id = getattr(inv, 'payment_intent', None)
+                charge_id = getattr(inv, 'charge', None)
+                candidates = [c for c in (payment_intent_id, charge_id, inv.id) if c]
+                found = db.query(Subscriptions).filter(Subscriptions.transaction_id.in_(candidates)).first()
+                if not found:
+                    missing_stripe.append(inv.id)
+            add(
+                "Stripe transactions recorded in our database",
+                "critical" if missing_stripe else "ok",
+                (
+                    f"{len(missing_stripe)} of {checked_stripe} Stripe invoice(s) paid in the last "
+                    f"{reconciliation_lookback_hours}h have no matching Subscriptions row: "
+                    f"{', '.join(missing_stripe[:5])}" + (" …" if len(missing_stripe) > 5 else "")
+                ) if missing_stripe else
+                f"All {checked_stripe} Stripe invoice(s) paid in the last {reconciliation_lookback_hours}h are recorded",
+                len(missing_stripe),
+            )
+        except Exception as e:
+            logger.warning(f"[integrity-check] Stripe reconciliation failed: {e}")
+            add("Stripe transactions recorded in our database", "warning", f"Could not reach Stripe to reconcile: {e}", None)
+
+        try:
+            flw_key = os.getenv("NEXT_PUBLIC_FLUTTERWAVE_SECRET_KEY")
+            if not flw_key:
+                add("Flutterwave transactions recorded in our database", "warning", "Flutterwave secret key not configured — cannot reconcile", None)
+            else:
+                from_date = (now - timedelta(hours=reconciliation_lookback_hours)).strftime("%Y-%m-%d")
+                to_date = now.strftime("%Y-%m-%d")
+                resp = requests.get(
+                    "https://api.flutterwave.com/v3/transactions",
+                    headers={"Authorization": f"Bearer {flw_key}"},
+                    params={"from": from_date, "to": to_date, "status": "successful"},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                txns = resp.json().get("data", []) or []
+                missing_flw = []
+                checked_flw = 0
+                for txn in txns:
+                    created_at_str = txn.get("created_at")
+                    if created_at_str:
+                        try:
+                            txn_time = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                            if txn_time > age_cutoff:
+                                continue
+                        except ValueError:
+                            pass
+                    checked_flw += 1
+                    txn_id = str(txn.get("id")) if txn.get("id") is not None else None
+                    if not txn_id:
+                        continue
+                    found = db.query(Subscriptions).filter(Subscriptions.transaction_id == txn_id).first()
+                    if not found:
+                        missing_flw.append(txn_id)
+                add(
+                    "Flutterwave transactions recorded in our database",
+                    "critical" if missing_flw else "ok",
+                    (
+                        f"{len(missing_flw)} of {checked_flw} Flutterwave transaction(s) succeeded in the last "
+                        f"{reconciliation_lookback_hours}h with no matching Subscriptions row: "
+                        f"{', '.join(missing_flw[:5])}" + (" …" if len(missing_flw) > 5 else "")
+                    ) if missing_flw else
+                    f"All {checked_flw} Flutterwave transaction(s) succeeded in the last {reconciliation_lookback_hours}h are recorded",
+                    len(missing_flw),
+                )
+        except Exception as e:
+            logger.warning(f"[integrity-check] Flutterwave reconciliation failed: {e}")
+            add("Flutterwave transactions recorded in our database", "warning", f"Could not reach Flutterwave to reconcile: {e}", None)
+
+        worst = "healthy"
+        if any(c["status"] == "critical" for c in checks):
+            worst = "broken"
+        elif any(c["status"] == "warning" for c in checks):
+            worst = "degraded"
+
+        return {"status": worst, "checked_at": now.isoformat(), "checks": checks}
 
     @staticmethod
     def process_stripe_transfer_payout(
@@ -329,15 +681,32 @@ class PayoutService:
         if not user:
             raise ValueError(f"User {user_id} not found")
         
-        # Check available balance
-        available = db.query(
-            func.sum(Commission.amount)
+        # Check available balance — grouped by currency, not blended. This
+        # function has no currency parameter of its own (see PayoutRequest
+        # in pg_models.py), so rather than guess which currency `amount`
+        # is meant to be (a Stripe account's own currency isn't knowable
+        # here without an extra API call, and assuming NGN for Flutterwave
+        # would be wrong the moment a referrer has commissions in more
+        # than one currency), this fails closed: refuses to proceed if the
+        # user's approved-and-unpaid commissions span more than one
+        # currency, rather than silently summing incompatible currencies
+        # into one number the way this used to.
+        available_rows = db.query(
+            Commission.currency, func.sum(Commission.amount)
         ).filter(
             Commission.user_id == user_id,
             Commission.status == 'approved',
             Commission.payout_id.is_(None)
-        ).scalar() or Decimal("0.00")
-        
+        ).group_by(Commission.currency).all()
+        available_by_currency = {(row[0] or 'USD'): (row[1] or Decimal("0.00")) for row in available_rows}
+
+        if len(available_by_currency) > 1:
+            raise ValueError(
+                f"Approved balance spans multiple currencies ({', '.join(available_by_currency)}) — "
+                f"cannot determine which one this payout request is for."
+            )
+        available = next(iter(available_by_currency.values()), Decimal("0.00"))
+
         if available < amount:
             raise ValueError(
                 f"Insufficient balance. Available: ${available}, Requested: ${amount}"
@@ -1172,11 +1541,21 @@ class PayoutService:
         Complete Stripe payout (simulated or via potential webhook)
         """
         payout = db.query(Payout).filter(Payout.id == payout_id).first()
-        
+
         if not payout:
             logger.error(f"Payout {payout_id} not found")
             return
-        
+
+        # Same reasoning as complete_flutterwave_payout's own guard: the
+        # same outcome can arrive twice. Without this, a second "paid" call
+        # re-runs _update_summary_on_payout, which does
+        # summary.paid_commissions += amount with no idempotency of its
+        # own — doubling that total — and queues a second "payout
+        # succeeded" email.
+        if status == "paid" and payout.status == "completed":
+            logger.info(f"Stripe payout {payout_id} already completed — ignoring duplicate success")
+            return
+
         if status == "paid":
             payout.status = 'completed'
             payout.completed_at = datetime.now(timezone.utc)

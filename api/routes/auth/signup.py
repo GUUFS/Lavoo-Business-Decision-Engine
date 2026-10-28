@@ -256,7 +256,7 @@ def verify_signup(
         logger.info(f"[SIGNUP VERIFY] Processing referral for referrer ID: {referrer.id}")
         referrer.referral_count = (referrer.referral_count or 0) + 1
 
-        new_user.total_chops = (new_user.total_chops or 0) + 50
+        new_user.total_chops = (new_user.total_chops or 0) + 100
         referrer.total_chops = (referrer.total_chops or 0) + 50
         referrer.referral_chops = (referrer.referral_chops or 0) + 50
 
@@ -275,8 +275,8 @@ def verify_signup(
             type=NotificationType.REFERRAL_REGISTERED.value,
             title="Welcome Bonus!",
             message=(
-                "You received 50 chops for joining Lavoo!" if via_staff_pool
-                else "You received 50 chops for joining via a referral link."
+                "You received 100 chops for joining Lavoo!" if via_staff_pool
+                else "You received 100 chops for joining via a referral link."
             ),
             link="/dashboard/earnings"
         )

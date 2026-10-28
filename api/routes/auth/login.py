@@ -116,6 +116,7 @@ def build_auth_response_payload(
         "email": user.email,
         "role": get_effective_role(user),
         "is_admin": bool(getattr(user, "is_admin", False)),
+        "is_staff": bool(getattr(user, "is_staff", False)),
         "subscription_status": getattr(user, "subscription_status", None),
         "subscription_plan": getattr(user, "subscription_plan", None),
         "referral_code": getattr(user, "referral_code", None),

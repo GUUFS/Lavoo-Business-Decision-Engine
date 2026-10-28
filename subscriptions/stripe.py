@@ -313,6 +313,43 @@ def get_subscription_dates_from_stripe(subscription_result: dict, plan_type: str
     return start, start + timedelta(days=delta_map.get(plan_type, 30))
 
 
+def _find_subscription_for_stripe_charge(db, payment_intent_id, invoice_id):
+    """Resolve the Subscriptions row a refunded/disputed Stripe charge
+    belongs to, for CommissionService.reverse_commission_for_subscription.
+    Subscriptions.transaction_id is set to different Stripe IDs depending
+    on which code path created the row (see _create_active_subscription_record
+    vs. the payment_intent.succeeded handler), so this tries both:
+
+    1. Direct match: transaction_id == payment_intent_id (true for rows
+       created by the payment_intent.succeeded handler).
+    2. Via the invoice: fetch the Invoice to get its subscription ID, then
+       match transaction_id against THAT (true for rows created by
+       _create_active_subscription_record, which stores the Stripe
+       Subscription ID as transaction_id, not the PaymentIntent ID).
+
+    Returns None if neither resolves — logged by the caller, not raised,
+    since a webhook handler failing a lookup must never 500 back to Stripe
+    (Stripe would just retry the same unresolvable event forever).
+    """
+    if payment_intent_id:
+        found = db.query(Subscriptions).filter(Subscriptions.transaction_id == payment_intent_id).first()
+        if found:
+            return found
+
+    if invoice_id:
+        try:
+            invoice = stripe.Invoice.retrieve(invoice_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
+            sub_id = invoice.get("subscription") if isinstance(invoice, dict) else getattr(invoice, "subscription", None)
+            if sub_id:
+                found = db.query(Subscriptions).filter(Subscriptions.transaction_id == sub_id).first()
+                if found:
+                    return found
+        except Exception as e:
+            logger.warning(f"[CHARGEBACK] could not resolve invoice {invoice_id} to a subscription: {e}")
+
+    return None
+
+
 def _get_invoice_amount_and_currency(sub_result):
     """
     Read the actual charged amount and currency from the subscription's latest invoice.
@@ -988,7 +1025,8 @@ async def save_card_for_beta(
                 "source": "save_card_launch",
                 "is_beta_user": str(getattr(user, 'is_beta_user', False))
             },
-            off_session=False  # User is present — frontend confirms via OTP
+            off_session=False,  # User is present — frontend confirms via OTP
+            cancel_at_period_end=not request.save_card
         )
 
         sub_status = sub_result.get("status")
@@ -1358,15 +1396,37 @@ async def stripe_webhook(
             if hasattr(user, 'stripe_subscription_id') and user.stripe_subscription_id != subscription_id:
                 user.stripe_subscription_id = subscription_id
 
-            # Idempotency — skip if this payment event was already recorded.
-            # The direct API path stores transaction_id = subscription_id.
-            # The webhook path falls back to the invoice_id when no
-            # payment_intent exists. Check all three identifiers so that
-            # a subscription created by the API and then confirmed by the
-            # webhook does not produce a second row.
+            # Idempotency — skip if THIS payment event was already recorded.
+            #
+            # subscription_id (the Stripe Subscription object id) is
+            # CONSTANT for the subscription's entire lifetime — it does not
+            # change between billing cycles. Including it in ident_checks
+            # unconditionally (the previous version) meant: the very first
+            # payment gets recorded with transaction_id=subscription_id by
+            # the synchronous /confirm-subscription path
+            # (_create_active_subscription_record), and from that moment on
+            # EVERY SUBSEQUENT RENEWAL's webhook for this same subscription
+            # matched that same old row on subscription_id and silently
+            # skipped — no new Subscriptions row, no subscription_expires_at
+            # update, no commission, nothing — even though Stripe genuinely
+            # charged the card and the renewal succeeded. Confirmed in
+            # production: a real $1 USD renewal charge (Stripe dashboard
+            # shows "Payment succeeded") left no trace anywhere in this
+            # table for that subscription, and user.subscription_status
+            # stayed 'Free' past expiry.
+            #
+            # subscription_id is still worth checking, but ONLY for the
+            # subscription's first invoice (billing_reason ==
+            # 'subscription_create') — that's the one case where the
+            # synchronous confirm path and this webhook can race for the
+            # exact same payment. A renewal must only ever be deduped
+            # against its own unique identifier (payment_intent_id, or the
+            # charge/invoice id fallback), never against the subscription's
+            # permanent id.
+            is_initial_payment = getattr(invoice, 'billing_reason', None) == 'subscription_create'
             _lock_user_billing(db, user.id)  # wait out an in-flight /confirm-subscription
             ident_checks = [payment_intent_id]
-            if subscription_id:
+            if subscription_id and is_initial_payment:
                 ident_checks.append(subscription_id)
             existing = db.query(Subscriptions).filter(
                 Subscriptions.transaction_id.in_([i for i in ident_checks if i])
@@ -1399,12 +1459,8 @@ async def stripe_webhook(
             amount_paid = _invoice_val(invoice, 'amount_paid', 'total', 'amount_due')
             currency = getattr(invoice, 'currency', None) or 'usd'
 
-            # Stripe states which this is: 'subscription_create' is the
-            # customer's first-ever invoice on this subscription; anything
-            # else ('subscription_cycle', 'subscription_update', ...) is a
-            # later charge. Previously every paid invoice was recorded and
-            # announced as a "renewal", including the very first payment.
-            is_initial_payment = getattr(invoice, 'billing_reason', None) == 'subscription_create'
+            # is_initial_payment computed earlier, alongside the
+            # idempotency check that now also depends on it.
 
             new_sub = Subscriptions(
                 user_id=user.id, subscription_plan=plan_type,
@@ -1470,8 +1526,16 @@ async def stripe_webhook(
             # Find user — try Subscriptions table first, then customer ID
             user = None
             if sub_id:
+                # Subscriptions has no stripe_subscription_id column — this
+                # used to query one that doesn't exist, which raised
+                # AttributeError on every invoice.payment_failed event and
+                # was silently swallowed by the outer except, so payment-
+                # failed notifications never actually sent. transaction_id
+                # is what _create_active_subscription_record stores the
+                # Stripe Subscription ID as (see that function's own
+                # comment in this file).
                 sub_record = db.query(Subscriptions).filter(
-                    Subscriptions.stripe_subscription_id == sub_id
+                    Subscriptions.transaction_id == sub_id
                 ).first()
                 if sub_record:
                     user = db.query(User).filter(User.id == sub_record.user_id).first()
@@ -1483,6 +1547,25 @@ async def stripe_webhook(
 
             if user:
                 logger.warning(f"⚠️ Payment failed for user {user.id}, sub {sub_id or 'unknown'}")
+                # Unlike invoice.payment_succeeded just above (which dedupes
+                # on transaction_id before acting at all), this had no guard
+                # against a redelivered webhook — Stripe's retries are
+                # normal, not an edge case, and each one used to queue a
+                # fresh duplicate "Payment Failed" notification. One hour is
+                # comfortably past any realistic webhook-retry window while
+                # still letting a genuinely NEW failure on the next billing
+                # cycle notify normally.
+                from database.pg_models import UserNotification
+                from datetime import timedelta as _timedelta
+                recent_dup = db.query(UserNotification).filter(
+                    UserNotification.user_id == user.id,
+                    UserNotification.type == "payment_failed",
+                    UserNotification.created_at >= datetime.now(timezone.utc) - _timedelta(hours=1),
+                ).first()
+                if recent_dup:
+                    logger.info(f"[STRIPE] payment_failed notification already sent to user {user.id} in the last hour — skipping duplicate")
+                    db.commit()
+                    return {"status": "success"}
                 NotificationService.create_notification(
                     db=db, user_id=user.id,
                     type="payment_failed",
@@ -1499,9 +1582,15 @@ async def stripe_webhook(
 
         elif event.type == "customer.subscription.deleted":
             stripe_sub = event.data.object
-            # User model has no stripe_subscription_id column — look up via Subscriptions table
+            # Neither User nor Subscriptions has a stripe_subscription_id
+            # column — this used to query one that doesn't exist on
+            # Subscriptions, raising AttributeError on every
+            # customer.subscription.deleted event (swallowed by the outer
+            # except, so cancellations from Stripe's side never actually
+            # synced). transaction_id is what _create_active_subscription_
+            # record stores the Stripe Subscription ID as.
             sub_record = db.query(Subscriptions).filter(
-                Subscriptions.stripe_subscription_id == stripe_sub.id
+                Subscriptions.transaction_id == stripe_sub.id
             ).first()
             user = db.query(User).filter(User.id == sub_record.user_id).first() if sub_record else None
             if not user:
@@ -1541,10 +1630,15 @@ async def stripe_webhook(
             if uid:
                 user = db.query(User).filter(User.id == int(uid)).first()
 
-            # Strategy 2: match via Subscriptions table (User has no stripe_subscription_id column)
+            # Strategy 2: match via Subscriptions table — transaction_id is
+            # what _create_active_subscription_record stores the Stripe
+            # Subscription ID as (neither User nor Subscriptions has a
+            # stripe_subscription_id column; querying one that doesn't
+            # exist used to raise AttributeError here whenever metadata
+            # lookup above missed, silently swallowed by the outer except).
             if not user:
                 sub_rec = db.query(Subscriptions).filter(
-                    Subscriptions.stripe_subscription_id == stripe_sub.id
+                    Subscriptions.transaction_id == stripe_sub.id
                 ).first()
                 if sub_rec:
                     user = db.query(User).filter(User.id == sub_rec.user_id).first()
@@ -1614,6 +1708,34 @@ async def stripe_webhook(
                 from subscriptions.commission_service import CommissionService
                 CommissionService.calculate_commission(subscription=subscription, db=db)
                 db.commit()
+
+        elif event.type == "charge.refunded":
+            charge = event.data.object
+            # Only a FULL refund revokes access/claws back — a partial
+            # refund (support goodwill, proration) isn't "this subscription
+            # didn't happen," so leave those alone rather than guess.
+            if charge.get("amount_refunded") == charge.get("amount"):
+                sub_record = _find_subscription_for_stripe_charge(
+                    db, charge.get("payment_intent"), charge.get("invoice")
+                )
+                if sub_record:
+                    from subscriptions.commission_service import CommissionService
+                    CommissionService.reverse_commission_for_subscription(sub_record, "refund", db)
+                    db.commit()
+                else:
+                    logger.warning(f"[CHARGEBACK] charge.refunded for charge={charge.get('id')} — no matching Subscriptions row found")
+
+        elif event.type == "charge.dispute.created":
+            dispute = event.data.object
+            sub_record = _find_subscription_for_stripe_charge(
+                db, dispute.get("payment_intent"), None
+            )
+            if sub_record:
+                from subscriptions.commission_service import CommissionService
+                CommissionService.reverse_commission_for_subscription(sub_record, "dispute", db)
+                db.commit()
+            else:
+                logger.warning(f"[CHARGEBACK] charge.dispute.created for charge={dispute.get('charge')} — no matching Subscriptions row found")
 
         elif event.type == "payout.paid":
             handle_payout_paid(event, db)
@@ -1787,7 +1909,8 @@ async def create_subscription_with_saved_card(
                 "plan_type": request.plan_type,
                 "currency": currency,
                 "tx_ref": tx_ref
-            }
+            },
+            cancel_at_period_end=not request.save_card
         )
 
         if subscription_result["status"] == "active":
