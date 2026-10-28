@@ -1025,7 +1025,8 @@ async def save_card_for_beta(
                 "source": "save_card_launch",
                 "is_beta_user": str(getattr(user, 'is_beta_user', False))
             },
-            off_session=False  # User is present — frontend confirms via OTP
+            off_session=False,  # User is present — frontend confirms via OTP
+            cancel_at_period_end=not request.save_card
         )
 
         sub_status = sub_result.get("status")
@@ -1908,7 +1909,8 @@ async def create_subscription_with_saved_card(
                 "plan_type": request.plan_type,
                 "currency": currency,
                 "tx_ref": tx_ref
-            }
+            },
+            cancel_at_period_end=not request.save_card
         )
 
         if subscription_result["status"] == "active":
