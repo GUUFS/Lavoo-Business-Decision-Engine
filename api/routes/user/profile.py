@@ -79,7 +79,7 @@ def get_profile(
         "avatar_url": current_user.avatar_url,
         "role": getattr(current_user, 'role', 'normal_user') or 'normal_user',
         "is_admin": bool(getattr(current_user, 'is_admin', False)),
-        "is_staff": bool(getattr(current_user, 'is_staff', False)),
+        "is_staff": bool(getattr(current_user, 'is_staff', False) or getattr(current_user, 'is_partner', False) or getattr(current_user, 'role', None) in ('staff', 'admin')),
         "subscription_status": current_user.subscription_status or "Free",
         "subscription_plan": current_user.subscription_plan,
         "is_beta_user": getattr(current_user, 'is_beta_user', False),

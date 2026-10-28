@@ -3860,6 +3860,9 @@ async def get_user_profile(
         "total_chops": user.total_chops or 0,
         "post_count": posts_count,
         "subscription_status": user.subscription_status or "Free",
+        "role": getattr(user, "role", "normal_user") or "normal_user",
+        "is_admin": bool(getattr(user, "is_admin", False)),
+        "is_staff": bool(getattr(user, "is_staff", False) or getattr(user, "is_partner", False) or getattr(user, "role", None) in ("staff", "admin")),
         "hide_public_metrics": getattr(user, "hide_public_metrics", False),
         "metrics_hidden": hide_metrics,
         "metrics": {
