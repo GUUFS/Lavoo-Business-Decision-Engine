@@ -278,7 +278,6 @@ async def get_monthly_performance(
     user_id = current_user.id
     try:
         print(f"[/earnings/monthly] Starting for user {user_id}")
-        user_commission_rate = CommissionService._get_rate_for_referrer(user_id, db)
         today = datetime.now()
         monthly_data = []
         
@@ -335,7 +334,21 @@ async def get_monthly_performance(
             print(f"[/earnings/monthly] Found {len(subscription_payments)} successful payments")
         else:
             subscription_payments = []
-        
+
+        # Commission actually earned, fetched once for the whole range and
+        # bucketed per month below — NOT recomputed from referred-user
+        # payments × the referrer's current rate (see
+        # /earnings/monthly/{year}/{month}'s own comment for why that drifts
+        # from the real, already-recorded amount).
+        commission_rows = db.query(
+            Commission.currency,
+            Commission.amount,
+            Commission.created_at
+        ).filter(
+            Commission.user_id == user_id,
+            Commission.created_at >= oldest_date
+        ).all()
+
         # Process each month
         for month_start, month_end in reversed(month_ranges):
             # Referrals made this month
@@ -353,21 +366,21 @@ async def get_monthly_performance(
                 if month_start <= payment.created_at <= month_end
             ]
             
-            # Calculate commissions for this month, at this user's own actual
-            # rate (40% subscribed / 15% free / 50% partner) rather than a
-            # flat assumption — see CommissionService._get_rate_for_referrer.
-            #
-            # GROUPED BY CURRENCY, same reasoning as /earnings/summary above:
-            # summing p.amount across a NGN payment and a USD payment in the
-            # same month produced one meaningless blended figure. Each
-            # currency present gets its own commission total.
+            # Commission actually earned this month, summed from the real
+            # Commission rows (see commission_rows above). GROUPED BY
+            # CURRENCY, same reasoning as /earnings/summary above: a NGN row
+            # and a USD row summed together with no grouping produced one
+            # meaningless blended figure.
+            month_commission_rows = [
+                c for c in commission_rows
+                if month_start <= c.created_at <= month_end
+            ]
             commission_by_currency: dict = {}
-            for p in month_payments:
-                currency = p.currency or "USD"
-                commission_by_currency[currency] = commission_by_currency.get(currency, 0.0) + float(p.amount)
+            for c in month_commission_rows:
+                currency = c.currency or "USD"
+                commission_by_currency[currency] = commission_by_currency.get(currency, 0.0) + float(c.amount)
             commission_by_currency = {
-                currency: round(total * float(user_commission_rate), 2)
-                for currency, total in commission_by_currency.items()
+                currency: round(total, 2) for currency, total in commission_by_currency.items()
             }
             # Legacy single-number fields now report the largest currency's
             # figure only (never a cross-currency blend) — kept for any
@@ -494,26 +507,30 @@ async def get_monthly_metrics_for_period(
 
         print(f"[/earnings/monthly/{year}/{month}] Paid referrals (actually paid in this month): {paid_referral_count}")
 
-        # Calculate commission based on actual subscription payments made in this month
-        # by ANY referred users (not just those referred this month).
-        # Use explicit select_from to avoid join ambiguity. GROUPED BY
-        # CURRENCY — same reasoning as /earnings/summary and /earnings/monthly:
-        # a single coalesced sum across currencies blends NGN and USD into
-        # one meaningless figure.
-        month_payments_by_currency = db.query(
-            Subscriptions.currency,
-            func.coalesce(func.sum(Subscriptions.amount), 0).label('total_amount')
-        ).select_from(Subscriptions).filter(
-            Subscriptions.user_id.in_(db.query(all_referred_user_ids.c.referred_user_id)),
-            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
-            Subscriptions.created_at >= month_start,
-            Subscriptions.created_at <= month_end
-        ).group_by(Subscriptions.currency).all()
+        # Commission actually earned this month — summed straight from the
+        # Commission rows themselves, NOT recomputed as "referred-user
+        # payments this month × the referrer's CURRENT rate". That
+        # recomputation used today's rate for every past month, and ignored
+        # eligibility entirely (a payment outside the 6-month window, or a
+        # second yearly payment, has no Commission row at all but still got
+        # counted here) — e.g. a real $200 Commission showing as $250
+        # because the referrer's rate had since changed. The actual amount
+        # recorded at the time, for the rate and eligibility that applied
+        # THEN, is always correct; a current-rate recomputation can only
+        # drift from it. GROUPED BY CURRENCY — same reasoning as
+        # /earnings/summary and /earnings/monthly.
+        month_commissions_by_currency = db.query(
+            Commission.currency,
+            func.coalesce(func.sum(Commission.amount), 0).label('total_amount')
+        ).filter(
+            Commission.user_id == user_id,
+            Commission.created_at >= month_start,
+            Commission.created_at <= month_end
+        ).group_by(Commission.currency).all()
 
-        user_commission_rate = CommissionService._get_rate_for_referrer(user_id, db)
         commission_by_currency = {
-            (row.currency or "USD"): round(float(row.total_amount or 0) * float(user_commission_rate), 2)
-            for row in month_payments_by_currency
+            (row.currency or "USD"): round(float(row.total_amount or 0), 2)
+            for row in month_commissions_by_currency
         }
         # Legacy single-number field reports the largest currency only.
         month_commission = max(commission_by_currency.values(), default=0.0)

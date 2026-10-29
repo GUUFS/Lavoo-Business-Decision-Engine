@@ -11,10 +11,25 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-COMMISSION_RATE_STANDARD = Decimal("0.40")   # 40% — shown on screen, paid to subscribed regular users
-COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff (screen still shows 40%)
-COMMISSION_RATE_FREE     = Decimal("0.15")   # 15% — paid to a referrer who is on the free plan themselves
-COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides the normal 40/15/50% logic regardless of that staff member's own plan
+COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff, unconditionally on every payment
+COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides everything below regardless of that staff member's own plan
+
+# Builder Bonus Rewards rates, keyed by the REFERRER's own current plan —
+# not the referral's. Eligibility (whether a given payment pays out at all)
+# is separate — see _commission_eligibility below.
+COMMISSION_RATE_PREMIUM = Decimal("0.40")    # 40% — referrer is actively on Premium
+COMMISSION_RATE_PRO     = Decimal("0.25")    # 25% — referrer is actively on Pro
+COMMISSION_RATE_STARTER = Decimal("0.10")    # 10% — referrer is on the free Starter plan; ONE-TIME only, see below
+
+# Legacy aliases kept for anything that still imports the old names directly.
+COMMISSION_RATE_STANDARD = COMMISSION_RATE_PREMIUM
+COMMISSION_RATE_FREE = COMMISSION_RATE_STARTER
+
+# A monthly or quarterly referral keeps paying the referrer on every payment
+# that clears within this many days of the referral's FIRST successful
+# payment — roughly 6 months. A yearly referral never uses this window: it
+# pays once, on that first payment, and never again (see _commission_eligibility).
+RECURRING_WINDOW_DAYS = 183
 
 # Awarded to the SUBSCRIBER themselves (not a referrer) EVERY time one of
 # their subscription payments succeeds — initial purchase or renewal alike,
@@ -67,25 +82,159 @@ class CommissionService:
     _last_waiting_alert_flutterwave: "datetime | None" = None
 
     @staticmethod
-    def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
-        """Return the actual payout rate for a referrer.
-        Partners AND staff (is_partner OR is_staff — see User.is_staff's own
-        comment: an admin-assignable role, independent of is_partner) earn
-        50% regardless of their own subscription — assigning the Staff role
-        on the admin Permissions page is what's supposed to grant this, so
-        it has to actually change the rate, not just show a badge.
-        Otherwise the rate depends on the referrer's own subscription: an
-        active/paying referrer earns the standard 40%; a referrer on the
-        free plan earns 15%.
+    def _resolve_referrer_tier(referrer_id: int, db: Session) -> str:
+        """Which Builder Bonus tier a referrer is in RIGHT NOW: 'partner',
+        'premium', 'pro' or 'starter'. Checked fresh on every call — this is
+        what makes eligibility a per-payment check rather than something
+        locked in at the referral's first payment: a referrer who lapses
+        from Pro back to Starter between two of a referral's payments earns
+        the Pro rate on the payments that cleared while they were still
+        subscribed, and nothing on the ones that cleared after they lapsed.
+
+        Partners AND staff (is_partner OR is_staff — an admin-assignable
+        role, independent of is_partner) are 'partner' regardless of their
+        own subscription — assigning the Staff role on the admin
+        Permissions page is what's supposed to grant this, so it has to
+        actually change the rate, not just show a badge.
+
+        Otherwise: 'starter' unless User.subscription_status is 'active', in
+        which case the referrer's own most recent active Subscriptions row
+        is matched against PLAN_PRICES (via _resolve_plan_tier) to tell Pro
+        from Premium. An active referrer whose amount doesn't match either
+        price point (legacy pricing, a manual adjustment) is treated as
+        'starter' rather than guessed at — same fail-safe as
+        _resolve_plan_tier itself.
         """
         referrer = db.query(User).filter(User.id == referrer_id).first()
         if not referrer:
-            return COMMISSION_RATE_STANDARD
+            return "starter"
         if getattr(referrer, "is_partner", False) or getattr(referrer, "is_staff", False):
-            return COMMISSION_RATE_PARTNER
-        if (referrer.subscription_status or "").lower() == "active":
-            return COMMISSION_RATE_STANDARD
-        return COMMISSION_RATE_FREE
+            return "partner"
+        if (referrer.subscription_status or "").lower() != "active":
+            return "starter"
+
+        own_sub = (
+            db.query(Subscriptions)
+            .filter(
+                Subscriptions.user_id == referrer_id,
+                Subscriptions.subscription_status == "active",
+            )
+            .order_by(Subscriptions.created_at.desc())
+            .first()
+        )
+        if not own_sub:
+            return "starter"
+        tier = CommissionService._resolve_plan_tier(Decimal(str(own_sub.amount)), own_sub.currency)
+        return tier or "starter"
+
+    @staticmethod
+    def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
+        """Display-only: the rate a referrer currently earns on an eligible
+        payment, for showing on the earnings page. Does NOT by itself mean
+        every payment pays this rate — see _commission_eligibility for the
+        first-payment/6-month-window/yearly-one-time rules that decide
+        whether a given payment is eligible at all."""
+        tier = CommissionService._resolve_referrer_tier(referrer_id, db)
+        return {
+            "partner": COMMISSION_RATE_PARTNER,
+            "premium": COMMISSION_RATE_PREMIUM,
+            "pro": COMMISSION_RATE_PRO,
+            "starter": COMMISSION_RATE_STARTER,
+        }[tier]
+
+    @staticmethod
+    def _eligibility_for_payment(
+        referrer_id: int,
+        via_staff_pool: bool,
+        referred_user_id: int,
+        billing_period: "str | None",
+        payment_time: datetime,
+        db: Session,
+        exclude_subscription_id: "int | None" = None,
+    ) -> "tuple[bool, Decimal]":
+        """Core eligibility/rate decision, built from primitives so it can be
+        called both AFTER a payment row exists (calculate_commission, via
+        _commission_eligibility below) and BEFORE one does — when
+        Flutterwave's split has to be configured on the charge request
+        itself, ahead of the charge succeeding (see
+        flutterwave_split.get_split_config_for_referred_user). Returns
+        (eligible, rate).
+
+        Rules (see commission_service.py module docstring area for the
+        rates themselves):
+          - via_staff_pool: flat 30%, always eligible — unaffected by any of
+            the below; this is an internal staff auto-assignment, not a
+            customer-facing Builder Bonus referral.
+          - partner/staff referrer: flat 50%, always eligible — same reason.
+          - Starter referrer: 10%, but ONLY on the referral's first-ever
+            successful payment. Never again from that referral, regardless
+            of billing period.
+          - Pro/Premium referrer, referral on a YEARLY plan: the tier rate,
+            but ONLY on the referral's first-ever successful payment — a
+            yearly referral pays its referrer exactly once, even when it
+            renews a year later.
+          - Pro/Premium referrer, referral on monthly/quarterly (or unknown
+            — treated as monthly/quarterly, the more common case): the tier
+            rate on every payment that clears within RECURRING_WINDOW_DAYS
+            of the referral's first successful payment. Checked fresh per
+            payment against the referrer's CURRENT tier — see
+            _resolve_referrer_tier.
+        """
+        if via_staff_pool:
+            return True, COMMISSION_RATE_STAFF_POOL
+
+        tier = CommissionService._resolve_referrer_tier(referrer_id, db)
+        if tier == "partner":
+            return True, COMMISSION_RATE_PARTNER
+
+        # Is this the referred user's first-ever successful payment?
+        earlier_filters = [
+            Subscriptions.user_id == referred_user_id,
+            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
+            Subscriptions.created_at < payment_time,
+        ]
+        if exclude_subscription_id is not None:
+            earlier_filters.append(Subscriptions.id != exclude_subscription_id)
+        earlier_payment = db.query(Subscriptions.id).filter(*earlier_filters).first()
+        is_first_payment = earlier_payment is None
+
+        if tier == "starter":
+            return is_first_payment, COMMISSION_RATE_STARTER
+
+        rate = COMMISSION_RATE_PREMIUM if tier == "premium" else COMMISSION_RATE_PRO
+        billing_period = (billing_period or "monthly").lower()
+
+        if billing_period == "yearly":
+            return is_first_payment, rate
+
+        # monthly/quarterly: recurring within RECURRING_WINDOW_DAYS of the
+        # referral's first successful payment (which may be this payment itself).
+        first_payment_row = (
+            db.query(Subscriptions.created_at)
+            .filter(
+                Subscriptions.user_id == referred_user_id,
+                Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
+            )
+            .order_by(Subscriptions.created_at.asc())
+            .first()
+        )
+        first_payment_date = first_payment_row[0] if first_payment_row else payment_time
+        within_window = (payment_time - first_payment_date) <= timedelta(days=RECURRING_WINDOW_DAYS)
+        return within_window, rate
+
+    @staticmethod
+    def _commission_eligibility(subscription, referral, db: Session) -> "tuple[bool, Decimal]":
+        """calculate_commission's entry point into _eligibility_for_payment
+        — see that method's docstring for the actual rules."""
+        return CommissionService._eligibility_for_payment(
+            referrer_id=referral.referrer_id,
+            via_staff_pool=referral.via_staff_pool,
+            referred_user_id=subscription.user_id,
+            billing_period=getattr(subscription, "subscription_plan", None),
+            payment_time=subscription.created_at,
+            db=db,
+            exclude_subscription_id=subscription.id,
+        )
 
     @staticmethod
     def _resolve_plan_tier(amount: Decimal, currency: str) -> "str | None":
@@ -198,13 +347,18 @@ class CommissionService:
                 logger.info(f"Commission already exists for subscription {subscription.id}")
                 return existing
 
-            # Determine rate: a staff-pool auto-assignment is a flat 30%
-            # regardless of that staff member's own plan; otherwise partners
-            # get 50%, everyone else 40% (15% if the referrer is on the free plan).
-            if referral.via_staff_pool:
-                actual_rate = COMMISSION_RATE_STAFF_POOL
-            else:
-                actual_rate = CommissionService._get_rate_for_referrer(referral.referrer_id, db)
+            # Determine eligibility and rate — see _commission_eligibility's
+            # own docstring for the full first-payment/6-month-window/
+            # yearly-one-time rules this payment is checked against.
+            eligible, actual_rate = CommissionService._commission_eligibility(subscription, referral, db)
+            if not eligible:
+                logger.info(
+                    f"[BUILDER BONUS] skipped | subscription={subscription.id} "
+                    f"referred_user={subscription.user_id} referrer={referral.referrer_id} — "
+                    f"not eligible (outside recurring window, past the one-time yearly/Starter "
+                    f"payment, or referrer not actively subscribed)"
+                )
+                return None
 
             # Calculate commission amount
             original_amount = Decimal(str(subscription.amount))
