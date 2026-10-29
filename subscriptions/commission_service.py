@@ -11,7 +11,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff, unconditionally on every payment
+COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff on their own real referrals, under the same 6-month/one-time rules as everyone else (see _eligibility_for_payment)
 COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides everything below regardless of that staff member's own plan
 
 # Builder Bonus Rewards rates, keyed by the REFERRER's own current plan —
@@ -162,30 +162,35 @@ class CommissionService:
 
         Rules (see commission_service.py module docstring area for the
         rates themselves):
-          - via_staff_pool: flat 30%, always eligible — unaffected by any of
-            the below; this is an internal staff auto-assignment, not a
-            customer-facing Builder Bonus referral.
-          - partner/staff referrer: flat 50%, always eligible — same reason.
-          - Starter referrer: 10%, but ONLY on the referral's first-ever
-            successful payment. Never again from that referral, regardless
-            of billing period.
-          - Pro/Premium referrer, referral on a YEARLY plan: the tier rate,
-            but ONLY on the referral's first-ever successful payment — a
-            yearly referral pays its referrer exactly once, even when it
-            renews a year later.
-          - Pro/Premium referrer, referral on monthly/quarterly (or unknown
-            — treated as monthly/quarterly, the more common case): the tier
-            rate on every payment that clears within RECURRING_WINDOW_DAYS
-            of the referral's first successful payment. Checked fresh per
-            payment against the referrer's CURRENT tier — see
-            _resolve_referrer_tier.
+          - via_staff_pool: flat 30%, always eligible, no window — this is a
+            no-referral-code signup auto-assigned to a staff member from a
+            rotating pool (set at signup, before any payment exists), not a
+            real Builder Bonus referral, so none of the rules below apply to
+            it.
+          - Every other referrer — partner/staff (50%), Premium (40%), Pro
+            (25%) alike — is a real referral and follows the SAME
+            eligibility rules, just at a different rate:
+              - Starter referrer: 10%, but ONLY on the referral's first-ever
+                successful payment. Never again from that referral,
+                regardless of billing period.
+              - Referral on a YEARLY plan: the tier rate, but ONLY on the
+                referral's first-ever successful payment — a yearly referral
+                pays its referrer exactly once, even when it renews a year
+                later.
+              - Referral on monthly/quarterly (or unknown — treated as
+                monthly/quarterly, the more common case): the tier rate on
+                every payment that clears within RECURRING_WINDOW_DAYS of
+                the referral's first successful payment. Checked fresh per
+                payment against the referrer's CURRENT tier — see
+                _resolve_referrer_tier — so a partner/staff referrer loses
+                nothing by this: the ONLY referrer tier currently exempt
+                from re-checking was partner/staff before this rule existed,
+                and that exemption is gone.
         """
         if via_staff_pool:
             return True, COMMISSION_RATE_STAFF_POOL
 
         tier = CommissionService._resolve_referrer_tier(referrer_id, db)
-        if tier == "partner":
-            return True, COMMISSION_RATE_PARTNER
 
         # Is this the referred user's first-ever successful payment?
         earlier_filters = [
@@ -201,7 +206,15 @@ class CommissionService:
         if tier == "starter":
             return is_first_payment, COMMISSION_RATE_STARTER
 
-        rate = COMMISSION_RATE_PREMIUM if tier == "premium" else COMMISSION_RATE_PRO
+        # partner/staff, premium and pro all follow the same window/one-time
+        # rules below — only the rate differs. A staff member's own personal
+        # referral is a real Builder Bonus referral like anyone else's; only
+        # the staff-pool auto-assignment above is exempt from these rules.
+        rate = {
+            "partner": COMMISSION_RATE_PARTNER,
+            "premium": COMMISSION_RATE_PREMIUM,
+            "pro": COMMISSION_RATE_PRO,
+        }[tier]
         billing_period = (billing_period or "monthly").lower()
 
         if billing_period == "yearly":
