@@ -79,7 +79,7 @@ from api.routes.auth import login, signup, forgot_password, google_oauth
 from api.routes.decision_engine import analyzer as business_analyzer
 from api.routes.user import stats as user_stats, alerts, insights, referrals, earnings, settings as user_settings, missions as user_missions, profile as user_profile
 from api.routes.support import customer_service, reviews, contact as support_contact
-from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact, staff_referrals
+from api.routes.admin import admin, security, firewall_scanner, revenue, users, dashboard, settings, permissions, content as admin_content, contact as admin_contact, staff_referrals, fraud as admin_fraud
 
 # Payment routes
 from subscriptions import paypal, flutterwave, stripe, commissions, stripe_connect
@@ -514,9 +514,16 @@ async def run_subscription_expiry_job():
             try:
                 now = datetime.now(_tz.utc)
                 active_statuses = ('active', 'completed', 'paid', 'successful', 'succeeded')
+                # subscription_status != 'Free' is what makes this scan only
+                # pick up rows this job hasn't already processed — status
+                # (the original payment-success record) is deliberately
+                # never changed by this job (see below), so it can't be
+                # used to tell "already handled" apart from "still needs
+                # handling" the way it used to.
                 all_expired = db.query(Subscriptions).filter(
                     Subscriptions.end_date < now,
                     Subscriptions.status.in_(active_statuses),
+                    Subscriptions.subscription_status != 'Free',
                 ).order_by(Subscriptions.user_id, Subscriptions.end_date.desc()).all()
 
                 # Deduplicate: keep only the most-recent expired sub per user.
@@ -530,9 +537,20 @@ async def run_subscription_expiry_job():
                     else:
                         older_subs.append(sub)
 
-                # Silently expire older superseded rows
+                # Silently expire older superseded rows. Only
+                # subscription_status (the LIFECYCLE field) changes —
+                # Subscriptions.status is "Original payment status" (see
+                # that column's own comment on the model): a payment that
+                # succeeded stays recorded as succeeded forever, same as a
+                # bank statement entry doesn't un-happen when an account
+                # later closes. Overwriting it to 'expired' here used to
+                # permanently erase that this row ever represented real
+                # revenue, which silently corrupted every revenue query
+                # that filters on payment-success status the moment ANY
+                # subscription's period lapsed (confirmed: this alone
+                # explained a real account's "Subscription Revenue"
+                # reading negative on the admin Revenue page).
                 for sub in older_subs:
-                    sub.status = 'expired'
                     sub.subscription_status = 'Free'
 
                 renewed = 0
@@ -570,7 +588,10 @@ async def run_subscription_expiry_job():
                                 ),
                                 link="/dashboard/upgrade",
                             )
-                        sub.status = 'expired'
+                        # See the older_subs loop above for why status
+                        # (the immutable original-payment-success record)
+                        # is never overwritten here, only
+                        # subscription_status (the lifecycle field).
                         sub.subscription_status = 'Free'
                         affected_users.add(user_id)
                         expired_count += 1
@@ -604,7 +625,8 @@ async def run_subscription_expiry_job():
                         logger.warning("[expiry-job] %s renewal failed for user %s — trying fallback", method, user_id)
 
                     if not success:
-                        sub.status = 'expired'
+                        # See the older_subs loop above for why status is
+                        # left untouched here.
                         sub.subscription_status = 'Free'
                         affected_users.add(user_id)
                         expired_count += 1
@@ -778,6 +800,74 @@ async def run_flutterwave_balance_monitor_job():
             logger.error("[flw-balance-job] error: %s", exc)
 
 
+async def run_stripe_balance_monitor_job():
+    """
+    Runs every 10 minutes. The Stripe-side counterpart to
+    run_flutterwave_balance_monitor_job above — records a
+    PlatformBalanceSnapshot per currency Lavoo actually sends Stripe
+    payouts in (USD, GBP) so the admin Revenue page shows a live Stripe
+    balance the same way it already shows Flutterwave's, and alerts the
+    admin the moment either drops below what's already owed.
+    """
+    from fastapi import BackgroundTasks
+    while True:
+        await asyncio.sleep(10 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.payout_service import PayoutService
+            bg = BackgroundTasks()
+            with SessionLocal() as db:
+                for ccy in ("USD", "GBP"):
+                    result = await asyncio.to_thread(PayoutService.check_stripe_balance, db, bg, ccy)
+                    logger.info("[stripe-balance-job] %s %s", ccy, result)
+            await bg()
+        except Exception as exc:
+            logger.error("[stripe-balance-job] error: %s", exc)
+
+
+async def run_payout_integrity_check_job():
+    """
+    Runs every 15 minutes. Answers "is the payout system actually working
+    right now" by directly checking the same tables every payout job
+    writes to — see PayoutService.check_payout_system_integrity for the
+    exact checks. Alerts the admin on the transition into trouble (status
+    changes away from 'healthy'), and again at most once every 6 hours
+    while it stays unhealthy, instead of emailing every single cycle.
+    """
+    from datetime import timedelta
+    from fastapi import BackgroundTasks
+    while True:
+        await asyncio.sleep(15 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.payout_service import PayoutService
+            bg = BackgroundTasks()
+            with SessionLocal() as db:
+                result = await asyncio.to_thread(PayoutService.check_payout_system_integrity, db)
+            logger.info("[payout-integrity-job] status=%s checks=%s", result["status"], result["checks"])
+
+            if result["status"] != "healthy":
+                now = datetime.now(timezone.utc)
+                became_unhealthy = PayoutService._last_integrity_status == "healthy"
+                last_alert = PayoutService._last_integrity_alert
+                due_for_reminder = last_alert is None or (now - last_alert) > timedelta(hours=6)
+                if became_unhealthy or due_for_reminder:
+                    problems = "\n".join(
+                        f"- [{c['status'].upper()}] {c['name']}: {c['detail']}"
+                        for c in result["checks"] if c["status"] != "ok"
+                    )
+                    PayoutService._queue_admin_alert(
+                        bg,
+                        subject=f"⚠️ Payout system integrity check: {result['status']}",
+                        body=f"The payout system health check found real problems:\n\n{problems}\n\nSee the admin Revenue page for full detail.",
+                    )
+                    PayoutService._last_integrity_alert = now
+            PayoutService._last_integrity_status = result["status"]
+            await bg()
+        except Exception as exc:
+            logger.error("[payout-integrity-job] error: %s", exc)
+
+
 async def run_stripe_commission_settlement_job():
     """
     Runs every 10 minutes. Pays commissions that are waiting to go out through
@@ -799,6 +889,29 @@ async def run_stripe_commission_settlement_job():
                 logger.info("[stripe-settle-job] %s", counts)
         except Exception as exc:
             logger.error("[stripe-settle-job] error: %s", exc)
+
+
+async def run_flutterwave_commission_settlement_job():
+    """
+    Runs every 10 minutes. The Flutterwave-side counterpart to
+    run_stripe_commission_settlement_job above — pays commissions waiting to
+    go out through a referrer's Flutterwave bank account (typically a
+    USD/GBP commission converted to NGN via live FX rate), usually because
+    the platform's Flutterwave wallet was empty when the commission was
+    earned. Checks the balance before creating anything, so an unfunded
+    cycle sends nothing and leaves no failed rows behind.
+    """
+    while True:
+        await asyncio.sleep(10 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from subscriptions.commission_service import CommissionService
+            with SessionLocal() as db:
+                counts = await asyncio.to_thread(CommissionService.settle_pending_flutterwave_commissions, db)
+            if counts["checked"]:
+                logger.info("[flutterwave-settle-job] %s", counts)
+        except Exception as exc:
+            logger.error("[flutterwave-settle-job] error: %s", exc)
 
 
 async def run_stripe_payout_reconcile_job():
@@ -916,6 +1029,28 @@ def run_heavy_schema_migrations():
                 db.commit()
             except Exception as e:
                 logger.warning(f"Failed to add flutterwave_card_token: {e}")
+
+            try:
+                # Staff is a role a user can hold ALONGSIDE moderator (and
+                # independently of is_admin) — not a mutually-exclusive
+                # value of users.role, which stays moderator/normal_user
+                # only. See api/routes/admin/permissions.py.
+                db.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_staff BOOLEAN DEFAULT FALSE"))
+                db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to add is_staff: {e}")
+
+            try:
+                # Idempotency key for CommissionService._award_plan_signup_chops
+                # (subscriptions/commission_service.py): one row = one real
+                # payment, so "has THIS row already paid out chops" is a
+                # direct, reliable per-renewal guard against a webhook retry
+                # double-awarding — unlike checking subscription STATUS,
+                # which a retry would see as unchanged-and-already-paid.
+                db.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS chops_awarded BOOLEAN DEFAULT FALSE"))
+                db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to add subscriptions.chops_awarded: {e}")
 
             # Security table fixes
             try:
@@ -1425,7 +1560,10 @@ async def startup_event():
     asyncio.create_task(run_scheduled_voo_bot_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
+    asyncio.create_task(run_stripe_balance_monitor_job())
+    asyncio.create_task(run_payout_integrity_check_job())
     asyncio.create_task(run_stripe_commission_settlement_job())
+    asyncio.create_task(run_flutterwave_commission_settlement_job())
     asyncio.create_task(run_stripe_payout_reconcile_job())
 
     try:
@@ -1574,6 +1712,7 @@ app.include_router(security.router, prefix="/api")
 app.include_router(firewall_scanner.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(permissions.router, prefix="/api")
+app.include_router(admin_fraud.router, prefix="/api")
 app.include_router(staff_referrals.router, prefix="/api")
 app.include_router(admin_contact.router, prefix="/api")
 app.include_router(signals.router, prefix="/api")

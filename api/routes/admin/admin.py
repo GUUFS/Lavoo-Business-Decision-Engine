@@ -926,14 +926,20 @@ async def fix_expired_subscriptions(
     from before the nightly background job was added.
     """
     now = datetime.now(timezone.utc)
+    # subscription_status != 'Free' excludes rows already processed — status
+    # (the original payment-success record) is deliberately never
+    # overwritten here (see api/main.py's own run_subscription_expiry_job
+    # for why: it silently corrupted historical revenue totals the moment
+    # a subscription's period lapsed), so it can't double as "already
+    # handled."
     expired = db.query(Subscriptions).filter(
         Subscriptions.end_date < now,
         Subscriptions.status.in_(('active', 'completed', 'paid', 'successful', 'succeeded')),
+        Subscriptions.subscription_status != 'Free',
     ).all()
 
     user_ids = set()
     for sub in expired:
-        sub.status = 'expired'
         sub.subscription_status = 'Free'
         user_ids.add(sub.user_id)
 

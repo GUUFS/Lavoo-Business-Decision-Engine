@@ -242,7 +242,7 @@ async def get_user_missions(
                 'analysis_id': analysis.id,
                 'business_goal': analysis.business_goal,
                 'title': analysis.strategic_priority or f"Mission: {analysis.business_goal[:50]}",
-                'description': f"Complete {total_steps} action steps",
+                'description': "Complete mission steps and add reflections to earn chops",
                 'progress': round(progress_percentage, 1),
                 'total_steps': total_steps,
                 'completed_steps': completed_count,
@@ -847,7 +847,11 @@ async def complete_mission_step(
             if 'completion_dates' not in user_progress:
                 user_progress['completion_dates'] = {}
             user_progress['completion_dates'][step_id] = datetime.now(timezone.utc).isoformat()
-            if is_first_ever_step:
+            # Gated on a reflection being attached to THIS completion — a step
+            # finished with no reflection earns no chops, same as every
+            # subsequent step. Completing it later with a reflection still
+            # earns the standalone reflection bonus below, just not this one.
+            if is_first_ever_step and body.reflection and body.reflection.strip():
                 current_user.total_chops = (current_user.total_chops or 0) + 20
                 chops_this_call += 20
 

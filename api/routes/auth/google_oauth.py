@@ -35,8 +35,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/google", tags=["Google OAuth"])
 
 # Google OAuth settings
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+# .strip(): a trailing newline/space pasted into Railway's env var editor is
+# invisible there and in a browser URL bar (the authorization leg tolerates
+# it), but httpx's form-encoded POST for the token exchange preserves it
+# exactly, byte for byte — Google then rejects the token exchange with the
+# same generic "doesn't comply with Google's OAuth 2.0 policy" message the
+# authorization leg uses for a mismatched redirect_uri, with no indication
+# the real cause is a stray trailing character rather than a wrong value.
+GOOGLE_CLIENT_ID = (os.getenv("GOOGLE_CLIENT_ID") or "").strip() or None
+GOOGLE_CLIENT_SECRET = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip() or None
 # Defaults corrected to match reality, not just left as a placeholder: the
 # route is actually mounted at /api/auth/google/callback (api/main.py mounts
 # this router at prefix="/api"; the old /api/v1/... default 404s), and the
@@ -44,8 +51,10 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 # class of stale-default bug found this session in stripe_connect.py and
 # payout_service.py, which each broke a redirect/callback whenever the real
 # env var was unset.
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "https://lavoo.io")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/google/callback").strip()
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://lavoo.io").strip()
+
+logger.info("[Google OAuth] configured redirect_uri=%r client_id_set=%s", GOOGLE_REDIRECT_URI, bool(GOOGLE_CLIENT_ID))
 
 # Google OAuth URLs
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -81,8 +90,12 @@ async def google_login(ref: Optional[str] = Query(None)):
     if ref:
         params["state"] = f"ref={ref}"
     
-    # Construct authorization URL
-    auth_url = f"{GOOGLE_AUTH_URL}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+    # Construct authorization URL. urlencode (not raw f-string interpolation)
+    # so "openid email profile" becomes openid+email+profile / %20-encoded —
+    # the previous version sent a literal unencoded space in the query
+    # string, which happened to be tolerated here but is invalid URL syntax.
+    from urllib.parse import urlencode
+    auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
     
     logger.info(f"Initiating Google OAuth flow{' with referral: ' + ref if ref else ''}")
     
@@ -223,7 +236,7 @@ async def google_callback(
 
                 if referrer:
                     referrer.referral_count = (referrer.referral_count or 0) + 1
-                    user.total_chops = (user.total_chops or 0) + 50
+                    user.total_chops = (user.total_chops or 0) + 100
                     referrer.total_chops = (referrer.total_chops or 0) + 50
                     referrer.referral_chops = (referrer.referral_chops or 0) + 50
 
@@ -240,8 +253,8 @@ async def google_callback(
                         type=NotificationType.REFERRAL_REGISTERED.value,
                         title="Welcome Bonus!",
                         message=(
-                            "You received 50 chops for joining Lavoo!" if via_staff_pool
-                            else "You received 50 chops for joining via a referral link."
+                            "You received 100 chops for joining Lavoo!" if via_staff_pool
+                            else "You received 100 chops for joining via a referral link."
                         ),
                         link="/dashboard/earnings",
                     )

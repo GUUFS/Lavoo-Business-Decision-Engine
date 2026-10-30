@@ -100,3 +100,4 @@ run_migrations.py
 debug_imports.py 
 reset_test_users.py 
 docs/
+.claude/settings.local.json

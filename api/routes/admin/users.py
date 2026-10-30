@@ -282,14 +282,18 @@ async def get_user_details(
         .order_by(Referral.created_at.desc())
         .first()
     )
+    # referrer_id points at the actual staff member's User row even for a
+    # staff-pool auto-assignment (signup.py sets referrer_id=referrer.id in
+    # both cases) — so the real name/email is always available here. Only
+    # the via_staff_pool flag itself distinguishes "signed up with a real
+    # referral code" from "no code, auto-assigned to a staff member."
     referred_by = None
-    if inbound_referral and inbound_referral.via_staff_pool:
-        referred_by = {"name": "Lavoo staff (no referral code used)", "email": None, "id": None}
-    elif inbound_referral and inbound_referral.referrer:
+    if inbound_referral and inbound_referral.referrer:
         referred_by = {
             "name": inbound_referral.referrer.name,
             "email": inbound_referral.referrer.email,
             "id": inbound_referral.referrer.id,
+            "via_staff_pool": inbound_referral.via_staff_pool,
         }
 
     if not user.is_active:
@@ -443,3 +447,165 @@ async def sync_subscription_statuses(
         "message": f"Synced subscription statuses for {updated_count} users",
         "updated_count": updated_count,
     }
+
+
+def _delete_user_completely(db: Session, user_id: int) -> dict:
+    """
+    Fully removes a user and everything tied to them. Most tables this
+    touches have no DB-level cascade (confirmed against the model
+    definitions — only the community/content tables do), so a plain
+    db.delete(user) would just fail on a foreign-key violation the moment
+    the account had ANY real activity. Walks every table with a hard
+    reference to users.id instead, in dependency order, then the user row.
+
+    Referrals are the one case that needs more than a delete: if this user
+    was credited chops for referring someone, deleting that Referral row
+    must also claw back the chops/referral_count it granted — otherwise a
+    real referrer's stats stay permanently inflated by a removed account,
+    silently wrong forever.
+
+    Returns a summary dict for the caller to report back.
+    """
+    from database.pg_models import (
+        BusinessAnalysis, UserNotification, Ticket, TicketMessage, UserAlert,
+        Referral, StaffReferralPool, Commission, Payout, PayoutAccount,
+        CommissionSummary, UserInsight, UserPinnedInsight, UserPinnedAlert,
+        Trend, PushSubscription, CommunityChannel, ChannelMember,
+        CommunityDiscussion, DiscussionPollVote, DiscussionReply,
+        DiscussionLike, DiscussionBookmark, EventRegistration,
+        CommunityActivity, SavedItem,
+    )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return {"status": "not_found", "user_id": user_id}
+
+    summary = {"user_id": user_id, "email": user.email, "deleted": {}, "chops_corrections": []}
+
+    def _delete_all(model, *filters):
+        count = db.query(model).filter(*filters).delete(synchronize_session=False)
+        if count:
+            summary["deleted"][model.__name__] = summary["deleted"].get(model.__name__, 0) + count
+
+    # Commissions earned by someone ELSE because of this user's activity
+    # (they were the referred_user on the subscription that created it) —
+    # delete the row, but it isn't this user's own money, so no chops
+    # correction is owed for these the way it is for Referral below.
+    _delete_all(Commission, or_(Commission.user_id == user_id, Commission.referred_user_id == user_id))
+
+    # Referrals — reverse the chops a REAL referrer was credited for
+    # referring this user, before removing the row.
+    incoming_refs = db.query(Referral).filter(Referral.referred_user_id == user_id).all()
+    for r in incoming_refs:
+        referrer = db.query(User).filter(User.id == r.referrer_id).first()
+        if referrer and referrer.id != user_id:
+            before = (referrer.total_chops, referrer.referral_chops, referrer.referral_count)
+            referrer.total_chops = max(0, (referrer.total_chops or 0) - (r.chops_awarded or 0))
+            referrer.referral_chops = max(0, (referrer.referral_chops or 0) - (r.chops_awarded or 0))
+            referrer.referral_count = max(0, (referrer.referral_count or 0) - 1)
+            summary["chops_corrections"].append({
+                "referrer_email": referrer.email,
+                "total_chops": f"{before[0]}->{referrer.total_chops}",
+                "referral_chops": f"{before[1]}->{referrer.referral_chops}",
+                "referral_count": f"{before[2]}->{referrer.referral_count}",
+            })
+    _delete_all(Referral, or_(Referral.referrer_id == user_id, Referral.referred_user_id == user_id))
+
+    _delete_all(Subscriptions, Subscriptions.user_id == user_id)
+    _delete_all(Payout, Payout.user_id == user_id)
+    _delete_all(PayoutAccount, PayoutAccount.user_id == user_id)
+    _delete_all(CommissionSummary, CommissionSummary.user_id == user_id)
+    _delete_all(StaffReferralPool, StaffReferralPool.user_id == user_id)
+    _delete_all(BusinessAnalysis, BusinessAnalysis.user_id == user_id)
+    _delete_all(UserNotification, UserNotification.user_id == user_id)
+    _delete_all(UserAlert, UserAlert.user_id == user_id)
+    _delete_all(UserInsight, UserInsight.user_id == user_id)
+    _delete_all(UserPinnedInsight, UserPinnedInsight.user_id == user_id)
+    _delete_all(UserPinnedAlert, UserPinnedAlert.user_id == user_id)
+    _delete_all(PushSubscription, PushSubscription.user_id == user_id)
+
+    ticket_ids = [t.id for t in db.query(Ticket.id).filter(Ticket.user_id == user_id).all()]
+    _delete_all(TicketMessage, TicketMessage.sender_id == user_id)
+    if ticket_ids:
+        _delete_all(TicketMessage, TicketMessage.ticket_id.in_(ticket_ids))
+    _delete_all(Ticket, Ticket.user_id == user_id)
+
+    db.query(Trend).filter(Trend.created_by == user_id).update({"created_by": None}, synchronize_session=False)
+
+    # Community content — the DB models declare ondelete="CASCADE" for
+    # these, but defensive CREATE TABLE fallbacks elsewhere in this app
+    # (api/main.py, used when Alembic drifts) don't reliably apply the
+    # same constraint, so delete explicitly rather than trust it's live.
+    _delete_all(ChannelMember, ChannelMember.user_id == user_id)
+    _delete_all(DiscussionPollVote, DiscussionPollVote.user_id == user_id)
+    _delete_all(DiscussionLike, DiscussionLike.user_id == user_id)
+    _delete_all(DiscussionBookmark, DiscussionBookmark.user_id == user_id)
+    _delete_all(EventRegistration, EventRegistration.user_id == user_id)
+    _delete_all(CommunityActivity, CommunityActivity.user_id == user_id)
+    _delete_all(SavedItem, SavedItem.user_id == user_id)
+    reply_ids = [r.id for r in db.query(DiscussionReply.id).filter(DiscussionReply.user_id == user_id).all()]
+    _delete_all(DiscussionReply, DiscussionReply.user_id == user_id)
+    disc_ids = [d.id for d in db.query(CommunityDiscussion.id).filter(CommunityDiscussion.user_id == user_id).all()]
+    if disc_ids:
+        _delete_all(DiscussionReply, DiscussionReply.discussion_id.in_(disc_ids))
+        _delete_all(DiscussionLike, DiscussionLike.discussion_id.in_(disc_ids))
+        _delete_all(DiscussionBookmark, DiscussionBookmark.discussion_id.in_(disc_ids))
+        _delete_all(DiscussionPollVote, DiscussionPollVote.discussion_id.in_(disc_ids))
+    _delete_all(CommunityDiscussion, CommunityDiscussion.user_id == user_id)
+
+    db.delete(user)
+    summary["deleted"]["User"] = 1
+    return summary
+
+
+@router.delete("/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete one user and everything tied to their account."""
+    if current_user.id == user_id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+    try:
+        summary = _delete_user_completely(db, user_id)
+        if summary.get("status") == "not_found":
+            raise HTTPException(status_code=404, detail="User not found")
+        db.commit()
+        logger.warning(f"[admin] User {user_id} ({summary.get('email')}) permanently deleted by admin {current_user.email}: {summary}")
+        return {"status": "success", "summary": summary}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[admin] Failed to delete user {user_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/delete-bulk")
+async def delete_users_bulk(
+    payload: dict,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete several users at once. Body: {"user_ids": [1, 2, 3]}."""
+    user_ids = payload.get("user_ids") or []
+    if not isinstance(user_ids, list) or not user_ids:
+        raise HTTPException(status_code=400, detail="user_ids must be a non-empty list")
+    if current_user.id in user_ids:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    results = []
+    for uid in user_ids:
+        try:
+            summary = _delete_user_completely(db, int(uid))
+            db.commit()
+            results.append(summary)
+            logger.warning(f"[admin] User {uid} permanently deleted (bulk) by admin {current_user.email}: {summary}")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[admin] Bulk delete failed for user {uid}: {e}", exc_info=True)
+            results.append({"user_id": uid, "status": "error", "error": str(e)})
+
+    deleted_count = len([r for r in results if r.get("status") != "error" and r.get("status") != "not_found"])
+    return {"status": "success", "deleted_count": deleted_count, "results": results}
