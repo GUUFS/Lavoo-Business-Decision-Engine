@@ -136,9 +136,15 @@ def _require_moderator(current_user: User) -> User:
     """
     Raise HTTP 403 unless the user holds the moderator role or is an admin.
     Call at the top of any write endpoint that authors Signals.
+    Staff and partner accounts also carry moderator privileges.
     """
-    is_moderator = current_user.role == UserRole.MODERATOR.value
-    if not is_moderator and not current_user.is_admin:
+    is_moderator = (
+        getattr(current_user, "role", None) in (UserRole.MODERATOR.value, "moderator", "admin", "staff")
+        or bool(getattr(current_user, "is_admin", False))
+        or bool(getattr(current_user, "is_staff", False))
+        or bool(getattr(current_user, "is_partner", False))
+    )
+    if not is_moderator:
         raise HTTPException(
             status_code=403,
             detail="Only moderators can author Signal posts.",
@@ -929,7 +935,12 @@ async def delete_comment(
         raise HTTPException(status_code=400, detail="Comment is already deleted.")
 
     is_own_comment = comment.user_id == current_user.id
-    is_moderator   = current_user.role == UserRole.MODERATOR.value
+    is_moderator = (
+        getattr(current_user, "role", None) in (UserRole.MODERATOR.value, "moderator", "admin", "staff")
+        or bool(getattr(current_user, "is_admin", False))
+        or bool(getattr(current_user, "is_staff", False))
+        or bool(getattr(current_user, "is_partner", False))
+    )
     if not is_own_comment and not is_moderator and not current_user.is_admin:
         raise HTTPException(
             status_code=403,
