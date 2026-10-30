@@ -286,7 +286,9 @@ def create_flutterwave_subaccount(
         return None
 
 
-def get_split_config_for_referred_user(referred_user_id: int, db: Session) -> Optional[dict]:
+def get_split_config_for_referred_user(
+    referred_user_id: int, db: Session, billing_period: Optional[str] = None
+) -> Optional[dict]:
     """
     If `referred_user_id` was referred by someone with a verified, active
     Flutterwave subaccount, return {"subaccount_id",
@@ -347,7 +349,34 @@ def get_split_config_for_referred_user(referred_user_id: int, db: Session) -> Op
     # default split too — see create_flutterwave_subaccount's docstring for
     # why that stored default matters even though a correct per-transaction
     # override is also sent on every charge.
-    rate = CommissionService._get_rate_for_referrer(referral.referrer_id, db)
+    #
+    # ELIGIBILITY, not just rate: a Flutterwave split sends the referrer's
+    # share directly at charge time, outside our own Commission/payout
+    # pipeline entirely — if this payment is outside the referrer's 6-month
+    # recurring window, or is a yearly renewal (one-time commission already
+    # paid on the first payment), splitting here would send them real money
+    # a plain Commission row would never have been created for, with no
+    # later step able to claw it back. billing_period is only reliably known
+    # by the caller for a renewal charge (the initial-checkout caller passes
+    # none); omitting it is safe because a referred user's very FIRST
+    # payment is always eligible under every branch of
+    # _eligibility_for_payment regardless of billing period.
+    from datetime import datetime, timezone
+    eligible, rate = CommissionService._eligibility_for_payment(
+        referrer_id=referral.referrer_id,
+        via_staff_pool=referral.via_staff_pool,
+        referred_user_id=referred_user_id,
+        billing_period=billing_period,
+        payment_time=datetime.now(timezone.utc),
+        db=db,
+    )
+    if not eligible:
+        logger.info(
+            f"[FLW split] referrer={referral.referrer_id} not eligible for this payment "
+            f"(outside recurring window / one-time payment already used) — no split, "
+            f"charges 100% to Lavoo"
+        )
+        return None
     main_account_charge_fraction = float(Decimal("1") - rate)
 
     if not account:

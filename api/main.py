@@ -371,7 +371,7 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
                 build_split_config,
                 get_split_config_for_referred_user,
             )
-            split_config = get_split_config_for_referred_user(user_id, db)
+            split_config = get_split_config_for_referred_user(user_id, db, billing_period=plan)
             if split_config:
                 payload["subaccounts"] = [
                     build_split_config(split_config["subaccount_id"], split_config["main_account_charge_percentage"])
