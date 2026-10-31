@@ -404,9 +404,39 @@ USER'S BUSINESS CHALLENGE: "{user_query}"
 
 TASK: Would a real answer change what you'd recommend? If yes, write up to 3 short questions that fill EXACTLY those gaps — nothing generic, nothing the query already answers, nothing you could reasonably assume.
 
-Ask only when it matters. Most specific, detailed prompts need ZERO questions — return an empty list rather than manufacture one. Ask when something load-bearing is genuinely unknown: a number that changes the whole plan (current conversion rate, price point, team size, runway), a fork in approach the query doesn't resolve (B2B or B2C, which channel, in-house or outsourced), or a constraint that changes feasibility (budget, timeline, technical skill on hand).
+Default to asking unless the query already tells you BOTH (1) what the business actually sells/does and (2) at least one concrete number, constraint, or already-tried action. Missing either one is normally enough on its own to ask — don't talk yourself into "I could still give useful general advice here" as a reason to skip; general advice is exactly what this step exists to avoid. Most specific, detailed prompts need ZERO questions — return an empty list rather than manufacture one — but "detailed" means it actually contains those specifics, not that it's emotionally vivid or clearly describes a real problem.
 
 Never ask what the query already states or clearly implies. Never ask throwaway questions ("what's your industry?") when the query already names it. Never ask more than 3. Each question must be answerable in one short sentence or a number — not an essay prompt.
+
+CALIBRATION — three examples showing where the bar actually sits:
+
+Example A (short and vague, diagnostic — SHOULD ask): "Sales dropped and I don't know why"
+This names a symptom with no industry, no channel, no timeframe, and no sense of what's already been tried — a real answer to any of those would completely change the recommendation. Don't let "short" read as "nothing to ask"; a one-line prompt is usually a sign more is missing, not less.
+{{
+    "needs_clarification": true,
+    "questions": [
+        {{"id": "q1", "question": "What does your business sell, and through what channel (in-person, online store, marketplace)?"}},
+        {{"id": "q2", "question": "When did sales start dropping, and did anything change around that time (price, ads, season, competitors)?"}}
+    ]
+}}
+
+Example B (long but already answers the load-bearing gaps — should NOT ask): "My Shopify store sells handmade candles, gets about 2,000 visits a month, converts at 0.8%, and I've already tried dropping prices 20% with no change in conversion."
+Product, channel, traffic, conversion rate, and what's already been tried are all stated — nothing load-bearing is missing.
+{{"needs_clarification": false, "questions": []}}
+
+Example C (short, not diagnostic, a DECISION between unnamed options — SHOULD ask): "I have too many ideas and don't know which one to focus on first"
+You cannot rank ideas you haven't been told — this isn't a symptom needing a root cause, it's a decision that structurally cannot be made without knowing the options and what's available to pursue them. A query that asks you to choose, prioritize, or decide between things is ALWAYS missing something load-bearing unless it already names the actual options.
+{{
+    "needs_clarification": true,
+    "questions": [
+        {{"id": "q1", "question": "What are the specific ideas you're choosing between?"}},
+        {{"id": "q2", "question": "How much time or budget do you realistically have to pursue one right now?"}}
+    ]
+}}
+
+A prompt being short, or sounding like a real, specific complaint, is not by itself a reason to skip asking — judge strictly by whether it actually states what the business sells/does AND a concrete number/constraint/already-tried action, per the default rule above. "What the business sells/does" is satisfied by a channel + metric combo (e.g. "my online store", "my store") even with no named product category — don't ask just to learn the product name if the query already gives you a channel and real numbers to work with.
+
+If the query already names its own candidate causes ("I don't know whether it's the product, the price, or the website") alongside real numbers, that fork is the analysis's job to adjudicate, not a reason to hand it back as a question — only ask if answering would change something the analysis genuinely cannot work out itself from what's given.
 
 Return JSON only, no markdown:
 {{
