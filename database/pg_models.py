@@ -198,6 +198,47 @@ class AITool(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class ClarityCorpus(Base):
+    """
+    The zero-LLM clarifying-questions engine's reference corpus (see
+    decision_engine/clarity_engine.py). Each row is one real or
+    LLM-generated example of a business submission, what gap-types it had,
+    and what clarifying questions (if any) were judged appropriate for it.
+    At runtime a new submission is matched against this corpus by embedding
+    similarity (nearest neighbors) rather than calling an LLM — the LLM's
+    judgment is baked into these rows ahead of time (source='llm_seed' /
+    'llm_teacher'), not invoked per request.
+
+    source: 'llm_seed' (bootstrap), 'llm_teacher' (periodic low-confidence
+        enrichment job), or 'live' (a real user submission, logged at
+        decision time).
+    outcome: for source='live' rows where questions were actually shown —
+        'answered' or 'skipped', filled in once known (see /analyze's
+        clarity_corpus_id handling). Null until then, and always null for
+        llm_seed/llm_teacher rows and for live rows where no clarification
+        was triggered.
+    confidence: the top neighbor-similarity score this row's OWN decision
+        was made with (null for llm_seed/llm_teacher rows, which ARE the
+        precedent rather than a lookup against it). Low-confidence live
+        rows are what the periodic teacher job prioritizes for enrichment.
+    """
+    __tablename__ = "clarity_corpus"
+
+    id = Column(Integer, primary_key=True, index=True)
+    submission_text = Column(Text, nullable=False)
+    # Same raw-Column pattern as AITool.embedding above — Postgres's
+    # vector(384) type handles the "[0.1,-0.2,...]" string we assign.
+    embedding = Column("embedding", nullable=True)
+    needs_clarification = Column(Boolean, nullable=False, default=False)
+    gap_types = Column(JSON, nullable=False, default=list)
+    questions = Column(JSON, nullable=False, default=list)
+    source = Column(String(20), nullable=False)
+    outcome = Column(String(20), nullable=True)
+    confidence = Column(Float, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class BusinessAnalysis(Base):
     """
     Stores complete business analysis results from AI analyzer.

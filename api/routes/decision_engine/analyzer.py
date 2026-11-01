@@ -250,23 +250,28 @@ async def get_clarifying_questions(
 ):
     """
     Called right after the user submits their business challenge, BEFORE
-    /analyze(/stream) runs — asks the LLM whether it's missing anything
+    /analyze(/stream) runs — decides whether it's missing anything
     load-bearing and, if so, returns up to 3 short targeted questions.
     needs_clarification=False (the common case for an already-detailed
     prompt) means the frontend should skip straight to analysis with no
-    added step; this call is intentionally fast and cheap (a single
-    non-reasoning-model call) so it never meaningfully delays that path.
+    added step.
+
+    Zero-LLM: decision_engine/clarity_engine.py matches the submission
+    against a reference corpus by embedding similarity rather than calling
+    an LLM live — see that module's docstring. The LLM's judgment is baked
+    into the corpus offline (bootstrap + periodic teacher job), not spent
+    on every submission.
 
     The frontend collects answers for whatever questions_text are
-    returned, then sends them back as `clarifications` on the actual
-    /analyze(/stream) call — this endpoint does not itself start an
-    analysis or persist anything.
+    returned, then sends them back as `clarifications` (and the returned
+    `corpus_id`) on the actual /analyze(/stream) call, which logs whether
+    they were answered or skipped against this exact decision — this
+    endpoint does not itself start an analysis.
     """
-    get_user_id(current_user)  # validates auth; raises if not resolvable
+    user_id = get_user_id(current_user)  # validates auth; raises if not resolvable
 
-    from decision_engine.agentic_analyzer import create_analyzer
-    analyzer = create_analyzer(db)
-    result = await analyzer.generate_clarifying_questions(request.business_goal)
+    from decision_engine.clarity_engine import get_clarifying_questions
+    result = get_clarifying_questions(request.business_goal, db, user_id=user_id)
     return {"success": True, "data": result}
 
 
@@ -292,11 +297,13 @@ async def analyze_business_goal(
         business_goal = ""
         files = []
         clarifications = None
+        clarity_corpus_id = None
 
         if "application/json" in content_type:
             body = await request.json()
             business_goal = body.get("business_goal", "")
             clarifications = body.get("clarifications")
+            clarity_corpus_id = body.get("clarity_corpus_id")
         elif "multipart/form-data" in content_type:
             form_data = await request.form()
             business_goal = form_data.get("business_goal", "")
@@ -307,8 +314,14 @@ async def analyze_business_goal(
                     clarifications = json.loads(raw_clar)
                 except Exception:
                     clarifications = None
+            raw_corpus_id = form_data.get("clarity_corpus_id")
+            clarity_corpus_id = int(raw_corpus_id) if raw_corpus_id else None
         else:
             raise HTTPException(status_code=400, detail="Invalid Content-Type")
+
+        if clarity_corpus_id:
+            from decision_engine.clarity_engine import update_outcome
+            update_outcome(db, clarity_corpus_id, "answered" if clarifications else "skipped")
 
         business_goal = _merge_clarifications_into_goal(business_goal, clarifications)
 
@@ -530,12 +543,14 @@ async def analyze_business_goal_stream(
     business_goal = ""
     files = []
     clarifications = None
+    clarity_corpus_id = None
 
     try:
         if "application/json" in content_type:
             body = await request.json()
             business_goal = body.get("business_goal", "")
             clarifications = body.get("clarifications")
+            clarity_corpus_id = body.get("clarity_corpus_id")
         elif "multipart/form-data" in content_type:
             form_data = await request.form()
             business_goal = form_data.get("business_goal", "")
@@ -546,8 +561,14 @@ async def analyze_business_goal_stream(
                     clarifications = json.loads(raw_clar)
                 except Exception:
                     clarifications = None
+            raw_corpus_id = form_data.get("clarity_corpus_id")
+            clarity_corpus_id = int(raw_corpus_id) if raw_corpus_id else None
         else:
             raise HTTPException(status_code=400, detail="Invalid Content-Type")
+
+        if clarity_corpus_id:
+            from decision_engine.clarity_engine import update_outcome
+            update_outcome(db, clarity_corpus_id, "answered" if clarifications else "skipped")
     except HTTPException:
         raise
     except Exception as e:
