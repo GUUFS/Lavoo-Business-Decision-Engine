@@ -25,6 +25,7 @@ from database.pg_connections import SessionLocal  # noqa: E402
 from database.pg_models import ClarityCorpus  # noqa: E402
 from decision_engine.agentic_analyzer import create_analyzer  # noqa: E402
 from decision_engine.clarity_heuristics import detect_gap_types  # noqa: E402
+from decision_engine.clarity_reasoner import classify_question  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 # Diverse across problem type (diagnostic, decision, pricing, retention,
@@ -59,6 +60,40 @@ SEED_PROMPTS = [
     # Partially specified (one gap, not two)
     "My ad spend keeps going up but conversions are flat — I run a D2C skincare brand on Meta ads.",
     "I run a small bakery in Lagos. Revenue has been flat for 3 months and I don't know what to fix first.",
+    # Local businesses, naira amounts and shorthand numbers
+    "I run a gym with 150 members paying 25k naira each and want to grow to 300 members in 6 months.",
+    "Revenue went from 5m to 2m in two months",
+    "I sell perfumes on Instagram but sales have dropped",
+    "My boutique in Abuja makes about 400k a month but rent keeps going up",
+    "I do catering for events and get most bookings through WhatsApp",
+    "I sell wigs online and people ask for prices but never pay",
+    "My pharmacy has new competition across the street",
+    "I run a poultry farm and feed costs are eating my profit",
+    "My salon customers don't come back after the first visit",
+    # Channel only, no product
+    "We tried TikTok",
+    "My Instagram is dead",
+    "Nobody replies to my WhatsApp broadcasts",
+    # Timeframes that are not metrics
+    "I want results in 2 weeks",
+    "I run an online store and I want more sales in 30 days",
+    "I need help with my 2 businesses",
+    # Decisions with named options (should NOT ask for options)
+    "Should I sell on Jumia, Konga, or my own website?",
+    "Facebook ads vs Google ads for my cleaning service?",
+    "Should I open a second branch of my restaurant or improve delivery?",
+    "Should I hire a sales rep, run ads, or build a referral program for my agency?",
+    # Advice requests that are not decisions
+    "Sales are down, what should I do?",
+    "Customers say my prices are too high",
+    # Starting out
+    "Should I start a business?",
+    "I want to start a business but I don't know what to do",
+    "I have 500k naira, what business should I start?",
+    # Generic business words only
+    "Fix my business",
+    "My startup is not growing",
+    "My company is losing money",
 ]
 
 
@@ -79,19 +114,16 @@ async def seed():
                 continue
 
             result = await analyzer.generate_clarifying_questions(prompt)
-            gap_types = detect_gap_types(prompt)
-            # Align the LLM's free-form questions to our gap_type slots so
-            # the live engine can reuse them per-gap (see clarity_engine's
-            # neighbor_questions matching) — best-effort positional
-            # alignment since the LLM doesn't itself know our gap taxonomy.
+            if result.get("error"):
+                # Don't save a failed call, or the micromodel learns a wrong answer.
+                print(f"skip (LLM error, retry later): {prompt[:60]!r}")
+                continue
+            # Label each question with the gap it asks about.
             questions = [
-                {
-                    "id": q["id"],
-                    "question": q["question"],
-                    "gap_type": gap_types[i] if i < len(gap_types) else (gap_types[0] if gap_types else "missing_business_type"),
-                }
-                for i, q in enumerate(result["questions"])
+                {"id": q["id"], "question": q["question"], "gap_type": classify_question(q["question"])}
+                for q in result["questions"]
             ]
+            gap_types = [q["gap_type"] for q in questions] or detect_gap_types(prompt)
 
             with _model_lock:
                 embedding = st_model.encode(prompt).tolist()

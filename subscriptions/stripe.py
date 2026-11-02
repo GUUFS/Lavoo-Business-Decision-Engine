@@ -915,7 +915,7 @@ async def save_card_for_beta(
             NotificationService.create_notification(
                 db=db, user_id=user.id, type="card_saved",
                 title="✅ Card Saved Successfully",
-                message="Your card is securely saved. You'll be billed when we launch — no charge today!",
+                message="Your card is securely saved. You'll be billed when we launch. No charge today!",
                 link="/dashboard"
             )
             return {

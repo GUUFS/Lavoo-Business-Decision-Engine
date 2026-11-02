@@ -441,7 +441,7 @@ class CommissionService:
             cur = getattr(subscription, "currency", "USD") or "USD"
             bonus_message = (
                 f"You earned a {cur} {commission_amount:.2f} builder bonus from a "
-                f"referral's subscription payment — sent straight to your account."
+                f"referral's subscription payment, sent straight to your account."
                 if settled_now else
                 f"You earned a {cur} {commission_amount:.2f} builder bonus "
                 f"from a referral's subscription payment."

@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from database.pg_models import AITool
+from decision_engine.text_cleanup import strip_dashes_deep
 from decision_engine.recommender_db import (
     _safe_parse_text_list,
     compile_catalog_name_pattern,
@@ -87,12 +88,14 @@ def _repair_json(text: str) -> str:
 
 
 def _safe_json_loads(text: str) -> Any:
-    """json.loads with automatic repair on truncated output."""
+    """json.loads with automatic repair on truncated output. Also removes
+    dashes from the text (see text_cleanup.py)."""
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
         repaired = _repair_json(text)
-        return json.loads(repaired)
+        parsed = json.loads(repaired)
+    return strip_dashes_deep(parsed)
 
 
 class AgenticAnalyzer:
@@ -203,7 +206,7 @@ class AgenticAnalyzer:
     # MAIN PIPELINE
     # =========================================================================
 
-    async def analyze(self, user_query: str, user_id: int, progress_callback=None) -> Dict[str, Any]:
+    async def analyze(self, user_query: str, user_id: int, progress_callback=None, founder_context: str = "") -> Dict[str, Any]:
         """
         Main analysis pipeline — orchestrates all agents.
 
@@ -211,6 +214,8 @@ class AgenticAnalyzer:
             user_query: User's business challenge/goal
             user_id: Current user ID
             progress_callback: Optional async callable(pct: int, msg: str) for SSE progress events
+            founder_context: extra notes for the LLM (see founder_context.py).
+                Not saved with the analysis.
 
         Returns:
             Complete analysis dict matching the frontend result page format
@@ -237,23 +242,27 @@ class AgenticAnalyzer:
                     f"UNSAFE_QUERY::{safety_result['reason']}::{safety_result['suggestions']}"
                 )
 
+            # The LLM stages get the prompt plus the extra notes. The safety
+            # check and the saved analysis use the user's prompt only.
+            stage_query = f"{user_query}\n\n{founder_context}" if founder_context else user_query
+
             logger.info("Stage 1: Identifying primary bottleneck...")
             await _emit(10, "Identifying your primary bottleneck...")
-            primary_result = await self._stage1_primary_bottleneck(user_query)
+            primary_result = await self._stage1_primary_bottleneck(stage_query)
             recommendation_mode = primary_result.get("recommendation_mode", "automation_stack")
             await _emit(25, f"Found: {primary_result.get('primary_bottleneck', {}).get('title', 'bottleneck identified')}")
 
             logger.info("Stage 2: Finding secondary constraints...")
             await _emit(30, "Mapping secondary constraints...")
             secondary_result = await self._stage2_secondary_constraints(
-                user_query, primary_result
+                stage_query, primary_result
             )
             await _emit(45, "Constraints mapped")
 
             logger.info("Stage 3: Generating ranked action plans...")
             await _emit(50, "Building ranked action plans...")
             action_plans_result = await self._stage3_action_plans(
-                user_query, primary_result, secondary_result
+                stage_query, primary_result, secondary_result
             )
             await _emit(65, "Action plans ready")
 
@@ -261,6 +270,8 @@ class AgenticAnalyzer:
             logger.info("Stages 3B + 4: running automation stacks and roadmap in parallel...")
             await _emit(70, "Selecting tool stacks and generating roadmap...")
             automation_stack_result, roadmap_result = await asyncio.gather(
+                # Tool search uses the user's own words only, so the extra
+                # notes don't change which tools are found.
                 self._stage3_automation_stacks(
                     user_query=user_query,
                     action_plans_result=action_plans_result,
@@ -268,7 +279,7 @@ class AgenticAnalyzer:
                     secondary_result=secondary_result,
                     recommendation_mode=recommendation_mode,
                 ),
-                self._stage4_roadmap_and_motivation(user_query, action_plans_result),
+                self._stage4_roadmap_and_motivation(stage_query, action_plans_result),
             )
             await _emit(92, "Roadmap complete")
 
@@ -476,7 +487,9 @@ Return JSON only, no markdown:
             # here never blocks a user from getting their analysis — same
             # fail-open posture as _check_query_safety above.
             logger.warning(f"Clarifying-question generation failed (skipping): {e}")
-            return {"needs_clarification": False, "questions": []}
+            # "error" marks a failed call, so it isn't mistaken for
+            # "no questions needed".
+            return {"needs_clarification": False, "questions": [], "error": str(e)}
 
     # =========================================================================
     # STAGE 1: PRIMARY BOTTLENECK AGENT
@@ -2216,7 +2229,7 @@ OUTPUT FORMAT (JSON only, no markdown):
             logger.warning("Roadmap response was missing motivational_quote — using fallback")
             result["motivational_quote"] = (
                 "The weight you feel right now is real, but it's also proof you're finally "
-                "looking at the actual problem instead of its symptoms — that's the hardest part, and you're already past it."
+                "looking at the actual problem instead of its symptoms. That's the hardest part, and you're already past it."
             )
 
         logger.info(

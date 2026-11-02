@@ -20,7 +20,9 @@ from typing import Optional, List, Dict, Any
 from database.pg_connections import get_db
 from database.pg_models import BusinessAnalysis
 from api.routes.auth.login import get_current_user
+from api.routes.dependencies import admin_required
 from api.cache import get_cached, set_cached, delete_cached
+from decision_engine.text_cleanup import strip_dashes_deep
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class AnalyzeRequest(BaseModel):
     """Request model for business analysis."""
     business_goal: str = Field(
         ...,
-        min_length=10,
+        min_length=3,
         max_length=2000,
         description="The business challenge or goal to analyze"
     )
@@ -42,7 +44,9 @@ class AnalyzeRequest(BaseModel):
 
 class ClarifyRequest(BaseModel):
     """Request model for POST /clarify."""
-    business_goal: str = Field(..., min_length=10, max_length=2000)
+    # Kept low on purpose: short, vague prompts should reach the
+    # clarifying questions, not be rejected.
+    business_goal: str = Field(..., min_length=3, max_length=2000)
 
 
 class ClarificationAnswer(BaseModel):
@@ -140,6 +144,15 @@ def _merge_clarifications_into_goal(business_goal: str, clarifications_raw) -> s
     return f"{business_goal}\n\n[Clarifying Questions & Answers]:\n{qa_text}".strip()
 
 
+def _has_answers(clarifications_raw) -> bool:
+    """True when at least one clarifying question got a non-empty answer."""
+    for c in clarifications_raw or []:
+        answer = c.get("answer") if isinstance(c, dict) else getattr(c, "answer", "")
+        if (answer or "").strip():
+            return True
+    return False
+
+
 def parse_json_field(field_value, default=None):
     """Safely parse JSON field from database."""
     if field_value is None:
@@ -168,7 +181,9 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
     execution_roadmap = parse_json_field(analysis.execution_roadmap, [])
     single_tool_recommendation = parse_json_field(analysis.single_tool_recommendation, None)
 
-    return {
+    # Remove dashes from older saved analyses too. The user's own prompt
+    # (business_goal) is left as they typed it.
+    return strip_dashes_deep({
         "analysis_id": analysis.id,
         "business_goal": analysis.business_goal or "",
         # Primary bottleneck
@@ -196,7 +211,7 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
         "created_at": analysis.created_at.isoformat() if analysis.created_at else "",
         "ai_model_used": analysis.ai_model_used,
         "ai_confidence_score": analysis.confidence_score or 90
-    }
+    }) | {"business_goal": analysis.business_goal or ""}
 
 
 # =========================================================================
@@ -275,6 +290,31 @@ async def get_clarifying_questions(
     return {"success": True, "data": result}
 
 
+@router.get("/clarify/stats")
+async def get_clarity_stats(
+    days: int = 30,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: weekly numbers on how the micromodel is doing. The key one is
+    how often the LLM agrees with it; that going up means it's improving."""
+    from decision_engine.clarity_teacher import clarity_stats
+    return {"success": True, "data": clarity_stats(db, days=max(1, min(days, 365)))}
+
+
+@router.post("/clarify/teach")
+async def run_clarity_teacher_now(
+    limit: int = 20,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: run the teacher job now instead of waiting 6 hours.
+    Each prompt it checks costs one LLM call."""
+    from decision_engine.clarity_teacher import run_teacher_batch
+    result = await run_teacher_batch(db, limit=max(1, min(limit, 50)))
+    return {"success": True, "data": result}
+
+
 @router.post("/analyze", response_model=dict)
 async def analyze_business_goal(
     request: Request,
@@ -321,7 +361,7 @@ async def analyze_business_goal(
 
         if clarity_corpus_id:
             from decision_engine.clarity_engine import update_outcome
-            update_outcome(db, clarity_corpus_id, "answered" if clarifications else "skipped")
+            update_outcome(db, clarity_corpus_id, clarifications, user_id)
 
         business_goal = _merge_clarifications_into_goal(business_goal, clarifications)
 
@@ -364,8 +404,11 @@ async def analyze_business_goal(
         if not business_goal:
             raise HTTPException(status_code=400, detail="Could not extract any content from the uploaded files to analyze.")
 
+        from decision_engine.founder_context import build_founder_context
+        founder_context = build_founder_context(db, user_id, _has_answers(clarifications))
+
         analyzer = create_analyzer(db)
-        result = await analyzer.analyze(user_query=business_goal, user_id=user_id)
+        result = await analyzer.analyze(user_query=business_goal, user_id=user_id, founder_context=founder_context)
 
         logger.info(f"✅ Analysis completed: ID {result['data']['analysis_id']}")
         await delete_cached(f"analyses:user:{user_id}:limit:*")
@@ -568,7 +611,7 @@ async def analyze_business_goal_stream(
 
         if clarity_corpus_id:
             from decision_engine.clarity_engine import update_outcome
-            update_outcome(db, clarity_corpus_id, "answered" if clarifications else "skipped")
+            update_outcome(db, clarity_corpus_id, clarifications, user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -627,11 +670,15 @@ async def analyze_business_goal_stream(
 
     async def _run_analysis():
         try:
+            from decision_engine.founder_context import build_founder_context
+            founder_context = build_founder_context(db, user_id, _has_answers(clarifications))
+
             analyzer = create_analyzer(db)
             result = await analyzer.analyze(
                 user_query=business_goal,
                 user_id=user_id,
                 progress_callback=_progress_callback,
+                founder_context=founder_context,
             )
             _raw_stacks = result["data"].get("recommended_tool_stacks", [])
             _bottleneck_title = result["data"].get("primary_bottleneck", {}).get("title", "")

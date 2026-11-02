@@ -734,6 +734,24 @@ async def run_scheduled_reflections_job():
             logger.error("[reflections-job] error: %s", exc)
 
 
+async def run_clarity_teacher_job():
+    """
+    Runs every 6 hours. The LLM checks up to 20 of the micromodel's least
+    certain decisions and saves its answers as new examples to learn from
+    (see decision_engine/clarity_teacher.py).
+    """
+    while True:
+        await asyncio.sleep(6 * 60 * 60)
+        try:
+            from database.pg_connections import SessionLocal
+            from decision_engine.clarity_teacher import run_teacher_batch
+            with SessionLocal() as db:
+                result = await run_teacher_batch(db, limit=20)
+            logger.info("[clarity-teacher-job] %s", result)
+        except Exception as exc:
+            logger.error("[clarity-teacher-job] error: %s", exc)
+
+
 async def run_scheduled_voo_bot_job():
     """
     Runs every 60 seconds in the background inside FastAPI.
@@ -1051,6 +1069,22 @@ def run_heavy_schema_migrations():
                 db.commit()
             except Exception as e:
                 logger.warning(f"Failed to add subscriptions.chops_awarded: {e}")
+
+            try:
+                # Columns the micromodel needs to learn (same as alembic
+                # migration 6c1e2f3a4b5d).
+                db.execute(text("""
+                    ALTER TABLE clarity_corpus
+                        ADD COLUMN IF NOT EXISTS reasoning JSON,
+                        ADD COLUMN IF NOT EXISTS decision_path VARCHAR(20),
+                        ADD COLUMN IF NOT EXISTS answers JSON,
+                        ADD COLUMN IF NOT EXISTS teacher_reviewed_at TIMESTAMPTZ,
+                        ADD COLUMN IF NOT EXISTS teacher_agreed BOOLEAN
+                """))
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"Failed to add clarity_corpus learning columns: {e}")
 
             # Security table fixes
             try:
@@ -1558,6 +1592,7 @@ async def startup_event():
     asyncio.create_task(run_new_alert_notifications_job())
     asyncio.create_task(run_scheduled_reflections_job())
     asyncio.create_task(run_scheduled_voo_bot_job())
+    asyncio.create_task(run_clarity_teacher_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_balance_monitor_job())
