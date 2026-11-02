@@ -321,6 +321,7 @@ class SaveCardRequest(BaseModel):
     payment_method_id: str
     currency: str           # required — USD | GBP | NGN
     plan_type: str          # required — monthly | quarterly | yearly
+    plan_tier: str = "pro"  # pro | premium
     save_card: bool = True  # False = charge this period only, never auto-renew
 
 
@@ -562,6 +563,7 @@ class NotificationHistory(Base):
 class CreateSubscriptionRequest(BaseModel):
     payment_method_id: str
     plan_type: str  # 'monthly' or 'yearly'
+    plan_tier: str = "pro"  # pro | premium
     currency: Optional[str] = "USD"
     billing_details: Optional[Dict] = None
     save_card: bool = True  # False = charge this period only, never auto-renew

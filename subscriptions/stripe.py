@@ -69,54 +69,40 @@ logger.info(f"[Stripe] Initialised in {_stripe_mode} mode (key prefix: {_startup
 # =============================================================================
 
 
+from subscriptions.plan_prices import PERIODS, env_keys, get_plan_prices, get_price_id, normalise_tier
+
 SUPPORTED_CURRENCIES = {"USD", "GBP", "NGN"}
 DEFAULT_CURRENCY = "USD"
 
 
-def get_stripe_price_id(plan_type: str, currency: str = "USD") -> str:
+def get_stripe_price_id(plan_type: str, currency: str = "USD", tier: str = "pro") -> str:
     """
-    Resolve the Stripe Price ID for a given plan and currency.
-
-    .env naming convention: STRIPE_{PLAN}_PRICE_ID_{CURRENCY}
-      e.g. STRIPE_MONTHLY_PRICE_ID_USD, STRIPE_MONTHLY_PRICE_ID_GBP
-
-    Lookup order:
-      1. STRIPE_{PLAN}_PRICE_ID_{CURRENCY}  (currency-specific — matches your .env)
-      2. STRIPE_{PLAN}_PRICE_ID             (bare key — legacy fallback, no suffix)
+    The Stripe Price ID for a plan.
+    plan_type: monthly | quarterly | yearly
+    tier:      pro | premium (anything else counts as pro)
+    See subscriptions/plan_prices.py for the env var names.
     """
-    base_keys = {
-        "monthly":   "STRIPE_MONTHLY_PRICE_ID",
-        "quarterly": "STRIPE_QUARTERLY_PRICE_ID",
-        "yearly":    "STRIPE_YEARLY_PRICE_ID",
-    }
-    base = base_keys.get(plan_type)
-    if not base:
+    # 1. Check the billing period and currency are ones we sell.
+    plan_type = (plan_type or "").lower().strip()
+    if plan_type not in PERIODS:
         logger.warning(f"⚠️ Unknown plan_type '{plan_type}'")
         return ""
-
     currency = (currency or DEFAULT_CURRENCY).upper().strip()
     if currency not in SUPPORTED_CURRENCIES:
         logger.warning(f"⚠️ Unsupported currency '{currency}' — falling back to USD")
         currency = DEFAULT_CURRENCY
 
-    # Try currency-specific key first (matches your .env naming)
-    suffixed_key = f"{base}_{currency}"
-    price_id = os.getenv(suffixed_key, "").strip()
+    # 2. Look up the Price ID from the env vars.
+    tier = normalise_tier(tier)
+    price_id = get_price_id(tier, plan_type, currency)
     if price_id:
-        logger.info(f"💱 Price ID: {suffixed_key} → {price_id}")
-        return price_id
-
-    # Fall back to bare key (STRIPE_MONTHLY_PRICE_ID without suffix)
-    price_id = os.getenv(base, "").strip()
-    if price_id:
-        logger.info(f"💱 Price ID (bare fallback): {base} → {price_id}")
-        return price_id
-
-    logger.error(
-        f"❌ No price ID for plan='{plan_type}', currency='{currency}'. "
-        f"Tried: {suffixed_key}, {base}"
-    )
-    return ""
+        logger.info(f"💱 Price ID: {tier}/{plan_type}/{currency} → {price_id}")
+    else:
+        logger.error(
+            f"❌ No price ID for tier='{tier}', plan='{plan_type}', currency='{currency}'. "
+            f"Tried: {', '.join(env_keys(tier, plan_type, currency))}"
+        )
+    return price_id
 
 
 def get_currency_from_request(request) -> str:
@@ -508,71 +494,24 @@ async def get_stripe_config():
     return {"publishableKey": publishable_key.strip()}
 
 
-# Module-level price cache — prices change rarely; 10-minute TTL avoids
-# 9 Stripe API round-trips on every page load.
-_price_cache: dict = {}
-_price_cache_at: float = 0.0
-_PRICE_CACHE_TTL = 600  # 10 minutes
+def _prices_response() -> dict:
+    """Prices in the shape the pages use. The top level is Pro (what the
+    upgrade page used before Premium existed); "tiers" has both plans."""
+    tiers = get_plan_prices()
+    return {**tiers["pro"], "tiers": tiers}
 
 
 @router.get("/prices")
 async def get_subscription_prices(current_user: User = Depends(get_current_user)):
-    """
-    Fetch live subscription prices from Stripe using the Price IDs stored in
-    environment variables. Results are cached for 10 minutes so the 9 Stripe
-    API calls only happen once per cache window instead of on every page load.
+    """Live plan prices from Stripe (see subscriptions/plan_prices.py)."""
+    return _prices_response()
 
-    Env var naming: STRIPE_{PLAN}_PRICE_ID_{CURRENCY}
-    e.g. STRIPE_MONTHLY_PRICE_ID_USD, STRIPE_YEARLY_PRICE_ID_NGN
-    """
-    import time
-    global _price_cache, _price_cache_at
 
-    # Serve from cache if warm
-    if _price_cache and time.time() - _price_cache_at < _PRICE_CACHE_TTL:
-        logger.info("[prices] cache hit")
-        return _price_cache
-
-    api_key = os.getenv("STRIPE_SECRET_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="STRIPE_SECRET_KEY not configured")
-
-    plans = ["monthly", "quarterly", "yearly"]
-    currencies = ["USD", "GBP", "NGN"]
-    errors = {}
-    result: dict = {}
-
-    for currency in currencies:
-        result[currency] = {}
-        for plan in plans:
-            env_key = f"STRIPE_{plan.upper()}_PRICE_ID_{currency}"
-            price_id = os.getenv(env_key, "").strip()
-            if not price_id:
-                logger.warning(f"[prices] {env_key} not set")
-                result[currency][plan] = None
-                errors[env_key] = "not set"
-                continue
-            try:
-                price_obj = stripe.Price.retrieve(price_id, api_key=api_key)
-                unit_amount = getattr(price_obj, "unit_amount", None)
-                if unit_amount is None:
-                    unit_amount = price_obj["unit_amount"] if "unit_amount" in price_obj else 0
-                result[currency][plan] = (unit_amount or 0) / 100
-                logger.info(f"[prices] {env_key} ({price_id}) = {result[currency][plan]}")
-            except Exception as e:
-                logger.error(f"[prices] {env_key} ({price_id}): {e}")
-                result[currency][plan] = None
-                errors[env_key] = str(e)
-
-    if errors:
-        logger.warning(f"[prices] Some prices could not be fetched: {errors}")
-
-    # Store in module cache only if we got at least some prices
-    if any(v for curr in result.values() for v in curr.values()):
-        _price_cache = result
-        _price_cache_at = time.time()
-
-    return result
+@router.get("/public-prices")
+async def get_public_subscription_prices():
+    """Same as /prices, without needing to log in, for the landing pages.
+    Prices are public information, and they're cached, so this is cheap."""
+    return _prices_response()
 
 
 # =============================================================================
@@ -864,8 +803,10 @@ async def save_card_for_beta(
                 )
             )
 
-        # Resolve the Stripe price ID for this exact plan + currency combination.
-        price_id = get_stripe_price_id(requested_plan, currency)
+        # Resolve the Stripe price ID for this exact plan (Pro or Premium),
+        # billing period and currency.
+        plan_tier = normalise_tier(getattr(request, 'plan_tier', None))
+        price_id = get_stripe_price_id(requested_plan, currency, plan_tier)
         if not price_id:
             raise HTTPException(
                 status_code=400,
@@ -1021,6 +962,7 @@ async def save_card_for_beta(
             metadata={
                 "user_id": str(user.id),
                 "plan_type": plan_type,
+                "plan_tier": plan_tier,
                 "currency": currency,
                 "source": "save_card_launch",
                 "is_beta_user": str(getattr(user, 'is_beta_user', False))
@@ -1805,7 +1747,9 @@ async def create_subscription_with_saved_card(
             raise HTTPException(status_code=404, detail="User not found")
 
         currency = get_currency_from_request(request)
-        price_id = get_stripe_price_id(request.plan_type, currency)
+        # Pro or Premium, from the plan the user picked.
+        plan_tier = normalise_tier(getattr(request, 'plan_tier', None))
+        price_id = get_stripe_price_id(request.plan_type, currency, plan_tier)
         if not price_id:
             raise HTTPException(
                 status_code=400,
@@ -1907,6 +1851,7 @@ async def create_subscription_with_saved_card(
             metadata={
                 "user_id": str(user_id),
                 "plan_type": request.plan_type,
+                "plan_tier": plan_tier,
                 "currency": currency,
                 "tx_ref": tx_ref
             },

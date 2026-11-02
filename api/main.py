@@ -439,7 +439,7 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
 PLAN_DURATION_MAP = {"monthly": 30, "quarterly": 90, "yearly": 365}
 
 
-def _attempt_stripe_renewal(user_id: int, plan_type: str) -> bool:
+def _attempt_stripe_renewal(user_id: int, plan_type: str, plan_tier: str = "pro") -> bool:
     """
     Attempt an off-session Stripe Subscription.create using the customer's
     saved payment method. On success a local Subscriptions record is also
@@ -458,7 +458,8 @@ def _attempt_stripe_renewal(user_id: int, plan_type: str) -> bool:
                 return False
 
             from subscriptions.stripe import get_stripe_price_id, get_amount_from_stripe_price, _create_active_subscription_record
-            price_id = get_stripe_price_id(plan_type, "GBP") or get_stripe_price_id(plan_type, "USD")
+            # Renew on the same plan (Pro or Premium) they were on.
+            price_id = get_stripe_price_id(plan_type, "GBP", plan_tier) or get_stripe_price_id(plan_type, "USD", plan_tier)
             if not price_id:
                 logger.warning("[renewal] no price_id for plan=%s user=%s", plan_type, user_id)
                 return False
@@ -615,7 +616,10 @@ async def run_subscription_expiry_job():
                     success = False
                     for method, kwargs in strategy:
                         if method == "stripe":
-                            success = _attempt_stripe_renewal(user_id, plan)
+                            # Work out Pro or Premium from what they last paid.
+                            from subscriptions.plan_prices import resolve_tier
+                            tier = resolve_tier(amount, currency, plan) or "pro"
+                            success = _attempt_stripe_renewal(user_id, plan, tier)
                         elif method == "flutterwave":
                             success = _attempt_flutterwave_renewal(user_id, plan, kwargs["amount"], kwargs["currency"])
                         if success:

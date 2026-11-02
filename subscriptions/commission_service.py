@@ -31,38 +31,11 @@ COMMISSION_RATE_FREE = COMMISSION_RATE_STARTER
 # pays once, on that first payment, and never again (see _commission_eligibility).
 RECURRING_WINDOW_DAYS = 183
 
-# Awarded to the SUBSCRIBER themselves (not a referrer) EVERY time one of
-# their subscription payments succeeds — initial purchase or renewal alike,
-# not just the first ever. Which amount depends on which plan they paid
-# for, told apart by the actual amount charged (see PLAN_PRICES below):
-# there's no separate "tier" column on Subscriptions, and the checkout flow
-# itself doesn't pass a tier through yet — the home page's pricing section
-# (lib/currency.ts's LAVOO_PRICING on the frontend) already prices both
-# tiers for every currency/billing-period, which is what PLAN_PRICES
-# mirrors here.
+# Awarded to the SUBSCRIBER themselves (not a referrer) every time one of
+# their subscription payments succeeds. Pro or Premium is worked out from
+# the amount paid, compared with the live Stripe prices
+# (subscriptions/plan_prices.py).
 PLAN_CHOPS = {"pro": 1500, "premium": 3000}
-
-# Mirrors lib/currency.ts's LAVOO_PRICING on the frontend — each tier's
-# actual discounted "price" per currency/billing-period (never "regular",
-# which is only ever shown struck-through, never charged). Keep both files
-# in sync by hand if either changes; there's no shared source between a
-# Python backend and a TypeScript frontend to enforce it automatically.
-PLAN_PRICES = {
-    "pro": {
-        "GBP": {"monthly": Decimal("22.49"), "quarterly": Decimal("60.00"), "yearly": Decimal("269.78")},
-        "USD": {"monthly": Decimal("29.95"), "quarterly": Decimal("84.25"), "yearly": Decimal("336.98")},
-        "NGN": {"monthly": Decimal("34000"), "quarterly": Decimal("22680"), "yearly": Decimal("20160")},
-    },
-    "premium": {
-        "GBP": {"monthly": Decimal("29.58"), "quarterly": Decimal("78.98"), "yearly": Decimal("354.96")},
-        "USD": {"monthly": Decimal("36.95"), "quarterly": Decimal("110.85"), "yearly": Decimal("443.40")},
-        "NGN": {"monthly": Decimal("45000"), "quarterly": Decimal("28080"), "yearly": Decimal("24960")},
-    },
-}
-# A charged amount is matched to a plan within this tolerance — covers minor
-# rounding (e.g. minor-unit conversion) without being loose enough to
-# confuse two genuinely different price points.
-PLAN_PRICE_MATCH_TOLERANCE = Decimal("0.50")
 
 # A payment is "real" for chops/stats purposes under a different word per
 # provider (Flutterwave writes "successful", Stripe "completed") — same set
@@ -99,8 +72,8 @@ class CommissionService:
 
         Otherwise: 'starter' unless User.subscription_status is 'active', in
         which case the referrer's own most recent active Subscriptions row
-        is matched against PLAN_PRICES (via _resolve_plan_tier) to tell Pro
-        from Premium. An active referrer whose amount doesn't match either
+        is matched against the Stripe prices (via _resolve_plan_tier) to
+        tell Pro from Premium. An active referrer whose amount doesn't match either
         price point (legacy pricing, a manual adjustment) is treated as
         'starter' rather than guessed at — same fail-safe as
         _resolve_plan_tier itself.
@@ -124,7 +97,9 @@ class CommissionService:
         )
         if not own_sub:
             return "starter"
-        tier = CommissionService._resolve_plan_tier(Decimal(str(own_sub.amount)), own_sub.currency)
+        tier = CommissionService._resolve_plan_tier(
+            Decimal(str(own_sub.amount)), own_sub.currency, getattr(own_sub, "subscription_plan", None)
+        )
         return tier or "starter"
 
     @staticmethod
@@ -250,22 +225,12 @@ class CommissionService:
         )
 
     @staticmethod
-    def _resolve_plan_tier(amount: Decimal, currency: str) -> "str | None":
-        """Tell a Pro payment from a Premium one by matching the amount
-        actually charged against PLAN_PRICES — see that constant's comment
-        for why there's nothing more direct to check yet. Returns None if
-        nothing matches closely enough (an old/legacy price point, a beta
-        discount, a manually-adjusted amount, …) so the caller can skip
-        awarding rather than guess at which tier it was."""
-        currency = (currency or "USD").upper()
-        for tier, by_currency in PLAN_PRICES.items():
-            periods = by_currency.get(currency)
-            if not periods:
-                continue
-            for period_price in periods.values():
-                if abs(amount - period_price) <= PLAN_PRICE_MATCH_TOLERANCE:
-                    return tier
-        return None
+    def _resolve_plan_tier(amount: Decimal, currency: str, period: "str | None" = None) -> "str | None":
+        """Pro or Premium, worked out from the amount paid and the live
+        Stripe prices. Returns None if it matches neither (an old price,
+        a discount, a manual change), so the caller skips rather than guesses."""
+        from subscriptions.plan_prices import resolve_tier
+        return resolve_tier(amount, currency, period)
 
     @staticmethod
     def _award_plan_signup_chops(subscription, db: Session) -> None:
@@ -291,7 +256,8 @@ class CommissionService:
             return
 
         tier = CommissionService._resolve_plan_tier(
-            Decimal(str(subscription.amount)), subscription.currency
+            Decimal(str(subscription.amount)), subscription.currency,
+            getattr(subscription, "subscription_plan", None),
         )
         if tier is None:
             logger.info(
