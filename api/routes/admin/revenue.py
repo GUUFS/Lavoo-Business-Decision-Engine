@@ -512,8 +512,8 @@ async def approve_user_commissions(
                 raise HTTPException(
                     status_code=503,
                     detail=(
-                        f"Could not fetch a live {commission_currency}->NGN exchange rate right now "
-                        "— try again shortly."
+                        f"Could not fetch a live {commission_currency}->NGN exchange rate right now. "
+                        "Try again shortly."
                     ),
                 )
             original_currency = commission_currency

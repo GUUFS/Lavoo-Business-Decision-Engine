@@ -86,8 +86,8 @@ def _check_cover_image_size(cover_image_data: Optional[str]) -> None:
     if cover_image_data and len(cover_image_data) > MAX_COVER_IMAGE_B64_CHARS:
         raise HTTPException(
             status_code=400,
-            detail="This cover image is too large. Please choose a smaller image "
-                   "— images are automatically optimized when uploaded through the editor.",
+            detail="This cover image is too large. Please choose a smaller image. "
+                   "Images are automatically optimized when uploaded through the editor.",
         )
 
 

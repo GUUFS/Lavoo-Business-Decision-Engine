@@ -237,6 +237,17 @@ class ClarityCorpus(Base):
     confidence = Column(Float, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Why the micromodel decided what it did (facts found, step notes).
+    reasoning = Column(JSON, nullable=True)
+    # How it decided: 'neighbor' (copied a similar example), 'blend'
+    # (its own thinking with an example's wording), or 'reasoner' (its own
+    # thinking only).
+    decision_path = Column(String(20), nullable=True)
+    # The user's answers: [{"question", "answer"}].
+    answers = Column(JSON, nullable=True)
+    # When the LLM checked this decision, and whether it agreed.
+    teacher_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    teacher_agreed = Column(Boolean, nullable=True)
 
 
 class BusinessAnalysis(Base):
@@ -310,6 +321,7 @@ class SaveCardRequest(BaseModel):
     payment_method_id: str
     currency: str           # required — USD | GBP | NGN
     plan_type: str          # required — monthly | quarterly | yearly
+    plan_tier: str = "pro"  # pro | premium
     save_card: bool = True  # False = charge this period only, never auto-renew
 
 
@@ -551,6 +563,7 @@ class NotificationHistory(Base):
 class CreateSubscriptionRequest(BaseModel):
     payment_method_id: str
     plan_type: str  # 'monthly' or 'yearly'
+    plan_tier: str = "pro"  # pro | premium
     currency: Optional[str] = "USD"
     billing_details: Optional[Dict] = None
     save_card: bool = True  # False = charge this period only, never auto-renew
