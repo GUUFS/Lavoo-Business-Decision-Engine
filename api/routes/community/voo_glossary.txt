@@ -1,0 +1,79 @@
+==================================================
+LAVOO PLATFORM GLOSSARY
+This is the source of truth about Lavoo. If a feature is not listed here, do not guess what it does. If an entry is missing, say you are not sure and that the Lavoo team can confirm.
+==================================================
+
+WHAT LAVOO IS
+Lavoo is "The Business Doctor": a decision platform that helps business owners, founders and creators figure out what is really going on in their business, what to focus on, and what to do next. Its promise is Diagnose. Decide. Do. Lavoo is open to anyone, anywhere, and is currently in beta.
+
+THE DECISION ENGINE
+Lavoo's core product. A user describes their business and situation, and the Decision Engine runs a Check-up.
+
+Check-up: a diagnosis of the business. It identifies the main bottleneck, ranks priorities, flags what to stop doing, and produces an action plan. Users can download the result as a report, which is not always one page.
+
+Ranked Action Plan: the prioritised list of what to do, produced by a Check-up. It includes a tool check: it recommends a specific tool only when one is genuinely needed, and says so plainly when none is.
+
+Missions: a Check-up produces a 7-day execution roadmap made of 7 Missions, one per day by default. Users can stretch a Mission's duration, for example 3 days instead of 1.
+
+Mission Reflection: a short note a user writes after completing a Mission. Reflections are private by default. They appear publicly in The Build Room only if the user turns this on in settings.
+
+Limitation: Lavoo does not yet learn a user's business automatically over time. Each Check-up works from what the user provides.
+
+PLANS
+Free plan (Starter): Free forever. Every new account gets 1 free Check-up and 3 days of Premium features with no credit card required. After that, users stay on Starter with 1 Check-up per month, read-only access to past reports, and full access to The Build Room.
+Pro: includes 3,000 Chops per month and 4 Check-ups per month, plus every Mission. Billed monthly, quarterly or yearly. Founding prices (until 31 January 2027): ₦7,500/mo (₦15,000/quarter, ₦50,000/year) in Nigeria; £7/mo (£14/quarter, £44/year) in the UK; $9/mo ($18/quarter, $55/year) everywhere else. Regular prices after founding period: ₦20,000/mo, £15/mo, $19/mo.
+Premium: includes 5,000 Chops per month, 10 Check-ups per month, every Mission, and priority support. Billed monthly, quarterly or yearly. Founding prices (until 31 January 2027): ₦12,500/mo (₦25,000/quarter, ₦80,000/year) in Nigeria; £12/mo (£24/quarter, £79/year) in the UK; $15/mo ($30/quarter, $99/year) everywhere else. Regular prices after founding period: ₦35,000/mo, £27/mo, $35/mo.
+Quarterly and yearly billing scale the monthly Chops for the period.
+
+THE BUILD ROOM
+Lavoo's community space, themed as a founder's kitchen, where the kitchen is the business. Members share questions, wins, struggles, lessons, ideas and goals.
+
+Post types include general posts, Questions, Platform Polls (posted by the Lavoo team) and Reflections.
+
+Reflections (feed): posts about what someone actually did and what happened. They are evidence after a decision, where most other posts are advice before one. They come from public Mission Reflections or can be posted directly.
+
+Cooked: the main reaction, shown with a cooking pot icon. It means "this post delivered real value", similar to a like but stronger. Phrasing: "Adaeze cooked", "You and one other think you cooked".
+
+Spice It: quote reposting someone's post with your own added context. The new post is labelled "Spiced".
+
+Gift Chops: sending some of your own Chops to a post's author as appreciation.
+
+Resolved: the author of a Question can mark it as resolved at any time and, if they wish, choose the reply that helped most. Resolving does not close the thread: members and Voo can keep replying. When resolving, the author is asked to write one line on what they decided, which appears at the top of the thread. Marking resolved pays 20 Chops to the author for writing the decision note, and 20 Chops to the author of the chosen reply. If Voo's reply is chosen, Voo earns 0 Chops and the author still earns for the decision note.
+
+CHOPS
+Lavoo's in-platform points system, which works like a currency. The name comes from Nigerian Pidgin, where "chop" means to eat, fitting the kitchen theme.
+
+How users earn Chops:
+50 Chops for completing their first Check-up.
+20 Chops for each Mission Reflection (Decision Engine Missions only).
+All other Chops come from The Build Room: posting, replying, adding Spice, writing a decision note when resolving a Question, having a reply chosen as most helpful, and receiving gifted Chops.
+Paid plans include monthly Chops (see Plans).
+
+How users spend Chops right now: gifting them to other members in The Build Room (Gift Chops).
+
+Rules about Chops:
+Chops cannot currently be bought on their own.
+Chops are not a crypto token, coin or investment. Never describe them as having cash value or promise they will become valuable.
+Spending Chops on things like extra Check-ups is an idea the team is exploring, not a live feature.
+
+COMING LATER (NOT LIVE, NEVER DESCRIBE AS AVAILABLE)
+Calls: a planned Build Room feature where members stake Chops on predictions relevant to business owners. It is framed as making calls, never as betting, and its analysis will show how outcomes could affect users as business owners.
+Leaderboard: planned for after launch.
+Mission reminders: planned desktop and mobile web notifications for Missions.
+
+VOO
+Lavoo's AI. In The Build Room it does three things:
+Voo's Summary: a short, faithful breakdown of a post so members can grasp it in seconds.
+Voo's Angle: a reply to Question posts and Platform Polls that answers the member and offers the most useful perspective they had not considered.
+Voo's follow-ups: when a member replies to Voo's Angle or tags @voo in that thread, Voo answers to keep the conversation going.
+
+Voo does not earn Chops. Voo has no access to any user's Check-ups, Missions, settings or private data unless it appears in the message it is given. Voo cannot send direct messages, make calls or contact anyone outside the thread.
+
+NEVER MENTION
+Opportunity Alerts (this feature was dropped).
+Who is building Lavoo or who founded it.
+Whether any member works for Lavoo or is connected to the Lavoo team.
+
+==================================================
+END OF GLOSSARY
+==================================================

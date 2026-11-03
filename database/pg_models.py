@@ -1908,6 +1908,8 @@ class CommunityDiscussion(Base):
     voo_scheduled_for = Column(DateTime(timezone=True), nullable=True)
     voo_reply_id = Column(Integer, ForeignKey("discussion_replies.id", ondelete="SET NULL", use_alter=True, name="fk_community_discussions_voo_reply_id"), nullable=True)
     is_resolved = Column(Boolean, default=False, server_default="false")
+    decision_note = Column(Text, nullable=True)
+    chosen_reply_id = Column(Integer, ForeignKey("discussion_replies.id", ondelete="SET NULL", use_alter=True, name="fk_community_discussions_chosen_reply_id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -1972,14 +1974,50 @@ class VooAngleLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     post_id = Column(Integer, ForeignKey("community_discussions.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    prompt_version = Column(String(50), nullable=True)
+    question_type = Column(String(50), nullable=True)
     opening = Column(Text, nullable=False)
     test = Column(Text, nullable=False)
+    angle = Column(Text, nullable=True)
     angle_type = Column(String(100), nullable=False)
     reasoning = Column(Text, nullable=True)
     obvious_answer = Column(Text, nullable=True)
     model = Column(String(100), nullable=True)
 
     discussion = relationship("CommunityDiscussion")
+
+
+class VooFollowupLog(Base):
+    __tablename__ = "voo_followup_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, ForeignKey("community_discussions.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_message_id = Column(Integer, ForeignKey("discussion_replies.id", ondelete="SET NULL"), nullable=True)
+    replier_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    prompt_version = Column(String(50), nullable=True)
+    reply_type = Column(String(50), nullable=False)
+    changes_original = Column(Boolean, default=False)
+    reply = Column(Text, nullable=False)
+    reasoning = Column(Text, nullable=True)
+    model = Column(String(100), nullable=True)
+
+    discussion = relationship("CommunityDiscussion")
+
+
+class VooCallLog(Base):
+    __tablename__ = "voo_call_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    post_id = Column(Integer, nullable=True, index=True)
+    mode = Column(String(20), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    prompt_version = Column(String(50), nullable=True)
+    assembled_user_prompt = Column(Text, nullable=True)
+    system_prompt_hash = Column(String(64), nullable=True)
+    raw_response = Column(Text, nullable=True)
+    validation_result = Column(Text, nullable=True)
+    retry_count = Column(Integer, default=0)
 
 
 class DiscussionLike(Base):
