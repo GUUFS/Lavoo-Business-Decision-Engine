@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lavoo Creator Programme</title>
+<script src="31177d6d-4351-4490-936a-1ed6ec7b34ab"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>/* cyrillic-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("ee8a7192-4105-45c3-a165-897760ab35a8") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("a0fbfbd7-c14b-4ede-873a-dde7ad51ad88") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("4386a43a-41fa-4e6a-84e6-2673447aa58c") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("f2c10a49-36f3-4c1f-8d43-4ef1df540eb0") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("c82a6878-e861-4b36-89f0-4ff2241305c1") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("ee8a7192-4105-45c3-a165-897760ab35a8") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("a0fbfbd7-c14b-4ede-873a-dde7ad51ad88") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("4386a43a-41fa-4e6a-84e6-2673447aa58c") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("f2c10a49-36f3-4c1f-8d43-4ef1df540eb0") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("c82a6878-e861-4b36-89f0-4ff2241305c1") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("ee8a7192-4105-45c3-a165-897760ab35a8") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("a0fbfbd7-c14b-4ede-873a-dde7ad51ad88") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("4386a43a-41fa-4e6a-84e6-2673447aa58c") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("f2c10a49-36f3-4c1f-8d43-4ef1df540eb0") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("c82a6878-e861-4b36-89f0-4ff2241305c1") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("ee8a7192-4105-45c3-a165-897760ab35a8") format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("a0fbfbd7-c14b-4ede-873a-dde7ad51ad88") format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("4386a43a-41fa-4e6a-84e6-2673447aa58c") format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("f2c10a49-36f3-4c1f-8d43-4ef1df540eb0") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("c82a6878-e861-4b36-89f0-4ff2241305c1") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("ee7a30c4-c31b-47ea-b77b-4995db0d9306") format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("e67222de-ff0e-4ffd-8203-e79bf876c852") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("f3e73c6b-e2e1-4b21-970e-cbcfd8a49156") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("690e0a0a-fbfa-43de-91a9-c818e3d75224") format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("affe9c9c-8fac-48e4-a14d-077b4950ca8b") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("4b612a09-2480-42e4-9c83-626175104e97") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* devanagari */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("185f227a-5e07-4e03-a601-3563c7430196") format('woff2');
+  unicode-range: U+0900-097F, U+1CD0-1CF4, U+1CF7-1CF9, U+200C-200D, U+20A8, U+20B9, U+20F0, U+25CC, U+A830-A839, U+A8E0-A8FF, U+11B00-11B0A;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("370e967e-1dfb-41f0-bb0a-070d647d9235") format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Poppins';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("37230e1d-6a10-4d1d-b9fa-8436f67834a8") format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
+<style>
+html{scroll-behavior:smooth}
+body{margin:0;background:#FFFFFF;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+a{color:#1a1a1a}a:hover{color:#000000}
+*{box-sizing:border-box}
+input:focus,select:focus,textarea:focus,button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid #e87a02;outline-offset:3px}
+.nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.8);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px)}
+.nav-burger{display:none}
+@media (max-width:860px){.nav-links{display:none !important}.nav-burger{display:flex !important}}
+@media (min-width:861px){.nav-mobile{display:none !important}}
+.btn{transition:transform .4s cubic-bezier(.2,.8,.2,1),box-shadow .4s cubic-bezier(.2,.8,.2,1)}
+.btn:hover{transform:translateY(-2px);box-shadow:0 14px 34px rgba(232,122,2,.32)}
+.arrow{display:inline-block;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+a:hover .arrow{transform:translateX(5px)}
+.lift{transition:transform .6s cubic-bezier(.2,.8,.2,1),box-shadow .6s cubic-bezier(.2,.8,.2,1)}
+.lift:hover{transform:translateY(-6px);box-shadow:0 30px 70px rgba(0,0,0,.09)}
+.tilt{transition:transform .7s cubic-bezier(.2,.8,.2,1)}
+.tilt:hover{transform:translateY(-10px) rotate(0deg) !important}
+.seg{transition:background-color .35s,color .35s}
+.num{font-variant-numeric:tabular-nums}
+.bar{transition:height .8s cubic-bezier(.2,.8,.2,1)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:8px;border-radius:999px;outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:34px;height:34px;border-radius:50%;background:#FFFFFF;border:0;box-shadow:0 0 0 8px rgba(232,122,2,.3),0 6px 18px rgba(0,0,0,.5)}
+input[type=range]::-moz-range-thumb{width:34px;height:34px;border-radius:50%;background:#FFFFFF;border:0;box-shadow:0 0 0 8px rgba(232,122,2,.3),0 6px 18px rgba(0,0,0,.5)}
+@keyframes rise{from{opacity:0;transform:translateY(26px);filter:blur(10px)}to{opacity:1;transform:none;filter:blur(0)}}
+.rise{animation:rise 1.2s cubic-bezier(.2,.8,.2,1) both}
+.d1{animation-delay:.05s}.d2{animation-delay:.18s}.d3{animation-delay:.32s}.d4{animation-delay:.46s}.d5{animation-delay:.6s}
+@keyframes reveal{from{opacity:0;transform:translateY(48px) scale(.985)}to{opacity:1;transform:none}}
+@supports (animation-timeline:view()){.reveal{animation:reveal linear both;animation-timeline:view();animation-range:entry 0% cover 30%}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(232,122,2,.55)}60%{box-shadow:0 0 0 10px rgba(232,122,2,0)}}
+.pulse{animation:pulse 2.6s ease-in-out infinite}
+@keyframes fadein{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.fadein{animation:fadein .7s cubic-bezier(.2,.8,.2,1) both}
+@keyframes slidein{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+.slidein{animation:slidein .9s cubic-bezier(.2,.8,.2,1) both}
+@keyframes glow{0%,100%{opacity:.5}50%{opacity:1}}
+.glow{animation:glow 3.6s ease-in-out infinite}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+.floaty{animation:floaty 7s ease-in-out infinite}
+@keyframes fill{from{width:0}to{width:100%}}
+.fill{animation:fill 6s linear infinite}
+.faq summary{list-style:none;cursor:pointer}
+.faq summary::-webkit-details-marker{display:none}
+.faq-plus{transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.faq details[open] .faq-plus{transform:rotate(45deg)}
+.field{font-family:Poppins,sans-serif;font-size:16px;padding:14px 16px;border:1px solid #E0E0E0;border-radius:14px;min-height:50px;background:#FFFFFF;color:#1a1a1a;width:100%}
+.lbl{font-family:Montserrat,sans-serif;font-weight:600;font-size:14px}
+@media (max-width:640px){.stack-sm{flex-direction:column !important;align-items:stretch !important}.stack-sm > a{text-align:center}}
+@media (max-width:900px){.hero-text{text-align:center !important;align-items:center !important}.hero-ctas{justify-content:center !important}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none !important;transition:none !important}html{scroll-behavior:auto}}
+
+/* Polish layer: progress bar, nav shadow, button shine, smooth answers, touch and phone tuning */
+html{scroll-padding-top:84px;-webkit-text-size-adjust:100%}
+::selection{background:#e87a02;color:#000000}
+a,button,summary,input,select,label{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+img{max-width:100%;height:auto}
+h1,h2,h3{text-wrap:balance;overflow-wrap:break-word}
+p,li{text-wrap:pretty}
+.scroll-progress{position:fixed;top:0;left:0;right:0;height:3px;background:#e87a02;transform-origin:0 50%;transform:scaleX(0);z-index:60;pointer-events:none}
+@keyframes lv-progress{to{transform:scaleX(1)}}
+@keyframes lv-navshade{to{box-shadow:0 12px 30px rgba(0,0,0,.08);background:rgba(255,255,255,.92)}}
+@supports (animation-timeline:scroll()){.scroll-progress{animation:lv-progress linear both;animation-timeline:scroll(root)}.nav{animation:lv-navshade linear both;animation-timeline:scroll(root);animation-range:0 160px}}
+.btn{position:relative;overflow:hidden;isolation:isolate}
+.btn::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:45%;z-index:-1;background:linear-gradient(100deg,rgba(255,255,255,0),rgba(255,255,255,.45),rgba(255,255,255,0));transform:skewX(-20deg);transition:transform .9s cubic-bezier(.2,.8,.2,1);pointer-events:none}
+@media (hover:hover){.btn:hover::after{transform:skewX(-20deg) translateX(460%)}}
+.btn:active{transform:scale(.97) !important;transition-duration:.12s}
+.nav-links a{position:relative;padding:6px 0}
+.nav-links a::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;border-radius:2px;background:#e87a02;transform:scaleX(0);transform-origin:left center;transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.nav-links a:hover::after,.nav-links a[aria-current="page"]::after{transform:scaleX(1)}
+.nav-links a.btn::after{display:none}
+.nav-mobile a{animation:fadein .55s cubic-bezier(.2,.8,.2,1) both}
+.nav-mobile a:nth-child(2){animation-delay:.04s}.nav-mobile a:nth-child(3){animation-delay:.08s}.nav-mobile a:nth-child(4){animation-delay:.12s}.nav-mobile a:nth-child(5){animation-delay:.16s}.nav-mobile a:nth-child(6){animation-delay:.2s}
+:root{interpolate-size:allow-keywords}
+details::details-content{block-size:0;overflow-y:clip;transition:block-size .45s cubic-bezier(.2,.8,.2,1),content-visibility .45s allow-discrete}
+details[open]::details-content{block-size:auto}
+summary{transition:opacity .2s}
+summary:active{opacity:.6}
+.lift:active{transform:scale(.985)}
+@media (hover:none){.lift:hover{transform:none}.btn:hover{transform:none;box-shadow:none}}
+@media (max-width:520px){
+.seg-track button{padding:10px 10px !important;font-size:13px !important;flex-direction:column !important;gap:4px !important;min-height:58px !important}
+}
+@media (max-width:400px){
+.btn{padding-left:22px !important;padding-right:22px !important}
+.nav .btn{padding:10px 14px !important}
+}
+</style>
+</helmet>
+<div style="font-family: Poppins, sans-serif; font-weight: 300; color: #1a1a1a; background: #FFFFFF; width: 100%; overflow-x: clip">
+<div aria-hidden="true" class="scroll-progress"></div>
+
+<header class="nav" style="border-bottom: 1px solid rgba(0,0,0,0.07)">
+<div style="max-width: 1180px; margin: 0 auto; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px">
+<a href="Creators.dc.html" aria-label="Lavoo Creator Programme" style="display: flex; align-items: center; gap: 12px; padding: 10px 0; text-decoration: none"><img src="fcb366f7-70de-4e95-9e2f-f78c0dda4cf3" alt="Lavoo" style="display: block; height: 24px; width: auto"><span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: #666666; border-left: 1px solid #DDDDDD; padding-left: 12px">Creators</span></a>
+<nav aria-label="Main" class="nav-links" style="display: flex; align-items: center; gap: 30px; font-size: 13px">
+<a href="#worth" style="color: #1a1a1a; text-decoration: none">What you earn</a>
+<a href="#how" style="color: #1a1a1a; text-decoration: none">How it works</a>
+<a href="#calculator" style="color: #1a1a1a; text-decoration: none">Calculator</a>
+<a href="#faq" style="color: #1a1a1a; text-decoration: none">Questions</a>
+<a href="Main.dc.html" style="color: #1a1a1a; text-decoration: none">What is Lavoo?</a>
+</nav>
+<div style="display: flex; align-items: center; gap: 6px">
+<a href="#apply" class="btn" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 13px; background: #e87a02; color: #000000; text-decoration: none; padding: 11px 18px; border-radius: 999px">Apply</a>
+<button type="button" class="nav-burger" aria-label="Menu" aria-expanded="{{ menuOpen }}" sc-camel-on-click="{{ toggleMenu }}" style="display: none; width: 44px; height: 44px; align-items: center; justify-content: center; background: transparent; border: 0; border-radius: 999px; cursor: pointer; color: #1a1a1a">
+<sc-if value="{{ menuClosed }}" hint-placeholder-val="{{ true }}"><svg aria-hidden="true" width="22" height="22" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 9h16M4 15h16"></path></svg></sc-if>
+<sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}"><svg aria-hidden="true" width="22" height="22" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></sc-if>
+</button>
+</div>
+</div>
+<sc-if value="{{ menuOpen }}" hint-placeholder-val="{{ false }}">
+<nav aria-label="Mobile" class="nav-mobile fadein" style="padding: 8px 20px 28px; display: flex; flex-direction: column">
+<a href="#worth" sc-camel-on-click="{{ closeMenu }}" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 26px; color: #1a1a1a; text-decoration: none; padding: 16px 0; border-bottom: 1px solid #EDEDED">What you earn</a>
+<a href="#how" sc-camel-on-click="{{ closeMenu }}" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 26px; color: #1a1a1a; text-decoration: none; padding: 16px 0; border-bottom: 1px solid #EDEDED">How it works</a>
+<a href="#calculator" sc-camel-on-click="{{ closeMenu }}" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 26px; color: #1a1a1a; text-decoration: none; padding: 16px 0; border-bottom: 1px solid #EDEDED">Calculator</a>
+<a href="#faq" sc-camel-on-click="{{ closeMenu }}" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 26px; color: #1a1a1a; text-decoration: none; padding: 16px 0; border-bottom: 1px solid #EDEDED">Questions</a>
+<a href="Main.dc.html" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 26px; color: #1a1a1a; text-decoration: none; padding: 16px 0">What is Lavoo?</a>
+</nav>
+</sc-if>
+</header>
+
+<section style="background: #FFFFFF; position: relative; overflow: hidden">
+<div aria-hidden="true" class="glow" style="position: absolute; right: -240px; top: -200px; width: 760px; height: 760px; border-radius: 50%; background: radial-gradient(closest-side, rgba(232,122,2,0.16), rgba(232,122,2,0)); pointer-events: none"></div>
+<div style="position: relative; max-width: 1180px; margin: 0 auto; padding: clamp(64px, 9vw, 120px) 20px clamp(56px, 7vw, 96px); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); align-items: center; gap: clamp(48px, 6vw, 80px)">
+<div class="hero-text" style="display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: clamp(20px, 2.4vw, 28px)">
+<p class="rise d1" style="margin: 0; display: flex; align-items: center; gap: 10px; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(15px, 1.3vw, 17px); background: #000000; color: #FFFFFF; border-radius: 999px; padding: 9px 16px 9px 12px"><span class="pulse" aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; background: #e87a02"></span>Creator Programme · now open</p>
+<h1 class="rise d2" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(52px, 8vw, 116px); line-height: 0.95; letter-spacing: -0.05em">Share Lavoo.<br><span style="color: #e87a02">Earn half.</span></h1>
+<p class="rise d3" style="margin: 0; font-size: clamp(18px, 1.7vw, 22px); line-height: 1.55; max-width: 520px">Get 50% of every payment from the people you bring in, for 6 months. Paid every Friday. Premium is on us.</p>
+<div class="rise d4 stack-sm hero-ctas" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 16px 28px; padding-top: 6px; width: 100%">
+<a href="#apply" class="btn" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 17px; background: #e87a02; color: #000000; text-decoration: none; padding: 18px 34px; border-radius: 999px">Apply to join</a>
+<a href="#worth" style="font-size: 18px; color: #1a1a1a; text-decoration: none; font-weight: 400; padding: 10px 0">See what one person is worth <span class="arrow">›</span></a>
+</div>
+<p class="rise d5" style="margin: 0; font-size: 14px; color: #666666">Any audience size. Any platform. No target. Free to join.</p>
+</div>
+
+<div class="rise d4 floaty" style="justify-self: center; width: 100%; max-width: 440px">
+<div style="background: #000000; color: #FFFFFF; border-radius: 34px; padding: clamp(24px, 3vw, 32px); display: flex; flex-direction: column; gap: 22px; position: relative; overflow: hidden; box-shadow: 0 50px 100px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.04) inset">
+<div aria-hidden="true" class="glow" style="position: absolute; right: -80px; top: -80px; width: 240px; height: 240px; border-radius: 50%; box-shadow: 0 0 110px 50px rgba(232,122,2,0.28)"></div>
+<div style="position: relative; display: flex; justify-content: space-between; align-items: center; gap: 12px">
+<span style="display: flex; align-items: center; gap: 10px; font-family: Montserrat, sans-serif; font-weight: 600; font-size: 15px"><svg aria-hidden="true" width="20" height="20" sc-camel-view-box="0 0 24 24" fill="none" stroke="#e87a02" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="M3 10h18M7 15h3"></path></svg>Your Friday payout</span>
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase; color: #A3A3A3; border: 1px solid #333333; border-radius: 999px; padding: 5px 10px">Example</span>
+</div>
+<div style="position: relative; display: flex; flex-direction: column; gap: 4px">
+<span class="num" style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(46px, 5.6vw, 64px); letter-spacing: -0.045em; line-height: 1">{{ feedTotal }}</span>
+<span style="font-size: 14px; color: #A3A3A3">from three people who joined through you</span>
+</div>
+<div style="position: relative; display: flex; flex-direction: column; gap: 10px">
+<sc-for list="{{ feed }}" as="r" hint-placeholder-count="3">
+<div class="slidein" style="display: flex; align-items: center; gap: 14px; background: #141414; border: 1px solid #222222; border-radius: 18px; padding: 14px 16px; animation-delay: {{ r.delay }}">
+<span aria-hidden="true" style="width: 40px; height: 40px; flex: 0 0 40px; border-radius: 12px; background: {{ r.chipBg }}; color: {{ r.chipFg }}; display: flex; align-items: center; justify-content: center; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 14px">{{ r.initial }}</span>
+<span style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 15px">{{ r.plan }}</span><span style="font-size: 13px; color: #8A8A8A">{{ r.billing }}</span></span>
+<span class="num" style="font-family: Montserrat, sans-serif; font-weight: 700; font-size: 17px; color: #e87a02; white-space: nowrap">+{{ r.amt }}</span>
+</div>
+</sc-for>
+</div>
+<p style="position: relative; margin: 0; font-size: 12px; line-height: 1.5; color: #8A8A8A">At regular {{ curName }} prices, after VAT and payment fees. People who join before 31 January 2027 pay founding prices, so those payments are smaller.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section aria-label="The deal" style="background: #FFFFFF">
+<div style="max-width: 1180px; margin: 0 auto; padding: 0 20px clamp(80px, 10vw, 128px)">
+<div class="reveal" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 12px">
+<div style="background: #000000; color: #FFFFFF; border-radius: 28px; padding: 30px 28px; display: flex; flex-direction: column; gap: 8px; position: relative; overflow: hidden"><div aria-hidden="true" class="glow" style="position: absolute; right: -60px; top: -60px; width: 180px; height: 180px; border-radius: 50%; box-shadow: 0 0 90px 40px rgba(232,122,2,0.25)"></div><span style="position: relative; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(44px, 4.6vw, 60px); letter-spacing: -0.04em; line-height: 1; color: #e87a02">50%</span><span style="position: relative; font-size: 15px; line-height: 1.5; color: #CCCCCC">of what each person pays</span></div>
+<div style="background: #F5F5F5; border-radius: 28px; padding: 30px 28px; display: flex; flex-direction: column; gap: 8px"><span style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(44px, 4.6vw, 60px); letter-spacing: -0.04em; line-height: 1">6 mo</span><span style="font-size: 15px; line-height: 1.5">of earnings from every person</span></div>
+<div style="background: #F5F5F5; border-radius: 28px; padding: 30px 28px; display: flex; flex-direction: column; gap: 8px"><span style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(44px, 4.6vw, 60px); letter-spacing: -0.04em; line-height: 1">Free</span><span style="font-size: 15px; line-height: 1.5">Premium for your first 6 months</span></div>
+<div style="background: #F5F5F5; border-radius: 28px; padding: 30px 28px; display: flex; flex-direction: column; gap: 8px"><span style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(44px, 4.6vw, 60px); letter-spacing: -0.04em; line-height: 1">Fridays</span><span style="font-size: 15px; line-height: 1.5">paid every week, no minimum</span></div>
+</div>
+</div>
+</section>
+
+<section id="worth" style="background: #000000; color: #FFFFFF; scroll-margin-top: 60px; position: relative; overflow: hidden">
+<div aria-hidden="true" class="glow" style="position: absolute; left: -260px; top: 10%; width: 700px; height: 700px; border-radius: 50%; background: radial-gradient(closest-side, rgba(232,122,2,0.18), rgba(232,122,2,0)); pointer-events: none"></div>
+<div style="position: relative; max-width: 1180px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; gap: clamp(36px, 5vw, 56px)">
+<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px">
+<p class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: 17px; color: #e87a02">What you earn</p>
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(38px, 5.8vw, 80px); line-height: 1.02; letter-spacing: -0.04em; max-width: 900px">One person. Up to six Fridays of pay.</h2>
+<p class="reveal" style="margin: 0; font-size: clamp(18px, 1.6vw, 22px); line-height: 1.6; color: #CCCCCC; max-width: 620px">Bring in one business owner and you are paid every time they pay, for 6 months. If they pay for a whole year, you get half of it in one go.</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px">
+<div class="reveal lift" style="background: #111111; border: 1px solid #262626; border-radius: 30px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 18px">
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.8px; text-transform: uppercase; color: #A3A3A3">Joins Pro, pays monthly</span>
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="num" style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(40px, 4.4vw, 56px); letter-spacing: -0.045em; line-height: 1">{{ proMonth }}</span><span style="font-size: 15px; color: #A3A3A3">to you, every month</span></div>
+<div aria-hidden="true" style="display: flex; gap: 6px"><sc-for list="{{ six }}" as="s" hint-placeholder-count="6"><span style="flex: 1 1 0; height: 8px; border-radius: 999px; background: #3a2000"></span></sc-for></div>
+<span style="font-size: 16px; color: #CCCCCC"><strong class="num" style="font-weight: 600; color: #FFFFFF">{{ pro6 }}</strong> over 6 months</span>
+</div>
+<div class="reveal lift" style="background: #111111; border: 1px solid #262626; border-radius: 30px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 18px">
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.8px; text-transform: uppercase; color: #A3A3A3">Joins Premium, pays monthly</span>
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="num" style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(40px, 4.4vw, 56px); letter-spacing: -0.045em; line-height: 1">{{ premMonth }}</span><span style="font-size: 15px; color: #A3A3A3">to you, every month</span></div>
+<div aria-hidden="true" style="display: flex; gap: 6px"><sc-for list="{{ six }}" as="s" hint-placeholder-count="6"><span style="flex: 1 1 0; height: 8px; border-radius: 999px; background: #a65800"></span></sc-for></div>
+<span style="font-size: 16px; color: #CCCCCC"><strong class="num" style="font-weight: 600; color: #FFFFFF">{{ prem6 }}</strong> over 6 months</span>
+</div>
+<div class="reveal lift" style="background: #e87a02; color: #000000; border-radius: 30px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 18px; box-shadow: 0 30px 80px rgba(232,122,2,0.25)">
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 13px; letter-spacing: 0.8px; text-transform: uppercase; color: #2a1600">Joins Premium, pays yearly</span>
+<div style="display: flex; flex-direction: column; gap: 4px"><span class="num" style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(40px, 4.4vw, 56px); letter-spacing: -0.045em; line-height: 1">{{ premYear }}</span><span style="font-size: 15px; color: #2a1600">to you, in one go</span></div>
+<div aria-hidden="true" style="height: 8px; border-radius: 999px; background: #000000"></div>
+<span style="font-size: 16px; color: #2a1600">Half of their whole year, paid once it clears</span>
+</div>
+</div>
+<p class="reveal" style="margin: 0; text-align: center; font-size: 13px; line-height: 1.6; color: #8A8A8A; max-width: 760px; align-self: center">Shown in {{ curName }}, at regular prices, after {{ taxText }} and payment fees of about 3%. People who join before 31 January 2027 pay founding prices, so you earn less on them. These are examples, not promises.</p>
+</div>
+</section>
+
+<section id="how" style="background: #F5F5F5; scroll-margin-top: 60px">
+<div style="max-width: 1180px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; gap: clamp(36px, 5vw, 56px)">
+<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px">
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(36px, 5.4vw, 74px); line-height: 1.04; letter-spacing: -0.04em">Three steps. That is it.</h2>
+<p class="reveal" style="margin: 0; font-size: clamp(18px, 1.6vw, 22px); line-height: 1.6; max-width: 580px">The best content is real. Use Lavoo on your own business, then show people what it found.</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 16px">
+<div class="reveal lift" style="background: #FFFFFF; border-radius: 28px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 14px">
+<span aria-hidden="true" style="width: 52px; height: 52px; border-radius: 16px; background: #000000; color: #e87a02; display: flex; align-items: center; justify-content: center; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 22px">1</span>
+<h3 style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: clamp(22px, 2.2vw, 28px); letter-spacing: -0.02em">Get your link.</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6">Once you are in, you get your own link, your own code and free Premium.</p>
+</div>
+<div class="reveal lift" style="background: #FFFFFF; border-radius: 28px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 14px">
+<span aria-hidden="true" style="width: 52px; height: 52px; border-radius: 16px; background: #000000; color: #e87a02; display: flex; align-items: center; justify-content: center; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 22px">2</span>
+<h3 style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: clamp(22px, 2.2vw, 28px); letter-spacing: -0.02em">Share it your way.</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6">Run your own check-up. Post what Lavoo found. Your audience sees it is real.</p>
+</div>
+<div class="reveal lift" style="background: #000000; color: #FFFFFF; border-radius: 28px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 14px">
+<span aria-hidden="true" style="width: 52px; height: 52px; border-radius: 16px; background: #e87a02; color: #000000; display: flex; align-items: center; justify-content: center; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 22px">3</span>
+<h3 style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: clamp(22px, 2.2vw, 28px); letter-spacing: -0.02em">Get paid on Friday.</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #CCCCCC">Every person who pays earns you 50%, every week, for 6 months.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section style="background: #FFFFFF">
+<div style="max-width: 1180px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; gap: clamp(40px, 5vw, 64px)">
+<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px">
+<p class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: 17px; color: #b35c00">Not sure what to post?</p>
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(36px, 5.4vw, 74px); line-height: 1.04; letter-spacing: -0.04em">Posts that write themselves.</h2>
+<p class="reveal" style="margin: 0; font-size: clamp(18px, 1.6vw, 22px); line-height: 1.6; max-width: 600px">Every check-up gives you a story. Here are three ideas to start with.</p>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: clamp(20px, 3vw, 36px); justify-items: center">
+<sc-for list="{{ posts }}" as="p" hint-placeholder-count="3">
+<div class="reveal tilt" style="width: 100%; max-width: 320px; aspect-ratio: 9 / 16; background: #000000; color: #FFFFFF; border-radius: 34px; padding: 22px; display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; box-shadow: 0 40px 80px rgba(0,0,0,0.18); transform: rotate({{ p.rot }})">
+<div aria-hidden="true" style="position: absolute; inset: auto -40% -30% -40%; height: 70%; background: radial-gradient(closest-side, rgba(232,122,2,0.35), rgba(232,122,2,0)); pointer-events: none"></div>
+<div style="position: relative; display: flex; flex-direction: column; gap: 10px">
+<div aria-hidden="true" style="height: 4px; border-radius: 999px; background: #333333; overflow: hidden"><div class="fill" style="height: 100%; background: #FFFFFF; animation-delay: {{ p.delay }}"></div></div>
+<span style="align-self: flex-start; font-family: Montserrat, sans-serif; font-weight: 600; font-size: 12px; background: #e87a02; color: #000000; border-radius: 999px; padding: 6px 12px">{{ p.tag }}</span>
+</div>
+<p style="position: relative; margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(24px, 2.4vw, 28px); line-height: 1.12; letter-spacing: -0.02em">{{ p.hook }}</p>
+<div style="position: relative; display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 14px; line-height: 1.5; color: #CCCCCC">{{ p.idea }}</span>
+<span style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #A3A3A3"><span aria-hidden="true" style="width: 26px; height: 26px; border-radius: 50%; background: #333333"></span>@you · #ad · I earn if you join</span>
+</div>
+</div>
+</sc-for>
+</div>
+<p class="reveal" style="margin: 0; text-align: center; font-size: 14px; color: #666666">Ideas only. Say it in your own words, and always say you earn from it.</p>
+</div>
+</section>
+
+<section id="calculator" style="background: #000000; color: #FFFFFF; scroll-margin-top: 60px; position: relative; overflow: hidden">
+<div aria-hidden="true" class="glow" style="position: absolute; left: 50%; bottom: -320px; width: 900px; height: 600px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(232,122,2,0.22), rgba(232,122,2,0)); pointer-events: none"></div>
+<div style="position: relative; max-width: 960px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; align-items: center; gap: clamp(32px, 4vw, 48px)">
+<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px">
+<p class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: 17px; color: #e87a02">Earnings calculator</p>
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(36px, 5.4vw, 74px); line-height: 1.04; letter-spacing: -0.04em">Watch it stack up.</h2>
+</div>
+
+<div class="reveal" style="display: flex; flex-direction: column; align-items: center; gap: 10px">
+<p style="margin: 0; font-size: 14px; color: #8A8A8A">Showing {{ curName }}. <button type="button" sc-camel-on-click="{{ toggleCur }}" aria-expanded="{{ curOpen }}" style="font-family: Poppins, sans-serif; font-size: 14px; color: #e87a02; background: transparent; border: 0; padding: 10px 4px; cursor: pointer">Change</button></p>
+<sc-if value="{{ curOpen }}" hint-placeholder-val="{{ false }}">
+<div class="fadein" role="group" aria-label="Currency" style="display: flex; gap: 4px; background: #1a1a1a; border-radius: 999px; padding: 4px">
+<sc-for list="{{ currencies }}" as="c" hint-placeholder-count="3">
+<button type="button" class="seg" aria-pressed="{{ c.active }}" sc-camel-on-click="{{ c.pick }}" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 15px; border: 0; border-radius: 999px; padding: 10px 22px; min-height: 44px; cursor: pointer; background: {{ c.bg }}; color: {{ c.fg }}">{{ c.label }}</button>
+</sc-for>
+</div>
+</sc-if>
+</div>
+
+<div class="reveal" style="width: 100%; display: flex; flex-direction: column; align-items: center; gap: 18px; text-align: center">
+<label for="members" style="font-size: clamp(17px, 1.6vw, 20px); color: #CCCCCC">If <strong class="num" style="font-family: Montserrat, sans-serif; font-weight: 700; color: #FFFFFF; font-size: 1.3em">{{ n }}</strong> {{ peopleWord }} join through you each month</label>
+<input id="members" type="range" min="1" max="100" step="1" value="{{ n }}" sc-camel-on-input="{{ setN }}" sc-camel-on-change="{{ setN }}" style="max-width: 640px; background: {{ track }}">
+</div>
+
+<div class="reveal" style="width: 100%; background: rgba(20,20,20,0.7); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); border: 1px solid #262626; border-radius: 32px; padding: clamp(24px, 4vw, 44px); display: flex; flex-direction: column; gap: 28px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 20px">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<span style="font-size: 15px; color: #A3A3A3">By month 6, you could be earning</span>
+<span class="num" style="font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(48px, 7.4vw, 92px); letter-spacing: -0.045em; line-height: 0.95">{{ month6 }}</span>
+<span style="font-size: 15px; color: #A3A3A3">every month</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px; text-align: right; margin-left: auto">
+<span style="font-size: 14px; color: #A3A3A3">Total in your first 6 months</span>
+<span class="num" style="font-family: Montserrat, sans-serif; font-weight: 700; font-size: clamp(26px, 3vw, 36px); letter-spacing: -0.03em; color: #e87a02">{{ total6 }}</span>
+</div>
+</div>
+<div aria-hidden="true" style="display: flex; align-items: flex-end; gap: clamp(8px, 2vw, 18px); height: 200px; border-bottom: 1px solid #2a2a2a">
+<sc-for list="{{ bars }}" as="b" hint-placeholder-count="6">
+<div style="flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 8px">
+<span class="num" style="font-size: 12px; white-space: nowrap; color: {{ b.valColor }}">{{ b.short }}</span>
+<div class="bar" style="width: 100%; max-width: 76px; height: {{ b.h }}; background: {{ b.bg }}; border-radius: 12px 12px 4px 4px; box-shadow: {{ b.shadow }}"></div>
+</div>
+</sc-for>
+</div>
+<div aria-hidden="true" style="display: flex; gap: clamp(8px, 2vw, 18px); margin-top: -14px">
+<sc-for list="{{ bars }}" as="b" hint-placeholder-count="6">
+<span style="flex: 1 1 0; min-width: 0; text-align: center; font-size: 12px; color: #8A8A8A">{{ b.label }}</span>
+</sc-for>
+</div>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #CCCCCC">Each month, new people join and earlier ones keep paying, so your earnings grow. Each person is worth about <strong class="num" style="font-weight: 500; color: #FFFFFF">{{ perMember }}</strong> to you.</p>
+</div>
+
+<p class="reveal" style="margin: 0; max-width: 760px; font-size: 13px; line-height: 1.6; color: #8A8A8A; text-align: center">These are estimates. Your results may differ. Assumes regular monthly prices, half on Pro and half on Premium, and 9 in 10 people still paying each month. People who join before 31 January 2027 pay founding prices, so you earn less on them. You earn 50% of what Lavoo receives after {{ taxText }} and payment fees of about 3%.</p>
+</div>
+</section>
+
+<section style="background: #F5F5F5">
+<div style="max-width: 1180px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; gap: clamp(36px, 5vw, 56px)">
+<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px">
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(36px, 5.4vw, 74px); line-height: 1.04; letter-spacing: -0.04em">Why creators say yes.</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px">
+<div class="reveal lift" style="background: #FFFFFF; border-radius: 28px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 10px"><h3 style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 24px; letter-spacing: -0.02em">Bigger payments, same 50%.</h3><p style="margin: 0; font-size: 16px; line-height: 1.6">When someone pays for 3 months or a whole year, you get half of the whole payment.</p></div>
+<div class="reveal lift" style="background: #FFFFFF; border-radius: 28px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 10px"><h3 style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 24px; letter-spacing: -0.02em">Easy to recommend.</h3><p style="margin: 0; font-size: 16px; line-height: 1.6">People start free with a full check-up. No card, no risk. You are never pushing anyone into paying.</p></div>
+<div class="reveal lift" style="background: #FFFFFF; border-radius: 28px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 10px"><h3 style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 24px; letter-spacing: -0.02em">One of the best rates out there.</h3><p style="margin: 0; font-size: 16px; line-height: 1.6">Half of every payment, not a small one-off fee. And no target to hit.</p></div>
+<div class="reveal lift" style="background: #FFFFFF; border-radius: 28px; padding: clamp(28px, 3.4vw, 40px); display: flex; flex-direction: column; gap: 10px"><h3 style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 24px; letter-spacing: -0.02em">See every payment.</h3><p style="margin: 0; font-size: 16px; line-height: 1.6">Your dashboard shows who joined, what they paid and what is coming to you on Friday.</p></div>
+</div>
+<div class="reveal" style="display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px">
+<span style="font-size: 16px; padding-right: 6px">Big or small, the deal is the same:</span>
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 14px; background: #000000; color: #FFFFFF; border-radius: 999px; padding: 10px 16px">Big creators</span>
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 14px; background: #000000; color: #FFFFFF; border-radius: 999px; padding: 10px 16px">Growing creators</span>
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 14px; background: #e87a02; color: #000000; border-radius: 999px; padding: 10px 16px">UGC creators</span>
+</div>
+</div>
+</section>
+
+<section aria-label="Launch window" style="background: #e87a02; color: #000000">
+<div style="max-width: 1180px; margin: 0 auto; padding: clamp(56px, 7vw, 88px) 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 24px 40px">
+<div class="reveal" style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 10px">
+<span style="font-family: Montserrat, sans-serif; font-weight: 700; font-size: 13px; letter-spacing: 1px; text-transform: uppercase">Launch window</span>
+<p style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(28px, 3.8vw, 48px); line-height: 1.08; letter-spacing: -0.03em">Right now is the easiest time to share Lavoo.</p>
+<p style="margin: 0; font-size: clamp(16px, 1.4vw, 19px); line-height: 1.6">Your audience can lock in founding prices until 31 January 2027. A good deal is an easy yes.</p>
+</div>
+<a href="#apply" class="btn reveal" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 17px; background: #000000; color: #FFFFFF; text-decoration: none; padding: 18px 34px; border-radius: 999px">Apply now</a>
+</div>
+</section>
+
+<section style="background: #000000; color: #FFFFFF">
+<div style="max-width: 1180px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; gap: clamp(36px, 5vw, 56px)">
+<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 16px">
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(36px, 5.4vw, 74px); line-height: 1.04; letter-spacing: -0.04em">Shine, and it <span style="color: #e87a02">keeps going.</span></h2>
+<p class="reveal" style="margin: 0; font-size: clamp(18px, 1.6vw, 22px); line-height: 1.6; color: #CCCCCC; max-width: 560px">Your first 6 months are just the start.</p>
+</div>
+<div class="reveal" style="display: flex; flex-wrap: wrap; gap: 12px">
+<div style="flex: 1 1 260px; min-width: 0; border: 1px solid #262626; border-radius: 28px; padding: 28px; display: flex; flex-direction: column; gap: 14px">
+<div style="height: 6px; border-radius: 999px; background: #e87a02; box-shadow: 0 0 22px rgba(232,122,2,0.55)"></div>
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 13px; color: #A3A3A3">Months 1 to 6</span>
+<span style="font-family: Montserrat, sans-serif; font-weight: 700; font-size: 24px">Earn 50%.</span>
+</div>
+<div style="flex: 1 1 260px; min-width: 0; border: 1px solid #262626; border-radius: 28px; padding: 28px; display: flex; flex-direction: column; gap: 14px">
+<div style="height: 6px; border-radius: 999px; background: repeating-linear-gradient(-45deg, #e87a02 0 6px, #5a3200 6px 12px)"></div>
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 13px; color: #A3A3A3">Months 7 to 12</span>
+<span style="font-family: Montserrat, sans-serif; font-weight: 700; font-size: 24px">Top creators get 6 more.</span>
+</div>
+<div style="flex: 1 1 260px; min-width: 0; border: 1px solid #262626; border-radius: 28px; padding: 28px; display: flex; flex-direction: column; gap: 14px">
+<div style="height: 6px; border-radius: 999px; background: linear-gradient(90deg, #FFFFFF, rgba(255,255,255,0.15))"></div>
+<span style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 13px; color: #A3A3A3">After a year</span>
+<span style="font-family: Montserrat, sans-serif; font-weight: 700; font-size: 24px">The best get a new deal.</span>
+</div>
+</div>
+<p class="reveal" style="margin: 0; text-align: center; font-size: 16px; color: #CCCCCC">And everyone you bring in keeps earning you 50% for their full 6 months, even after your contract ends.</p>
+</div>
+</section>
+
+<section id="faq" style="background: #FFFFFF; scroll-margin-top: 60px">
+<div style="max-width: 820px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; gap: 32px">
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(32px, 4.4vw, 56px); line-height: 1.05; letter-spacing: -0.04em; text-align: center">Quick questions.</h2>
+<div class="faq reveal" style="display: flex; flex-direction: column">
+<details style="border-top: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>Do I need a big following?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">No. A small audience that trusts you often does better than a big one that scrolls past.</p></details>
+<details style="border-top: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>Does it cost anything to join?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">Nothing. You also get Premium free for your first 6 months.</p></details>
+<details style="border-top: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>Is there a target?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">No. Post when it suits you. The more people you bring in, the more you earn.</p></details>
+<details style="border-top: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>Do I earn on founding prices?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">Yes. You earn 50% of what each person actually pays. People who join before 31 January 2027 pay founding prices, so those payments are smaller. Everyone who joins after that pays regular prices.</p></details>
+<details style="border-top: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>What if someone pays for a whole year?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">You get 50% of the whole payment, once it clears. Quarterly payments work the same way.</p></details>
+<details style="border-top: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>When and how do I get paid?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">Every Friday, straight to your bank account, with no minimum. Each payment is paid once it clears.</p></details>
+<details style="border-top: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>Do I have to say I earn from it?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">Yes, every time. A simple "#ad" or "I earn if you join" is enough. It is the law, and it builds trust.</p></details>
+<details style="border-top: 1px solid #E5E5E5; border-bottom: 1px solid #E5E5E5"><summary style="display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 22px 0; font-family: Montserrat, sans-serif; font-weight: 600; font-size: clamp(17px, 1.6vw, 19px); min-height: 44px"><span>Where are the full terms?</span><span class="faq-plus" aria-hidden="true" style="font-weight: 400; font-size: 24px">+</span></summary><p style="margin: 0 0 22px; font-size: 17px; line-height: 1.7">In our short, plain-English <a href="CreatorTerms.dc.html" style="color: #1a1a1a; text-decoration: underline; text-decoration-color: #e87a02; text-underline-offset: 3px">Creator Agreement</a>. You sign it once you are accepted.</p></details>
+</div>
+</div>
+</section>
+
+<section id="apply" style="background: #F5F5F5; scroll-margin-top: 60px">
+<div style="max-width: 720px; margin: 0 auto; padding: clamp(88px, 12vw, 150px) 20px; display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px">
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(36px, 5vw, 64px); line-height: 1.04; letter-spacing: -0.04em">Apply to join.</h2>
+<p class="reveal" style="margin: 0; font-size: 18px; line-height: 1.6">Takes two minutes. We reply within 48 hours.</p>
+</div>
+<sc-if value="{{ notApplied }}" hint-placeholder-val="{{ true }}">
+<form class="reveal" style="background: #FFFFFF; border-radius: 28px; padding: clamp(24px, 4vw, 40px); display: flex; flex-direction: column; gap: 18px">
+<div style="display: flex; flex-wrap: wrap; gap: 18px">
+<div style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 8px"><label for="ap-name" class="lbl">Full name</label><input id="ap-name" type="text" autocomplete="name" class="field"></div>
+<div style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 8px"><label for="ap-email" class="lbl">Email</label><input id="ap-email" type="email" autocomplete="email" class="field"></div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 18px">
+<div style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 8px"><label for="ap-platform" class="lbl">Main platform</label><sc-raw-select id="ap-platform" class="field"><option>TikTok</option><option>Instagram</option><option>YouTube</option><option>X</option><option>LinkedIn</option><option>Facebook</option><option>Other</option></sc-raw-select></div>
+<div style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 8px"><label for="ap-size" class="lbl">Followers</label><sc-raw-select id="ap-size" class="field"><option>Under 10k</option><option>10k to 100k</option><option>100k+</option><option>I make UGC for brands</option></sc-raw-select></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px"><label for="ap-link" class="lbl">Link to your profile</label><input id="ap-link" type="url" placeholder="https://" class="field"></div>
+<button type="button" class="btn" sc-camel-on-click="{{ apply }}" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 16px; background: #e87a02; color: #000000; border: 0; border-radius: 999px; padding: 17px 24px; min-height: 54px; cursor: pointer">Send my application</button>
+</form>
+</sc-if>
+<sc-if value="{{ applied }}" hint-placeholder-val="{{ false }}">
+<div class="fadein" style="background: #000000; color: #FFFFFF; border-radius: 28px; padding: clamp(32px, 5vw, 56px); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px">
+<span aria-hidden="true" style="width: 56px; height: 56px; border-radius: 50%; background: #e87a02; color: #000000; display: flex; align-items: center; justify-content: center"><svg width="26" height="26" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span>
+<p style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 700; font-size: 28px">You are on the list.</p>
+<p style="margin: 0; font-size: 17px; line-height: 1.6; color: #CCCCCC">We will reply within 48 hours. Meanwhile, run your free check-up, so you know exactly what you will be sharing.</p>
+<a href="Main.dc.html" class="btn" style="margin-top: 8px; font-family: Montserrat, sans-serif; font-weight: 600; font-size: 15px; background: #e87a02; color: #000000; text-decoration: none; padding: 14px 22px; border-radius: 999px">Start your free check-up</a>
+</div>
+</sc-if>
+</div>
+</section>
+
+<section style="background: #000000; color: #FFFFFF; position: relative; overflow: hidden">
+<div aria-hidden="true" class="glow" style="position: absolute; left: 50%; top: 50%; width: 900px; height: 600px; transform: translate(-50%, -50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(232,122,2,0.2), rgba(232,122,2,0)); pointer-events: none"></div>
+<div style="position: relative; max-width: 1180px; margin: 0 auto; padding: clamp(110px, 15vw, 180px) 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 28px">
+<h2 class="reveal" style="margin: 0; font-family: Montserrat, sans-serif; font-weight: 800; font-size: clamp(48px, 7.4vw, 112px); line-height: 0.96; letter-spacing: -0.05em">Share Lavoo.<br><span style="color: #e87a02">Earn half.</span></h2>
+<p class="reveal" style="margin: 0; font-size: clamp(18px, 1.6vw, 22px); line-height: 1.6; color: #CCCCCC; max-width: 520px">Help business owners find what is really holding them back. Get paid every Friday for it.</p>
+<a href="#apply" class="btn reveal" style="font-family: Montserrat, sans-serif; font-weight: 600; font-size: 17px; background: #e87a02; color: #000000; text-decoration: none; padding: 20px 36px; border-radius: 999px">Apply to join</a>
+</div>
+</section>
+
+<footer style="background: #F5F5F5; color: #666666">
+<div style="max-width: 1180px; margin: 0 auto; padding: 48px 20px 32px; display: flex; flex-direction: column; gap: 32px; font-size: 13px">
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 32px">
+<div style="display: flex; flex-direction: column; gap: 10px; max-width: 320px">
+<img src="fcb366f7-70de-4e95-9e2f-f78c0dda4cf3" alt="Lavoo" style="display: block; height: 26px; width: auto; align-self: flex-start">
+<span style="line-height: 1.6">Lavoo is your Business Doctor. It finds out what is really holding your business back, tells you what to do first, and turns it into simple daily Missions you will actually finish.</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 32px 56px">
+<div style="display: flex; flex-direction: column; gap: 4px"><span style="font-weight: 500; color: #1a1a1a; padding-bottom: 6px">Lavoo</span><a href="Main.dc.html" style="color: #666666; text-decoration: none; padding: 6px 0">How it works</a><a href="Pricing.dc.html" style="color: #666666; text-decoration: none; padding: 6px 0">Pricing</a><a href="About.dc.html" style="color: #666666; text-decoration: none; padding: 6px 0">About</a><a href="Help.dc.html" style="color: #666666; text-decoration: none; padding: 6px 0">Help</a></div>
+<div style="display: flex; flex-direction: column; gap: 4px"><span style="font-weight: 500; color: #1a1a1a; padding-bottom: 6px">Legal</span><a href="Privacy.dc.html" style="color: #666666; text-decoration: none; padding: 6px 0">Privacy Policy</a><a href="Terms.dc.html" style="color: #666666; text-decoration: none; padding: 6px 0">Terms and Conditions</a><a href="CreatorTerms.dc.html" style="color: #666666; text-decoration: none; padding: 6px 0">Creator Agreement</a></div>
+</div>
+</div>
+<div style="border-top: 1px solid #DDDDDD; padding-top: 20px">© 2026 Lavoo. The Business Doctor.</div>
+</div>
+</footer>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;region&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Auto (by location)&quot;,&quot;Global (USD)&quot;,&quot;United Kingdom (GBP)&quot;,&quot;Nigeria (NGN)&quot;],&quot;default&quot;:&quot;Auto (by location)&quot;},&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:8600}}">
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.state = { menuOpen: false, cur: null, detected: null, curOpen: false, n: 10, applied: false };
+}
+componentDidMount() {
+this.setState({ detected: this.detectCurrency() });
+}
+detectCurrency() {
+// The server sets the visitor's country from their IP address, as
+// <html data-country="NG"> or <meta name="lavoo-country" content="NG">.
+// Nigeria (or no country code) shows naira, the standard.
+// The UK shows pounds. The US and everywhere else shows dollars.
+var cc = '';
+try {
+cc = (document.documentElement.getAttribute('data-country') || '').toUpperCase();
+if (!cc) { var m = document.querySelector('meta[name="lavoo-country"]'); if (m) { cc = (m.getAttribute('content') || '').toUpperCase(); } }
+} catch (e) {}
+if (cc) { if (cc === 'NG') { return 'NGN'; } if (cc === 'GB' || cc === 'UK') { return 'GBP'; } return 'USD'; }
+return 'NGN';
+}
+renderVals() {
+var self = this;
+var CUR = {
+NGN: { label: '₦ Naira', name: 'naira', sym: '₦', pro: 20000, prem: 35000, proY: 187000, premY: 327000, vat: 0.075, tax: '7.5% VAT' },
+GBP: { label: '£ Pounds', name: 'pounds', sym: '£', pro: 15, prem: 27, proY: 140, premY: 252, vat: 0.2, tax: '20% VAT' },
+USD: { label: '$ Dollars', name: 'dollars', sym: '$', pro: 19, prem: 35, proY: 177, premY: 327, vat: 0, tax: 'any sales tax' }
+};
+var FEE = 0.03, RATE = 0.5, STAY = 0.9, SHARE_PRO = 0.5;
+var REGION = { 'Global (USD)': 'USD', 'United Kingdom (GBP)': 'GBP', 'Nigeria (NGN)': 'NGN' };
+var forced = REGION[this.props.region ?? 'Auto (by location)'];
+var curKey = this.state.cur || forced || this.state.detected || 'NGN';
+var c = CUR[curKey];
+var n = this.state.n;
+function net(v) { return v / (1 + c.vat) * (1 - FEE) * RATE; }
+var avg = SHARE_PRO * c.pro + (1 - SHARE_PRO) * c.prem;
+var perPayment = net(avg);
+function geo(k) { var s = 0; for (var a = 0; a < k; a++) { s += Math.pow(STAY, a); } return s; }
+var months = [];
+for (var m = 1; m <= 6; m++) { months.push(n * perPayment * geo(m)); }
+var total6 = months.reduce(function (a, b) { return a + b; }, 0);
+var perMember = perPayment * geo(6);
+function fmt(v) { return c.sym + Math.round(v).toLocaleString('en-GB'); }
+function compact(v) {
+if (v >= 1e6) { return c.sym + (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + 'm'; }
+if (v >= 1e3) { return c.sym + (v / 1e3).toFixed(v >= 1e5 ? 0 : 1) + 'k'; }
+return c.sym + Math.round(v);
+}
+var max = months[5] || 1;
+var bars = months.map(function (v, i) {
+var last = i === 5;
+return {
+h: Math.max(6, Math.round(v / max * 160)) + 'px',
+bg: last ? 'linear-gradient(180deg, #ffb04a, #e87a02)' : 'linear-gradient(180deg, #a65800, #5a3200)',
+shadow: last ? '0 0 34px rgba(232,122,2,0.6)' : 'none',
+short: compact(v),
+valColor: last ? '#FFFFFF' : '#8A8A8A',
+label: 'Month ' + (i + 1)
+};
+});
+var proM = net(c.pro), premM = net(c.prem), premYr = net(c.premY);
+var feed = [
+{ initial: 'A', plan: 'Pro', billing: 'Paid monthly', amt: fmt(proM), chipBg: '#262626', chipFg: '#FFFFFF', delay: '.9s' },
+{ initial: 'T', plan: 'Premium', billing: 'Paid monthly', amt: fmt(premM), chipBg: '#5a3200', chipFg: '#FFFFFF', delay: '1.1s' },
+{ initial: 'K', plan: 'Premium', billing: 'Paid yearly', amt: fmt(premYr), chipBg: '#e87a02', chipFg: '#000000', delay: '1.3s' }
+];
+var posts = [
+{ tag: 'Check-up reveal', hook: 'I asked a business doctor what is really wrong with my business.', idea: 'Run your check-up on camera. Read out the first thing it tells you to fix.', rot: '-2deg', delay: '0s' },
+{ tag: 'Mission diary', hook: 'Day 1 of doing exactly what Lavoo told me to fix first.', idea: 'Post one short update for each daily Mission. Show what changed.', rot: '1.5deg', delay: '2s' },
+{ tag: 'Tool check', hook: 'Stop buying business tools until you have done this.', idea: 'Show how the check-up told you which tool you need, or that you need none.', rot: '-1deg', delay: '4s' }
+];
+var pct = (n - 1) / 99 * 100;
+return {
+currencies: ['NGN', 'GBP', 'USD'].map(function (k) { var on = k === curKey; return { label: CUR[k].label, active: on, bg: on ? '#FFFFFF' : 'transparent', fg: on ? '#000000' : '#CCCCCC', pick: function () { self.setState({ cur: k, curOpen: false }); } }; }),
+n: n,
+peopleWord: n === 1 ? 'person pays to' : 'people pay to',
+setN: function (e) { self.setState({ n: Number(e.target.value) }); },
+track: 'linear-gradient(90deg, #e87a02 0%, #e87a02 ' + pct + '%, #2a2a2a ' + pct + '%, #2a2a2a 100%)',
+month6: fmt(months[5]),
+total6: fmt(total6),
+perMember: fmt(perMember),
+bars: bars,
+feed: feed,
+feedTotal: fmt(proM + premM + premYr),
+proMonth: fmt(proM),
+pro6: fmt(proM * 6),
+premMonth: fmt(premM),
+prem6: fmt(premM * 6),
+premYear: fmt(premYr),
+six: [1, 2, 3, 4, 5, 6],
+posts: posts,
+taxText: c.tax,
+curName: c.name,
+curOpen: this.state.curOpen,
+toggleCur: function () { self.setState({ curOpen: !self.state.curOpen }); },
+applied: this.state.applied,
+notApplied: !this.state.applied,
+apply: function () { self.setState({ applied: true }); },
+menuOpen: this.state.menuOpen,
+menuClosed: !this.state.menuOpen,
+toggleMenu: function () { self.setState({ menuOpen: !self.state.menuOpen }); },
+closeMenu: function () { self.setState({ menuOpen: false }); }
+};
+}
+}
+</script>
+
+
+</body></html>
