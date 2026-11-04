@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from datetime import datetime, timezone
 from typing import Optional
 
 from database.pg_connections import get_db
@@ -46,6 +47,25 @@ class SettingsUpdate(BaseModel):
     quarterly_price: Optional[float] = None
     yearly_price: Optional[float] = None
 
+    # Founding prices (see subscriptions/founding.py)
+    founding_watch_enabled: Optional[bool] = None
+    founding_member_limit: Optional[int] = None
+    founding_monthly_ends_at: Optional[datetime] = None
+
+
+def _settings_response(settings: SystemSettings, db: Session) -> dict:
+    """All settings columns, plus aliases the admin frontend expects and the
+    live founding member count."""
+    from subscriptions.founding import founding_status
+    result = {col.name: getattr(settings, col.name) for col in settings.__table__.columns}
+    result["system_name"] = settings.site_name  # alias for frontend compatibility
+    result["allow_new_registrations"] = True  # no DB field; echo back as always-true default
+    status = founding_status(db)
+    result["founding_monthly_ends_at"] = status["ends_at"]
+    result["founding_members"] = status["members"]
+    result["founding_open"] = status["available"]
+    return result
+
 @router.get("")
 def get_settings(
     current_user: User = Depends(get_current_user),
@@ -63,11 +83,7 @@ def get_settings(
         db.commit()
         db.refresh(settings)
 
-    # Build response dict with aliases for frontend compatibility
-    result = {col.name: getattr(settings, col.name) for col in settings.__table__.columns}
-    result["system_name"] = settings.site_name  # alias for frontend compatibility
-    result["allow_new_registrations"] = True  # no DB field; echo back as always-true default
-    return result
+    return _settings_response(settings, db)
 
 @router.patch("")
 def update_settings(
@@ -86,6 +102,10 @@ def update_settings(
     # Resolve aliases before applying updates
     if update_data.system_name is not None and update_data.site_name is None:
         update_data.site_name = update_data.system_name
+    if update_data.founding_member_limit is not None and update_data.founding_member_limit < 0:
+        raise HTTPException(status_code=400, detail="Founding member limit can't be negative")
+    if update_data.founding_monthly_ends_at is not None and update_data.founding_monthly_ends_at.tzinfo is None:
+        update_data.founding_monthly_ends_at = update_data.founding_monthly_ends_at.replace(tzinfo=timezone.utc)
     if update_data.max_analyses_per_user is not None:
         settings.max_analyses_basic = update_data.max_analyses_per_user
         settings.max_analyses_pro = update_data.max_analyses_per_user
@@ -100,7 +120,4 @@ def update_settings(
 
     db.commit()
     db.refresh(settings)
-    result = {col.name: getattr(settings, col.name) for col in settings.__table__.columns}
-    result["system_name"] = settings.site_name
-    result["allow_new_registrations"] = True
-    return result
+    return _settings_response(settings, db)

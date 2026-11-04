@@ -20,13 +20,18 @@ from typing import Optional, List, Dict, Any
 from database.pg_connections import get_db
 from database.pg_models import BusinessAnalysis
 from api.routes.auth.login import get_current_user
-from api.routes.dependencies import admin_required
+from api.routes.dependencies import admin_required, subscriber_required
 from api.cache import get_cached, set_cached, delete_cached
 from decision_engine.text_cleanup import strip_dashes_deep
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/business", tags=["Business Analyzer"])
+# Every Decision Engine route is for Pro and Premium subscribers only.
+router = APIRouter(
+    prefix="/api/business",
+    tags=["Business Analyzer"],
+    dependencies=[Depends(subscriber_required)],
+)
 
 
 # =========================================================================

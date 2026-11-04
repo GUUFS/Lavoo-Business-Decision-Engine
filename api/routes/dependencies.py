@@ -49,3 +49,21 @@ def get_current_user_optional(
         # Invalid scheme, malformed header, expired/invalid JWT, or user
         # not found — all of these mean "treat as anonymous", not "fail".
         return None
+
+# Subscription statuses that count as a paying Pro or Premium member.
+PAID_SUBSCRIPTION_STATUSES = ("active", "trialing")
+
+
+def subscriber_required(current_user: User = Depends(get_current_user)) -> User:
+    """Only Pro and Premium subscribers (and admins) may use the route.
+
+    get_current_user already re-syncs subscription_status against the latest
+    payment, so an expired subscription reads "Free" here, not "active".
+    """
+    status_value = (current_user.subscription_status or "").lower()
+    if status_value in PAID_SUBSCRIPTION_STATUSES or getattr(current_user, "is_admin", False):
+        return current_user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="The Decision Engine is available to Pro and Premium subscribers. Upgrade to continue.",
+    )

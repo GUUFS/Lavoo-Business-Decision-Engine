@@ -71,12 +71,11 @@ class CommissionService:
         actually change the rate, not just show a badge.
 
         Otherwise: 'starter' unless User.subscription_status is 'active', in
-        which case the referrer's own most recent active Subscriptions row
-        is matched against the Stripe prices (via _resolve_plan_tier) to
-        tell Pro from Premium. An active referrer whose amount doesn't match either
-        price point (legacy pricing, a manual adjustment) is treated as
-        'starter' rather than guessed at — same fail-safe as
-        _resolve_plan_tier itself.
+        which case the plan saved on the referrer's own most recent active
+        Subscriptions row tells Pro from Premium (_subscription_tier; older
+        rows without a saved plan are matched against the Stripe prices). An
+        active referrer whose plan can't be told (legacy pricing, a manual
+        adjustment) is treated as 'starter' rather than guessed at.
         """
         referrer = db.query(User).filter(User.id == referrer_id).first()
         if not referrer:
@@ -97,9 +96,7 @@ class CommissionService:
         )
         if not own_sub:
             return "starter"
-        tier = CommissionService._resolve_plan_tier(
-            Decimal(str(own_sub.amount)), own_sub.currency, getattr(own_sub, "subscription_plan", None)
-        )
+        tier = CommissionService._subscription_tier(own_sub)
         return tier or "starter"
 
     @staticmethod
@@ -225,6 +222,18 @@ class CommissionService:
         )
 
     @staticmethod
+    def _subscription_tier(subscription) -> "str | None":
+        """Pro or Premium for a payment row: the plan saved on it, or for
+        older rows saved before plan_tier existed, worked out from the amount."""
+        saved = getattr(subscription, "plan_tier", None)
+        if saved:
+            return saved
+        return CommissionService._resolve_plan_tier(
+            Decimal(str(subscription.amount)), subscription.currency,
+            getattr(subscription, "subscription_plan", None),
+        )
+
+    @staticmethod
     def _resolve_plan_tier(amount: Decimal, currency: str, period: "str | None" = None) -> "str | None":
         """Pro or Premium, worked out from the amount paid and the live
         Stripe prices. Returns None if it matches neither (an old price,
@@ -255,10 +264,7 @@ class CommissionService:
         if getattr(subscription, "chops_awarded", False):
             return
 
-        tier = CommissionService._resolve_plan_tier(
-            Decimal(str(subscription.amount)), subscription.currency,
-            getattr(subscription, "subscription_plan", None),
-        )
+        tier = CommissionService._subscription_tier(subscription)
         if tier is None:
             logger.info(
                 f"[PLAN SIGNUP CHOPS] subscription={subscription.id} amount="

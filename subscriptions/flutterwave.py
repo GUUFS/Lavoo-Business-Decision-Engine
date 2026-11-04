@@ -15,7 +15,8 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.orm import Session
 from database.pg_connections import get_db
 from database.pg_models import User, Subscriptions
-from subscriptions.plan_prices import MATCH_TOLERANCE, get_plan_price, get_plan_prices, normalise_tier
+from subscriptions.plan_prices import FOUNDING, MATCH_TOLERANCE, STANDARD, get_all_plan_prices, get_plan_price, normalise_tier
+from subscriptions import founding
 from api.routes.auth.login import get_current_user
 
 #import the email system
@@ -206,12 +207,14 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                 else:
                     # No plan sent: find the price (from Stripe) that matches
                     # the amount paid.
-                    plan_prices = get_plan_prices()
-                    for tier_name, by_currency in plan_prices.items():
-                        for period, price in (by_currency.get((currency or "").upper()) or {}).items():
-                            if price and abs(verified_amount - Decimal(str(price))) <= MATCH_TOLERANCE:
-                                current_plan, plan_tier = period, tier_name
-                                plan_duration_days = PLAN_DURATION[period]
+                    for price_set in get_all_plan_prices().values():
+                        for tier_name, by_currency in price_set.items():
+                            for period, price in (by_currency.get((currency or "").upper()) or {}).items():
+                                if price and abs(verified_amount - Decimal(str(price))) <= MATCH_TOLERANCE:
+                                    current_plan, plan_tier = period, tier_name
+                                    plan_duration_days = PLAN_DURATION[period]
+                                    break
+                            if current_plan:
                                 break
                         if current_plan:
                             break
@@ -230,7 +233,32 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                 # The browser chooses the amount Flutterwave charges, so
                 # without this someone could pay less and still get the plan.
                 from subscriptions.commission_service import CommissionService
-                expected_price = get_plan_price(plan_tier, current_plan, currency or "")
+                # Founding or standard: what this user should be paying now
+                # (subscriptions/founding.py). The amount is checked against
+                # the base amount (before Flutterwave's fee gross-up).
+                price_type = founding.price_type_for(db, user, current_plan)
+                founding_price = get_plan_price(plan_tier, current_plan, currency or "", FOUNDING)
+                standard_price = get_plan_price(plan_tier, current_plan, currency or "", STANDARD)
+                if (
+                    price_type == STANDARD
+                    and standard_price is not None
+                    and recorded_amount + MATCH_TOLERANCE < standard_price
+                    and founding_price is not None
+                    and recorded_amount + MATCH_TOLERANCE >= founding_price
+                    and founding.price_type_for(db, user, current_plan, grace=True) == FOUNDING
+                ):
+                    # They started paying at the founding price just before
+                    # founding prices ended: honour it.
+                    price_type = FOUNDING
+                elif (
+                    price_type == FOUNDING
+                    and standard_price is not None
+                    and recorded_amount + MATCH_TOLERANCE >= standard_price
+                ):
+                    # Paid the standard price (e.g. an old page): record it as
+                    # standard, not as a founding payment.
+                    price_type = STANDARD
+                expected_price = founding_price if price_type == FOUNDING else standard_price
                 if expected_price is None:
                     # Price not set up in Stripe: we can't check, so let the
                     # payment through but tell the admin to fix the setup.
@@ -325,6 +353,12 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                 
                 db.add(new_subscription)
                 db.flush()
+                # Save the plan and price set (commission and chops read the
+                # plan), and mark founding members.
+                founding.record_payment(
+                    db, user, new_subscription, plan_tier,
+                    price_type if expected_price is not None else None,
+                )
 
                 # Award 20 chops to the referrer if this subscriber was referred
                 from database.pg_models import Referral as ReferralModel

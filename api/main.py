@@ -307,11 +307,15 @@ def create_admin_user(db: Session):
 #   4. A user is NEVER charged by both methods for the same renewal cycle.
 # =============================================================================
 
-def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currency: str) -> bool:
+def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currency: str, plan_tier: str = "pro") -> bool:
     """
     Attempt an off-session renewal charge via Flutterwave using a previously
     stored card token. Returns True only on a confirmed successful charge.
     Creates a fresh Subscriptions row on success and updates the user's status.
+
+    Renews the same plan (plan_tier + plan) at its price today: founding or
+    standard by the founding rules (subscriptions/founding.py). `amount` (what
+    they paid last time) is only used if that price isn't set up in Stripe.
     """
     try:
         import requests as _req
@@ -330,6 +334,19 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
             if not secret_key:
                 logger.error("[flw-renewal] FLUTTERWAVE_SECRET_KEY not set")
                 return False
+
+            from subscriptions import founding
+            from subscriptions.plan_prices import get_plan_price
+            price_type = founding.price_type_for(db, user, plan)
+            plan_price = get_plan_price(plan_tier, plan, currency, price_type)
+            if plan_price is not None:
+                amount = float(plan_price)
+            else:
+                logger.error(
+                    "[flw-renewal] no %s price set for %s/%s/%s; charging last amount %s (user %s)",
+                    price_type, plan_tier, plan, currency, amount, user_id,
+                )
+                price_type = None
 
             tx_ref = f"LAVOO-RENEW-{plan.upper()}-{int(datetime.now(timezone.utc).timestamp())}-{secrets.token_hex(3).upper()}"
             parts = (user.name or "Customer Name").split()
@@ -407,6 +424,8 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
                         end_date=end,
                     )
                     db.add(new_sub)
+                    db.flush()
+                    founding.record_payment(db, user, new_sub, plan_tier, price_type)
                     user.subscription_status = "active"
                     user.subscription_plan = plan
                     db.commit()
@@ -439,7 +458,7 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
 PLAN_DURATION_MAP = {"monthly": 30, "quarterly": 90, "yearly": 365}
 
 
-def _attempt_stripe_renewal(user_id: int, plan_type: str, plan_tier: str = "pro") -> bool:
+def _attempt_stripe_renewal(user_id: int, plan_type: str, plan_tier: str = "pro", currency: str = "") -> bool:
     """
     Attempt an off-session Stripe Subscription.create using the customer's
     saved payment method. On success a local Subscriptions record is also
@@ -458,8 +477,20 @@ def _attempt_stripe_renewal(user_id: int, plan_type: str, plan_tier: str = "pro"
                 return False
 
             from subscriptions.stripe import get_stripe_price_id, get_amount_from_stripe_price, _create_active_subscription_record
-            # Renew on the same plan (Pro or Premium) they were on.
-            price_id = get_stripe_price_id(plan_type, "GBP", plan_tier) or get_stripe_price_id(plan_type, "USD", plan_tier)
+            # Renew on the same plan (Pro or Premium) AND currency they were on.
+            # Stripe won't put one customer on two currencies, so guessing
+            # GBP for a USD/NGN subscriber made the renewal fail (or bill in
+            # the wrong currency if their card allowed it).
+            # Founding or standard price, by the founding rules
+            # (subscriptions/founding.py).
+            from subscriptions import founding
+            price_type = founding.price_type_for(db, user, plan_type)
+            price_id = get_stripe_price_id(plan_type, currency, plan_tier, price_type) if currency else ""
+            if not price_id:
+                price_id = (
+                    get_stripe_price_id(plan_type, "GBP", plan_tier, price_type)
+                    or get_stripe_price_id(plan_type, "USD", plan_tier, price_type)
+                )
             if not price_id:
                 logger.warning("[renewal] no price_id for plan=%s user=%s", plan_type, user_id)
                 return False
@@ -474,7 +505,8 @@ def _attempt_stripe_renewal(user_id: int, plan_type: str, plan_tier: str = "pro"
                 items=[{"price": price_id}],
                 default_payment_method=user.stripe_payment_method_id,
                 expand=["latest_invoice.payment_intent"],
-                metadata={"user_id": str(user_id), "plan_type": plan_type, "source": "auto_renewal"},
+                metadata={"user_id": str(user_id), "plan_type": plan_type, "plan_tier": plan_tier,
+                          "price_type": price_type, "source": "auto_renewal"},
             )
             if sub.get("status") in ("active", "trialing"):
                 amount = get_amount_from_stripe_price(price_id)
@@ -613,15 +645,17 @@ async def run_subscription_expiry_job():
                             ([("stripe", {})] if has_stripe else [])
                         )
 
+                    # Renew the plan that just ended: Pro or Premium as saved on
+                    # the payment (older rows: worked out from the amount paid).
+                    from subscriptions.plan_prices import resolve_tier
+                    tier = getattr(sub, "plan_tier", None) or resolve_tier(amount, currency, plan) or "pro"
+
                     success = False
                     for method, kwargs in strategy:
                         if method == "stripe":
-                            # Work out Pro or Premium from what they last paid.
-                            from subscriptions.plan_prices import resolve_tier
-                            tier = resolve_tier(amount, currency, plan) or "pro"
-                            success = _attempt_stripe_renewal(user_id, plan, tier)
+                            success = _attempt_stripe_renewal(user_id, plan, tier, currency)
                         elif method == "flutterwave":
-                            success = _attempt_flutterwave_renewal(user_id, plan, kwargs["amount"], kwargs["currency"])
+                            success = _attempt_flutterwave_renewal(user_id, plan, kwargs["amount"], kwargs["currency"], tier)
                         if success:
                             logger.info("[expiry-job] ✅ renewed user %s via %s plan=%s", user_id, method, plan)
                             renewed += 1
@@ -663,6 +697,18 @@ async def run_subscription_expiry_job():
                 db.rollback()
             finally:
                 db.close()
+
+            # Move founding members' Stripe subscriptions to the standard
+            # price once it's due (subscriptions/founding.py). Normally done
+            # after each payment; this catches anything a webhook missed.
+            sweep_db = SessionLocal()
+            try:
+                from subscriptions.founding import sweep_founding_subscriptions
+                await asyncio.to_thread(sweep_founding_subscriptions, sweep_db)
+            except Exception as exc:
+                logger.error("[subscription-expiry-job] founding sweep error: %s", exc, exc_info=True)
+            finally:
+                sweep_db.close()
         except Exception as outer:
             logger.error("[subscription-expiry-job] outer error: %s", outer)
         await asyncio.sleep(24 * 60 * 60)
@@ -1073,6 +1119,34 @@ def run_heavy_schema_migrations():
                 db.commit()
             except Exception as e:
                 logger.warning(f"Failed to add subscriptions.chops_awarded: {e}")
+
+            try:
+                # Founding pricing (same as alembic migration a7f3c9e1b2d4;
+                # see subscriptions/founding.py).
+                db.execute(text("""
+                    ALTER TABLE users
+                        ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS founding_number INTEGER,
+                        ADD COLUMN IF NOT EXISTS founding_member_at TIMESTAMPTZ,
+                        ADD COLUMN IF NOT EXISTS preferred_currency VARCHAR(3),
+                        ADD COLUMN IF NOT EXISTS preferred_plan_tier VARCHAR(20)
+                """))
+                db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_founding_number ON users (founding_number)"))
+                db.execute(text("""
+                    ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS plan_tier VARCHAR(20),
+                        ADD COLUMN IF NOT EXISTS price_type VARCHAR(20)
+                """))
+                db.execute(text("""
+                    ALTER TABLE system_settings
+                        ADD COLUMN IF NOT EXISTS founding_watch_enabled BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS founding_member_limit INTEGER DEFAULT 500,
+                        ADD COLUMN IF NOT EXISTS founding_monthly_ends_at TIMESTAMPTZ
+                """))
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"Failed to add founding pricing columns: {e}")
 
             try:
                 # Columns the micromodel needs to learn (same as alembic

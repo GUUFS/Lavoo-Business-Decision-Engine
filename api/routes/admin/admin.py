@@ -957,57 +957,11 @@ async def fix_expired_subscriptions(
 def _charge_beta_user_stripe(user_id: int):
     """
     Background task: charge a single beta user who has a saved Stripe card
-    but was never billed.  Creates a Stripe subscription off-session using
-    the payment method attached during the beta save-card flow.
+    but was never billed, in the currency and plan they picked, at the
+    founding or standard price (see subscriptions/beta_billing.py).
     """
-    import stripe as _stripe
-    _stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-
-    with SessionLocal() as bg_db:
-        try:
-            user = bg_db.query(User).filter(User.id == user_id).first()
-            if not user:
-                return
-            if not user.stripe_customer_id or not user.stripe_payment_method_id:
-                logger.warning("[beta-charge] user %s has no saved Stripe card — skipped", user_id)
-                return
-
-            plan_type = user.subscription_plan or "monthly"
-            from subscriptions.stripe import get_stripe_price_id
-            price_id = get_stripe_price_id(plan_type, "GBP") or get_stripe_price_id(plan_type, "USD")
-            if not price_id:
-                logger.error("[beta-charge] no price ID for plan=%s user=%s", plan_type, user_id)
-                return
-
-            # Attach payment method to customer (idempotent if already attached)
-            try:
-                _stripe.PaymentMethod.attach(
-                    user.stripe_payment_method_id,
-                    customer=user.stripe_customer_id,
-                )
-            except _stripe.error.InvalidRequestError:
-                pass  # already attached
-
-            sub = _stripe.Subscription.create(
-                customer=user.stripe_customer_id,
-                items=[{"price": price_id}],
-                default_payment_method=user.stripe_payment_method_id,
-                expand=["latest_invoice.payment_intent"],
-                metadata={"user_id": str(user_id), "plan_type": plan_type, "source": "beta_charge"},
-            )
-
-            status = sub.get("status")
-            if status in ("active", "trialing"):
-                from subscriptions.stripe import _create_active_subscription_record, get_amount_from_stripe_price
-                amount = get_amount_from_stripe_price(price_id)
-                _create_active_subscription_record(bg_db, user, sub, plan_type, amount, tx_ref_prefix="BETA-CHARGE")
-                logger.info("[beta-charge] ✅ charged user %s plan=%s status=%s", user_id, plan_type, status)
-            else:
-                logger.warning("[beta-charge] Stripe sub status=%s for user %s — not activating", status, user_id)
-
-        except Exception as exc:
-            logger.error("[beta-charge] failed for user %s: %s", user_id, exc, exc_info=True)
-            bg_db.rollback()
+    from subscriptions.beta_billing import charge_beta_user
+    charge_beta_user(user_id)
 
 
 @router.post("/charge-beta-users")

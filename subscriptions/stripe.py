@@ -69,17 +69,19 @@ logger.info(f"[Stripe] Initialised in {_stripe_mode} mode (key prefix: {_startup
 # =============================================================================
 
 
-from subscriptions.plan_prices import PERIODS, env_keys, get_plan_prices, get_price_id, normalise_tier
+from subscriptions.plan_prices import FOUNDING, PERIODS, env_keys, get_price_id, normalise_tier
+from subscriptions import founding
 
 SUPPORTED_CURRENCIES = {"USD", "GBP", "NGN"}
 DEFAULT_CURRENCY = "USD"
 
 
-def get_stripe_price_id(plan_type: str, currency: str = "USD", tier: str = "pro") -> str:
+def get_stripe_price_id(plan_type: str, currency: str = "USD", tier: str = "pro", price_type: str = FOUNDING) -> str:
     """
     The Stripe Price ID for a plan.
-    plan_type: monthly | quarterly | yearly
-    tier:      pro | premium (anything else counts as pro)
+    plan_type:  monthly | quarterly | yearly
+    tier:       pro | premium (anything else counts as pro)
+    price_type: founding | standard (see subscriptions/founding.py for who pays which)
     See subscriptions/plan_prices.py for the env var names.
     """
     # 1. Check the billing period and currency are ones we sell.
@@ -94,13 +96,13 @@ def get_stripe_price_id(plan_type: str, currency: str = "USD", tier: str = "pro"
 
     # 2. Look up the Price ID from the env vars.
     tier = normalise_tier(tier)
-    price_id = get_price_id(tier, plan_type, currency)
+    price_id = get_price_id(tier, plan_type, currency, price_type)
     if price_id:
-        logger.info(f"💱 Price ID: {tier}/{plan_type}/{currency} → {price_id}")
+        logger.info(f"💱 Price ID: {price_type}/{tier}/{plan_type}/{currency} → {price_id}")
     else:
         logger.error(
-            f"❌ No price ID for tier='{tier}', plan='{plan_type}', currency='{currency}'. "
-            f"Tried: {', '.join(env_keys(tier, plan_type, currency))}"
+            f"❌ No {price_type} price ID for tier='{tier}', plan='{plan_type}', currency='{currency}'. "
+            f"Tried: {', '.join(env_keys(tier, plan_type, currency, price_type))}"
         )
     return price_id
 
@@ -472,6 +474,10 @@ def _create_active_subscription_record(db, user, sub_result, plan_type, amount, 
     if hasattr(user, 'subscription_expires_at'):
         user.subscription_expires_at = end_date
 
+    # Save the plan and price set on this payment (commission and chops read
+    # the plan), mark founding members, and move to the standard price if due.
+    founding.after_stripe_payment(db, user, subscription, stripe_sub=sub_result, sub_id=sub_id)
+
     from subscriptions.commission_service import CommissionService
     CommissionService.calculate_commission(subscription=subscription, db=db)
 
@@ -494,24 +500,44 @@ async def get_stripe_config():
     return {"publishableKey": publishable_key.strip()}
 
 
-def _prices_response() -> dict:
-    """Prices in the shape the pages use. The top level is Pro (what the
-    upgrade page used before Premium existed); "tiers" has both plans."""
-    tiers = get_plan_prices()
-    return {**tiers["pro"], "tiers": tiers}
+def _prices_response(db: Session, user: Optional[User] = None) -> dict:
+    """Prices in the shape the pages use.
+    "tiers": what this user (or a new payer, if no user) would pay right now,
+             founding or standard by the founding rules (subscriptions/founding.py).
+             The top level repeats the Pro part (what the upgrade page used
+             before Premium existed).
+    "founding_tiers" / "standard_tiers": both full price sets, so pages can
+             show the standard price next to a founding one.
+    "founding": the founding status (whether founding prices are open, and
+             when they end)."""
+    from subscriptions.plan_prices import get_all_plan_prices
+    tiers = founding.effective_prices(db, user)
+    all_prices = get_all_plan_prices()
+    return {
+        **tiers["pro"],
+        "tiers": tiers,
+        "founding_tiers": all_prices["founding"],
+        "standard_tiers": all_prices["standard"],
+        "founding": founding.founding_status(db),
+    }
 
 
 @router.get("/prices")
-async def get_subscription_prices(current_user: User = Depends(get_current_user)):
-    """Live plan prices from Stripe (see subscriptions/plan_prices.py)."""
-    return _prices_response()
+async def get_subscription_prices(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Live plan prices from Stripe for the signed-in user: a founding member
+    sees what they'll actually pay next (see subscriptions/founding.py)."""
+    user = db.query(User).filter(User.id == extract_user_id(current_user)).first()
+    return _prices_response(db, user)
 
 
 @router.get("/public-prices")
-async def get_public_subscription_prices():
-    """Same as /prices, without needing to log in, for the landing pages.
-    Prices are public information, and they're cached, so this is cheap."""
-    return _prices_response()
+async def get_public_subscription_prices(db: Session = Depends(get_db)):
+    """What a new payer would pay, without needing to log in, for the landing
+    pages. Prices are public information, and they're cached, so this is cheap."""
+    return _prices_response(db)
 
 
 # =============================================================================
@@ -806,7 +832,9 @@ async def save_card_for_beta(
         # Resolve the Stripe price ID for this exact plan (Pro or Premium),
         # billing period and currency.
         plan_tier = normalise_tier(getattr(request, 'plan_tier', None))
-        price_id = get_stripe_price_id(requested_plan, currency, plan_tier)
+        # Founding or standard price, by the founding rules.
+        price_type = founding.price_type_for(db, user, requested_plan)
+        price_id = get_stripe_price_id(requested_plan, currency, plan_tier, price_type)
         if not price_id:
             raise HTTPException(
                 status_code=400,
@@ -838,6 +866,10 @@ async def save_card_for_beta(
         )
         if hasattr(user, 'subscription_plan'):
             user.subscription_plan = requested_plan
+        # Remembered so a beta user is charged at launch in the currency and
+        # plan they picked (subscriptions/beta_billing.py).
+        user.preferred_currency = currency
+        user.preferred_plan_tier = plan_tier
 
         # =====================================================================
         # BETA MODE — save card, no charge
@@ -963,6 +995,7 @@ async def save_card_for_beta(
                 "user_id": str(user.id),
                 "plan_type": plan_type,
                 "plan_tier": plan_tier,
+                "price_type": price_type,
                 "currency": currency,
                 "source": "save_card_launch",
                 "is_beta_user": str(getattr(user, 'is_beta_user', False))
@@ -1416,6 +1449,10 @@ async def stripe_webhook(
             db.add(new_sub)
             db.flush()
 
+            # Plan, price set and founding status for this payment, and the
+            # move to the standard price once the next payment is due at it.
+            founding.after_stripe_payment(db, user, new_sub, stripe_sub=stripe_sub, sub_id=subscription_id)
+
             from subscriptions.commission_service import CommissionService
             CommissionService.calculate_commission(subscription=new_sub, db=db)
             db.commit()
@@ -1749,12 +1786,14 @@ async def create_subscription_with_saved_card(
         currency = get_currency_from_request(request)
         # Pro or Premium, from the plan the user picked.
         plan_tier = normalise_tier(getattr(request, 'plan_tier', None))
-        price_id = get_stripe_price_id(request.plan_type, currency, plan_tier)
+        # Founding or standard price, by the founding rules.
+        price_type = founding.price_type_for(db, user, request.plan_type)
+        price_id = get_stripe_price_id(request.plan_type, currency, plan_tier, price_type)
         if not price_id:
             raise HTTPException(
                 status_code=400,
                 detail=f"Price not configured for plan '{request.plan_type}' / currency '{currency}'. "
-                       f"Set STRIPE_{request.plan_type.upper()}_PRICE_ID_{currency} in environment."
+                       f"Set {env_keys(plan_tier, request.plan_type, currency, price_type)[0]} in environment."
             )
 
         customer_id = StripeService.get_or_create_customer(
@@ -1797,6 +1836,11 @@ async def create_subscription_with_saved_card(
                 ).first()
                 if sub_record:
                     sub_record.subscription_plan = request.plan_type
+                    # Pro and Premium are told apart by amount (resolve_tier),
+                    # so the record must carry the new plan's price.
+                    sub_record.amount = amount
+                    sub_record.currency = currency
+                    founding.record_payment(db, user, sub_record, plan_tier, price_type)
                     period_end = updated_sub.get("current_period_end")
                     if period_end:
                         sub_record.end_date = datetime.fromtimestamp(period_end)
@@ -1852,6 +1896,7 @@ async def create_subscription_with_saved_card(
                 "user_id": str(user_id),
                 "plan_type": request.plan_type,
                 "plan_tier": plan_tier,
+                "price_type": price_type,
                 "currency": currency,
                 "tx_ref": tx_ref
             },
@@ -2047,6 +2092,8 @@ async def confirm_subscription(
                 user.card_saved_at = datetime.now(timezone.utc)
         except Exception as card_err:
             logger.warning(f"⚠️ Could not save card details: {str(card_err)}")
+
+        founding.after_stripe_payment(db, user, subscription, sub_id=request.subscription_id)
 
         if not existing:
             from subscriptions.commission_service import CommissionService
@@ -2314,4 +2361,4 @@ async def payment_failed_notify(
     except Exception as e:
         db.rollback()
         logger.error(f"❌ payment-failed-notify error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))

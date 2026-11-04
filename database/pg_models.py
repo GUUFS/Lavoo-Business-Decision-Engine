@@ -117,6 +117,16 @@ class User(Base):
     # Flutterwave card token — captured from data.card.token in the verify
     # response so the card can be charged off-session for renewals.
     flutterwave_card_token = Column(String(500), nullable=True)
+    # Founding members: everyone who paid a founding price (any payment
+    # before SystemSettings.founding_monthly_ends_at). founding_number is
+    # their place in line (1 = first). See subscriptions/founding.py.
+    is_founding_member = Column(Boolean, default=False, server_default="false")
+    founding_number = Column(Integer, nullable=True, unique=True)
+    founding_member_at = Column(DateTime(timezone=True), nullable=True)
+    # What a beta user picked when saving their card (charged at launch by
+    # subscriptions/beta_billing.py). subscription_plan holds the period.
+    preferred_currency = Column(String(3), nullable=True)
+    preferred_plan_tier = Column(String(20), nullable=True)
 
     # Business profile fields
     company_name = Column(String(255), nullable=True)
@@ -512,6 +522,13 @@ class Subscriptions(Base):
     # that predates this column reads as "not yet awarded" rather than NULL
     # being ambiguous between "never checked" and "already awarded."
     chops_awarded = Column(Boolean, default=False, server_default="false")
+
+    # Which plan this payment was for ('pro' or 'premium') and which price
+    # set it was charged at ('founding' or 'standard'). NULL on rows saved
+    # before these columns existed: for those the plan is worked out from
+    # the amount (plan_prices.resolve_tier).
+    plan_tier = Column(VARCHAR(20), nullable=True)
+    price_type = Column(VARCHAR(20), nullable=True)
 
     user = relationship("User", back_populates="subscriptions")
     commission = relationship("Commission", back_populates="subscription", uselist=False)
@@ -1696,6 +1713,15 @@ class SystemSettings(Base):
     monthly_price = Column(Float, default=29.99)
     quarterly_price = Column(Float, default=79.99)
     yearly_price = Column(Float, default=299.99)
+
+    # Founding prices (see subscriptions/founding.py). Everyone who pays
+    # before founding_monthly_ends_at pays the founding price: monthly on
+    # every payment until then; quarterly/yearly on the first payment of each.
+    # founding_watch_enabled and founding_member_limit are no longer used
+    # (there is no cap any more); the columns are kept so nothing breaks.
+    founding_watch_enabled = Column(Boolean, default=False, server_default="false")
+    founding_member_limit = Column(Integer, default=500, server_default="500")
+    founding_monthly_ends_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
