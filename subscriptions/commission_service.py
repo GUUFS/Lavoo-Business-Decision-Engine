@@ -9,10 +9,11 @@ Rules (enforced in CommissionService._eligibility_for_payment):
   - The rate comes from the REFERRER's own plan at the time of the payment:
     Premium 40%, Pro 25%. A referrer who isn't actively subscribed is
     treated as free (Starter).
-  - Pro/Premium referrer: earns on the referral's payments for 6 calendar
-    months from the referral's first payment (6 monthly or 2 quarterly).
-    A yearly payment earns once: the referral's first yearly payment, if it
-    is inside those 6 months.
+  - Pro/Premium referrer: earns on the referral's payments until the
+    referral has paid for 6 months of subscription (6 monthly or 2
+    quarterly payments). Months the referral wasn't subscribed don't count.
+    A yearly payment earns once (it already covers 12 months, so nothing
+    after it earns).
   - Free referrer: 10% of the referral's first payment only.
   - Staff-pool signups (no referral code): flat 30%.
 """
@@ -20,7 +21,6 @@ Rules (enforced in CommissionService._eligibility_for_payment):
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from decimal import Decimal
-from calendar import monthrange
 from datetime import datetime, timedelta, timezone
 from database.pg_models import Commission, Referral, CommissionSummary, User, NotificationType, Subscriptions
 from api.services.notification_service import NotificationService
@@ -44,18 +44,12 @@ COMMISSION_RATE_STARTER = Decimal("0.10")    # 10% — referrer is on the free S
 COMMISSION_RATE_STANDARD = COMMISSION_RATE_PREMIUM
 COMMISSION_RATE_FREE = COMMISSION_RATE_STARTER
 
-# A Pro/Premium referrer earns from a referral's payments for 6 calendar
-# months from that referral's FIRST successful payment: 6 monthly payments
-# or 2 quarterly ones. The payment that falls exactly 6 months later (the
-# 7th monthly / 3rd quarterly) starts month 7, so it doesn't count.
-# A yearly payment counts once: the referral's first yearly payment, if it
-# is made inside the window (see _eligibility_for_payment).
-RECURRING_WINDOW_MONTHS = 6
-# Renewals can be charged a little before their due date; this keeps an
-# early 7th monthly payment from slipping inside the window.
-RENEWAL_EARLY_MARGIN = timedelta(days=3)
-# Old name, kept for anything that still imports it.
-RECURRING_WINDOW_DAYS = 183
+# A Pro/Premium referrer earns from a referral until the referral has PAID
+# FOR 6 months of subscription. Only months they were actively subscribed
+# count: if they stop paying and come back later, the gap doesn't use up
+# any of the 6 months. Each payment adds the months it covers:
+PAID_MONTHS_LIMIT = 6
+MONTHS_PER_PAYMENT = {"monthly": 1, "quarterly": 3, "yearly": 12}
 
 # A referrer counts as actively subscribed while their status is one of
 # these ('canceling' = cancelled at period end, still paid up) and their
@@ -65,16 +59,10 @@ ACTIVE_REFERRER_STATUSES = ("active", "canceling")
 EXPIRY_GRACE = timedelta(days=2)
 
 
-def _add_months(dt: datetime, months: int) -> datetime:
-    """Same day `months` later (clamped to the month's last day: 31 Jan + 1 = 28/29 Feb)."""
-    years, month_index = divmod(dt.month - 1 + months, 12)
-    year, month = dt.year + years, month_index + 1
-    return dt.replace(year=year, month=month, day=min(dt.day, monthrange(year, month)[1]))
-
-
-def recurring_window_end(first_payment_at: datetime) -> datetime:
-    """Payments before this moment are inside the referral's 6-month window."""
-    return _add_months(first_payment_at, RECURRING_WINDOW_MONTHS) - RENEWAL_EARLY_MARGIN
+def months_covered(billing_period: "str | None") -> int:
+    """How many months of subscription one payment pays for: monthly 1,
+    quarterly 3, yearly 12. An unknown or missing period counts as 1."""
+    return MONTHS_PER_PAYMENT.get((billing_period or "monthly").lower(), 1)
 
 
 def _as_utc(dt: "datetime | None") -> "datetime | None":
@@ -209,15 +197,21 @@ class CommissionService:
               - Starter (free) referrer: 10%, but ONLY on the referral's
                 first-ever successful payment. Never again from that
                 referral, regardless of billing period.
-              - Pro/Premium/partner referrer: the tier rate on payments made
-                inside the 6-month window that starts at the referral's
-                first successful payment (recurring_window_end):
-                  - monthly/quarterly (or unknown): every payment inside the
-                    window (6 monthly or 2 quarterly payments);
-                  - yearly: only the referral's FIRST yearly payment, and
-                    only if it's inside the window, so a yearly referral
-                    pays its referrer exactly once (its renewal a year
-                    later is outside the window anyway).
+              - Pro/Premium/partner referrer: the tier rate on a payment
+                if, BEFORE it, the referral had paid for fewer than 6
+                months of subscription (PAID_MONTHS_LIMIT). The months are
+                added up from their earlier successful payments (monthly 1,
+                quarterly 3, yearly 12), so months they weren't subscribed
+                never count. In practice:
+                  - monthly: the first 6 payments earn, wherever they fall;
+                  - quarterly: the first 2 payments earn;
+                  - yearly: the first yearly payment earns if fewer than 6
+                    months were paid before it; it covers 12 months, so no
+                    later payment (including its renewal) ever earns.
+
+        `billing_period` (this payment's own period) isn't needed for the
+        decision; only earlier payments count. It's kept so existing callers
+        (flutterwave_split) don't have to change.
         """
         if via_staff_pool:
             return True, COMMISSION_RATE_STAFF_POOL
@@ -225,27 +219,23 @@ class CommissionService:
         tier = CommissionService._resolve_referrer_tier(referrer_id, db, at=payment_time)
         payment_time = _as_utc(payment_time) or datetime.now(timezone.utc)
 
-        # The referred user's earlier successful payments (not this one).
-        def earlier_paid(*extra):
-            filters = [
-                Subscriptions.user_id == referred_user_id,
-                Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
-                Subscriptions.created_at < payment_time,
-                *extra,
-            ]
-            if exclude_subscription_id is not None:
-                filters.append(Subscriptions.id != exclude_subscription_id)
-            return db.query(Subscriptions.created_at).filter(*filters)
+        # 1. The referred user's earlier successful payments (not this one),
+        #    with the billing period of each.
+        filters = [
+            Subscriptions.user_id == referred_user_id,
+            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
+            Subscriptions.created_at < payment_time,
+        ]
+        if exclude_subscription_id is not None:
+            filters.append(Subscriptions.id != exclude_subscription_id)
+        earlier_periods = [row[0] for row in db.query(Subscriptions.subscription_plan).filter(*filters).all()]
 
-        first_row = earlier_paid().order_by(Subscriptions.created_at.asc()).first()
-        is_first_payment = first_row is None
-
-        # Free (Starter) referrer: 10% of the referral's first payment only.
+        # 2. Free (Starter) referrer: 10% of the referral's first payment only.
         if tier == "starter":
-            return is_first_payment, COMMISSION_RATE_STARTER
+            return not earlier_periods, COMMISSION_RATE_STARTER
 
-        # partner/staff, premium and pro all follow the same window/one-time
-        # rules below — only the rate differs. A staff member's own personal
+        # partner/staff, premium and pro all follow the same 6-month rule
+        # below; only the rate differs. A staff member's own personal
         # referral is a real Builder Bonus referral like anyone else's; only
         # the staff-pool auto-assignment above is exempt from these rules.
         rate = {
@@ -254,19 +244,10 @@ class CommissionService:
             "pro": COMMISSION_RATE_PRO,
         }[tier]
 
-        # Every payment must fall inside the 6-month window that starts at
-        # the referral's first successful payment (which may be this one).
-        first_payment_at = _as_utc(first_row[0]) if first_row else payment_time
-        if payment_time >= recurring_window_end(first_payment_at):
-            return False, rate
-
-        # Yearly: earns once — only on the referral's first yearly payment.
-        if (billing_period or "monthly").lower() == "yearly":
-            already_paid_yearly = earlier_paid(Subscriptions.subscription_plan == "yearly").first() is not None
-            return not already_paid_yearly, rate
-
-        # Monthly/quarterly (or unknown): every payment inside the window.
-        return True, rate
+        # 3. Add up how many months of subscription the referral had already
+        #    paid for. This payment earns only if that is under 6.
+        months_paid_before = sum(months_covered(period) for period in earlier_periods)
+        return months_paid_before < PAID_MONTHS_LIMIT, rate
 
     @staticmethod
     def _commission_eligibility(subscription, referral, db: Session) -> "tuple[bool, Decimal]":

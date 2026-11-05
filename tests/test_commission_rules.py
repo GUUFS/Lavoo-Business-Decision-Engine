@@ -3,10 +3,10 @@ Tests for the Builder Bonus referral rules in subscriptions/commission_service.p
 (CommissionService._eligibility_for_payment), run against real Postgres.
 
 Rules checked:
-  - Pro referrer earns 25%, Premium 40%, on the referral's payments for 6
-    calendar months from the referral's first payment (6 monthly / 2 quarterly).
-  - A yearly referral pays its referrer once (its first yearly payment, if it
-    is inside those 6 months); renewals never pay.
+  - Pro referrer earns 25%, Premium 40%, on the referral's payments until
+    the referral has paid for 6 months of subscription (6 monthly / 2
+    quarterly). Months the referral wasn't subscribed don't count.
+  - A yearly referral pays its referrer once; nothing after it pays.
   - A free referrer earns 10% of the referral's first payment only.
   - A referrer who isn't actively subscribed (status not active/canceling,
     or paid period over) is treated as free; one who cancelled at period end
@@ -19,7 +19,16 @@ from decimal import Decimal
 import pytest
 
 from database.pg_models import Subscriptions, User
-from subscriptions.commission_service import CommissionService, _add_months
+from calendar import monthrange
+
+from subscriptions.commission_service import CommissionService
+
+def _add_months(dt, months):
+    """Same day `months` later, clamped to the month's last day."""
+    years, month_index = divmod(dt.month - 1 + months, 12)
+    year, month = dt.year + years, month_index + 1
+    return dt.replace(year=year, month=month, day=min(dt.day, monthrange(year, month)[1]))
+
 
 NOW = datetime(2026, 11, 5, tzinfo=UTC)
 _ids = itertools.count(1)
@@ -159,3 +168,34 @@ def test_staff_pool_signup_earns_flat_30_percent(db):
     assert CommissionService._eligibility_for_payment(
         staff.id, True, referral, "monthly", NOW, db, exclude_subscription_id=sub.id
     ) == (True, Decimal("0.30"))
+
+
+def test_months_not_subscribed_do_not_count(db):
+    """3 monthly payments, a 4-month break, then they come back: the first
+    3 payments after the break still earn (3 + 3 = 6), the next doesn't."""
+    referrer, referral = make_referrer(db), make_referral(db)
+    start = datetime(2027, 1, 10, tzinfo=UTC)
+    before_break = [pay(db, referrer, referral, t, "monthly")[0] for t in monthly_dates(start, 3)]
+    after_break = [pay(db, referrer, referral, t, "monthly")[0]
+                   for t in monthly_dates(_add_months(start, 7), 4)]
+    assert before_break == [True, True, True]
+    assert after_break == [True, True, True, False]
+
+
+def test_long_break_still_earns_remaining_months(db):
+    """2 monthly payments, then a quarterly one more than a year later: it
+    earns, because only 2 months had been paid before it."""
+    referrer, referral = make_referrer(db), make_referral(db)
+    start = datetime(2027, 1, 10, tzinfo=UTC)
+    for t in monthly_dates(start, 2):
+        pay(db, referrer, referral, t, "monthly")
+    assert pay(db, referrer, referral, _add_months(start, 14), "quarterly")[0] is True
+    assert pay(db, referrer, referral, _add_months(start, 17), "quarterly")[0] is False
+
+
+def test_yearly_after_six_paid_months_does_not_earn(db):
+    referrer, referral = make_referrer(db), make_referral(db)
+    start = datetime(2027, 1, 10, tzinfo=UTC)
+    for t in monthly_dates(start, 6):
+        pay(db, referrer, referral, t, "monthly")
+    assert pay(db, referrer, referral, _add_months(start, 6), "yearly")[0] is False
