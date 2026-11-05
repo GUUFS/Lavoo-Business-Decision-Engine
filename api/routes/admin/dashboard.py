@@ -1,14 +1,16 @@
+"""
+Admin dashboard API: the headline numbers on the admin home page
+(GET /api/admin/dashboard/stats).
+"""
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 from database.pg_connections import get_db
-from database.pg_models import User, Commission, Ticket, Review, Subscriptions, Payout
+from database.pg_models import User, Ticket
 from api.routes.dependencies import admin_required
 
 router = APIRouter(prefix="/admin/dashboard", tags=["dashboard"])
@@ -19,48 +21,24 @@ async def get_dashboard_stats(
     db: Session = Depends(get_db)
 ):
     """
-    Get real-time system statistics for the admin dashboard.
+    Real-time statistics for the admin dashboard: total users, total
+    revenue per currency (matches the Revenue page), users active in the
+    last 30 days, uptime and the latest sign-ups and support tickets.
     """
     try:
         # 1. Total Users (excluding deactivated if preferred, but usually Total means all)
         total_users = db.query(User).count()
         
-        # 2. Total Revenue (Sum of paid commissions - this is a proxy for platform revenue if we take a cut, 
-        #    or just total volume. Adjust logic if 'revenue' means platform profit vs total payouts).
-        #    Let's assume Revenue = Total Paid Commissions for now, or maybe Subscription revenue?
-        #    For this MVP, let's use Total Paid Commissions as a metric of activity.
-        #    Or if we have Subscription tables, use that.
-        #    Let's check models... Commission has 'amount'.
-        # 2. Total Revenue
-        # 2. Total Revenue
+        # 2. Total Revenue: the same figure the Revenue page shows as
+        #    "Subscription Revenue" for each currency (successful payments
+        #    minus the builder bonuses earned on them, in the payment's own
+        #    currency), from the same function, so the two always match.
         try:
-            # Grouped by currency — summing Subscriptions.amount across NGN/
-            # USD/GBP with no group_by blends incompatible currencies into
-            # one meaningless number (same bug class fixed in
-            # admin/revenue.py's /stats this session, missed here). Status
-            # filter also widened to cover every provider's spelling of
-            # "paid" — Flutterwave writes 'successful'/'succeeded', never
-            # 'active'/'paid', so every NGN subscription was previously
-            # excluded entirely.
-            revenue_rows = db.query(
-                Subscriptions.currency,
-                func.sum(Subscriptions.amount)
-            ).filter(
-                Subscriptions.status.in_(['active', 'completed', 'paid', 'successful', 'succeeded'])
-            ).group_by(Subscriptions.currency).all()
-            revenue_by_currency = {(row[0] or 'USD'): float(row[1] or 0) for row in revenue_rows}
-
-            payout_rows = db.query(
-                Payout.currency,
-                func.sum(Payout.amount)
-            ).filter(
-                Payout.status == 'completed'
-            ).group_by(Payout.currency).all()
-            payouts_by_currency = {(row[0] or 'USD'): float(row[1] or 0) for row in payout_rows}
-
+            from api.routes.admin.revenue import compute_revenue_stats
+            revenue = compute_revenue_stats(db)
             total_revenue_by_currency = {
-                ccy: revenue_by_currency.get(ccy, 0.0) - payouts_by_currency.get(ccy, 0.0)
-                for ccy in set(revenue_by_currency) | set(payouts_by_currency)
+                ccy: revenue["by_currency"][ccy]["total_subscription_revenue"]
+                for ccy in revenue["currencies"]
             }
         except Exception as ex:
             logger.warning(f"Revenue calc error: {ex}")

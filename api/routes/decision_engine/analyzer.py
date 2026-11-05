@@ -18,11 +18,17 @@ from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 
 from database.pg_connections import get_db
-from database.pg_models import BusinessAnalysis
+from database.pg_models import BusinessAnalysis, User
 from api.routes.auth.login import get_current_user
 from api.routes.dependencies import admin_required, subscriber_required
 from api.cache import get_cached, set_cached, delete_cached
 from decision_engine.text_cleanup import strip_dashes_deep
+from decision_engine.checkup_limits import (
+    checkup_allowance,
+    confirm_checkup,
+    release_checkup,
+    reserve_checkup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +339,32 @@ async def get_clarity_teacher_activity(
     return {"success": True, "data": teacher_activity(db, runs=max(1, min(runs, 100)), calls=max(1, min(calls, 200)))}
 
 
+@router.get("/engine/health")
+async def get_engine_health(
+    live: bool = False,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: is every part of the Decision Engine working? Database,
+    tools catalog, embedding model, micromodel, teacher job, LLM, file
+    readers, cache and recent checkup failures (decision_engine/health.py).
+    live=true also makes one tiny real LLM call."""
+    from decision_engine.health import run_health_checks
+    return {"success": True, "data": await run_health_checks(db, live=live)}
+
+
+@router.get("/checkups/allowance")
+async def get_checkup_allowance(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """How many checkups the user has left this week (Pro 1, Premium 2;
+    see decision_engine/checkup_limits.py). The app reads this before
+    starting a checkup, so a user who has none left is told straight away."""
+    user = db.get(User, get_user_id(current_user))
+    return {"success": True, "data": checkup_allowance(db, user)}
+
+
 @router.post("/analyze", response_model=dict)
 async def analyze_business_goal(
     request: Request,
@@ -347,6 +379,9 @@ async def analyze_business_goal(
     from decision_engine.agentic_analyzer import create_analyzer
     from decision_engine.multimodal.handler import MultimodalHandler
 
+    # The weekly checkup this analysis uses (see checkup_limits). Given back
+    # if the analysis fails.
+    checkup = None
     try:
         user_id = get_user_id(current_user)
         logger.info(f"🚀 Starting analysis for user {user_id}")
@@ -399,6 +434,9 @@ async def analyze_business_goal(
         if not business_goal and not files:
             raise HTTPException(status_code=400, detail="Business goal or a document/image upload is required")
 
+        # Uses one of this week's checkups; HTTP 429 if none are left.
+        checkup = reserve_checkup(db, db.get(User, user_id))
+
         business_goal = business_goal or ""
         if files:
             image_bytes_list, document_bytes_list = [], []
@@ -442,9 +480,15 @@ async def analyze_business_goal(
                 bottleneck_title=_bottleneck_title,
             )
 
+        confirm_checkup(db, checkup, result["data"].get("analysis_id"))
         return {"success": True, "message": "Analysis completed successfully", "data": result["data"]}
 
+    except HTTPException as e:
+        # Keep 400/429 responses as they are (previously turned into 500s).
+        release_checkup(db, checkup, error=str(e.detail))
+        raise
     except Exception as e:
+        release_checkup(db, checkup, error=str(e))
         err_str = str(e)
         if err_str.startswith("UNSAFE_QUERY::"):
             parts = err_str.split("::", 2)
@@ -681,6 +725,10 @@ async def analyze_business_goal_stream(
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
+    # Uses one of this week's checkups; HTTP 429 if none are left. Given
+    # back below if the analysis fails or the user leaves before it ends.
+    checkup = reserve_checkup(db, db.get(User, user_id))
+
     queue: asyncio.Queue = asyncio.Queue()
 
     async def _progress_callback(pct: int, msg: str):
@@ -709,9 +757,15 @@ async def analyze_business_goal_stream(
                     bottleneck_title=_bottleneck_title,
                 )
             await delete_cached(f"analyses:user:{user_id}:limit:*")
+            confirm_checkup(db, checkup, result["data"].get("analysis_id"))
             await queue.put({"type": "result", "data": result["data"]})
+        except asyncio.CancelledError:
+            # The user left before the analysis finished: don't charge them.
+            release_checkup(db, checkup, cancelled=True)
+            raise
         except Exception as exc:
             logger.error(f"SSE analysis failed: {exc}", exc_info=True)
+            release_checkup(db, checkup, error=str(exc))
             err_str = str(exc)
             if err_str.startswith("UNSAFE_QUERY::"):
                 parts = err_str.split("::", 2)
