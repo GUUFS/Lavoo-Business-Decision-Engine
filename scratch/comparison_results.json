@@ -1,0 +1,62 @@
+{
+  "angle_comparison": {
+    "question_title": "Should we price in USD or local currency (Naira) for an African B2B product?",
+    "current_prompt_output": {
+      "respond": true,
+      "question_type": "decision",
+      "reasoning": "Question type is decision: weighing USD vs local currency for B2B SaaS in Nigeria and Kenya. Real decision is how to reduce payment friction without exposing margins to FX swings. Post establishes card limits and server costs as concerns but does not mention how these SMEs actually pay today. Obvious answer is to offer both currencies or run A/B tests. Candidates: tradeoff (protection vs conversion), assumption (cards are the main rail), reframe (currency is secondary to payment method), second_order (USD pricing filters client size). Strongest is reframe because B2B buyers in these markets rarely pay by card. No recent lenses to avoid. Stance: reframe.",
+      "obvious_answer": "Offer pricing in both USD and local currency so customers can choose what reduces their friction.",
+      "angle_type": "reframe",
+      "angle": "Most African B2B buyers do not reach checkout with a card at all. They expect an invoice they can pay by local bank transfer or wire, often after internal approvals.\n\nCurrency choice matters less than whether your billing system can generate a Naira or Kenyan shilling invoice that their finance team can process without FX conversion on their side. If you solve the invoicing flow first, the displayed currency becomes a smaller variable.",
+      "test": "How many of your target customers have paid a SaaS invoice by bank transfer in the last six months?"
+    },
+    "new_prompt_output": {
+      "respond": true,
+      "reasoning": "Real decision: how to set pricing currency without losing B2B deals in Nigeria and Kenya. Post assumes the tradeoff is mainly between cost stability and checkout friction. Unknowns: whether sales are self-serve or involve proposals, what payment methods their target SMEs actually use, and how renewals are handled. Obvious answer: offer both options or let the customer choose at checkout. Candidates: assumption (checkout is the main friction point), incentives (USD signals premium but also foreign risk), second_order (renewal pain for buyers), constraint (B2B deals rarely close on a card page). Strongest: second_order lens, because B2B buyers feel the FX hit every year on renewal, not just once at signup. Stance: reframe.",
+      "obvious_answer": "Test both currencies or let customers select at checkout and monitor conversion rates.",
+      "angle_type": "second_order",
+      "angle": "For B2B buyers the real pain starts after the first payment. A USD price looks fine on day one, but when the naira moves the renewal invoice lands at a different local amount every year. Their finance person now has to explain the variance in the budget, which is often enough to pause or cancel.\n\nLocal currency removes that annual negotiation, even if it forces you to adjust your own pricing a few times a year.",
+      "test": "How many of your early conversations have reached the renewal discussion, even hypothetically?"
+    }
+  },
+  "summary_win_comparison": {
+    "post_title": "First paying client!",
+    "current_prompt_output": {
+      "skip": false,
+      "type": "win",
+      "takeaways": [
+        "Tunde reports landing their first paying client after 4 months of building.",
+        "The client paid ₦150k for the full package."
+      ]
+    },
+    "new_prompt_output": {
+      "skip": false,
+      "type": "win",
+      "takeaways": [
+        "They landed their first paying client after four months of building, for ₦150k.",
+        "They are clearly still excited about it."
+      ]
+    }
+  },
+  "summary_decision_comparison": {
+    "post_title": "We cut 40% of our product features last week. Here is what happened.",
+    "current_prompt_output": {
+      "skip": false,
+      "type": "lesson",
+      "takeaways": [
+        "Kingsley reports cutting 40 percent of product features after onboarding stalled at 18 percent.",
+        "Activation rose from 18 to 42 percent within seven days once the workflow was simplified.",
+        "The author notes that deleting code and features was the hardest but most effective decision."
+      ]
+    },
+    "new_prompt_output": {
+      "skip": false,
+      "type": "lesson",
+      "takeaways": [
+        "They cut 40% of their product features after onboarding completion stayed at 18%.",
+        "They simplified the workflow to the core action and saw activation rise to 42% in 7 days.",
+        "They say simplifying the user journey is the hardest decision but the one that moves the metric."
+      ]
+    }
+  }
+}
