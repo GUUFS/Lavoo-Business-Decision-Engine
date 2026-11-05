@@ -13,15 +13,15 @@ Rules checked:
     but is still paid up keeps their rate.
 """
 import itertools
+from calendar import monthrange
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from database.pg_models import Subscriptions, User
-from calendar import monthrange
-
 from subscriptions.commission_service import CommissionService
+
 
 def _add_months(dt, months):
     """Same day `months` later, clamped to the month's last day."""
@@ -183,14 +183,18 @@ def test_months_not_subscribed_do_not_count(db):
 
 
 def test_long_break_still_earns_remaining_months(db):
-    """2 monthly payments, then a quarterly one more than a year later: it
-    earns, because only 2 months had been paid before it."""
-    referrer, referral = make_referrer(db), make_referral(db)
+    """2 monthly payments, then quarterly ones after a break of more than a
+    year. The 1st quarterly earns (2 months paid before it) and so does the
+    2nd (2 + 3 = 5, still under 6); the 3rd doesn't (5 + 3 = 8). The
+    referrer stays subscribed throughout."""
+    referrer = make_referrer(db, expires=datetime(2030, 1, 1, tzinfo=UTC))
+    referral = make_referral(db)
     start = datetime(2027, 1, 10, tzinfo=UTC)
     for t in monthly_dates(start, 2):
         pay(db, referrer, referral, t, "monthly")
     assert pay(db, referrer, referral, _add_months(start, 14), "quarterly")[0] is True
-    assert pay(db, referrer, referral, _add_months(start, 17), "quarterly")[0] is False
+    assert pay(db, referrer, referral, _add_months(start, 17), "quarterly")[0] is True
+    assert pay(db, referrer, referral, _add_months(start, 20), "quarterly")[0] is False
 
 
 def test_yearly_after_six_paid_months_does_not_earn(db):
