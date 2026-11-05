@@ -260,6 +260,48 @@ class ClarityCorpus(Base):
     teacher_agreed = Column(Boolean, nullable=True)
 
 
+class ClarityTeacherRun(Base):
+    """One run of the teacher job (decision_engine/clarity_teacher.py), so
+    the admin can see when the LLM last checked the micromodel and how it
+    went. trigger: 'scheduled' (every 6 hours) or 'manual' (admin button)."""
+    __tablename__ = "clarity_teacher_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trigger = Column(String(20), nullable=False, default="scheduled")
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    candidates = Column(Integer, nullable=False, default=0)
+    reviewed = Column(Integer, nullable=False, default=0)
+    agreed = Column(Integer, nullable=False, default=0)
+    llm_calls = Column(Integer, nullable=False, default=0)
+    new_precedents = Column(Integer, nullable=False, default=0)
+    errors = Column(Integer, nullable=False, default=0)
+    # Set when the whole run failed (not just one prompt).
+    error = Column(Text, nullable=True)
+
+
+class ClarityTeacherCall(Base):
+    """One decision the teacher checked: what the micromodel said, what the
+    LLM said, and whether they agreed. called_llm is False when an earlier
+    LLM answer for the exact same prompt was reused (no new LLM call)."""
+    __tablename__ = "clarity_teacher_calls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("clarity_teacher_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    corpus_id = Column(Integer, ForeignKey("clarity_corpus.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    submission_text = Column(Text, nullable=False)
+    called_llm = Column(Boolean, nullable=False, default=True)
+    micromodel_asked = Column(Boolean, nullable=True)
+    micromodel_confidence = Column(Float, nullable=True)
+    decision_path = Column(String(20), nullable=True)
+    llm_asked = Column(Boolean, nullable=True)
+    llm_questions = Column(JSON, nullable=True)
+    agreed = Column(Boolean, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+
+
 class BusinessAnalysis(Base):
     """
     Stores complete business analysis results from AI analyzer.

@@ -316,8 +316,21 @@ async def run_clarity_teacher_now(
     """Admin: run the teacher job now instead of waiting 6 hours.
     Each prompt it checks costs one LLM call."""
     from decision_engine.clarity_teacher import run_teacher_batch
-    result = await run_teacher_batch(db, limit=max(1, min(limit, 50)))
+    result = await run_teacher_batch(db, limit=max(1, min(limit, 50)), trigger="manual")
     return {"success": True, "data": result}
+
+
+@router.get("/clarify/activity")
+async def get_clarity_teacher_activity(
+    runs: int = 20,
+    calls: int = 50,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: when the micromodel's teacher last called the LLM, what each
+    check found (micromodel vs LLM, agreed or not), and when the next run is."""
+    from decision_engine.clarity_teacher import teacher_activity
+    return {"success": True, "data": teacher_activity(db, runs=max(1, min(runs, 100)), calls=max(1, min(calls, 200)))}
 
 
 @router.post("/analyze", response_model=dict)

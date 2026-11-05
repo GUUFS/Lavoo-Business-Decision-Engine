@@ -11,22 +11,31 @@ clarity_stats shows how often they agree. That number going up means the
 micromodel is getting smarter.
 """
 import logging
-from datetime import datetime, timezone
+import time
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database.pg_models import ClarityCorpus
+from database.pg_models import ClarityCorpus, ClarityTeacherCall, ClarityTeacherRun
 from decision_engine.clarity_reasoner import classify_question
 
 logger = logging.getLogger(__name__)
 
 LOW_CONFIDENCE = 0.6
+# How often api/main.py runs the job, and when the next run is due (set by
+# that job; shown on the admin page). None until the server's job has started.
+RUN_EVERY_SECONDS = 6 * 60 * 60
+next_scheduled_run_at: datetime | None = None
 # Wait until the user has had time to answer or skip.
 MIN_AGE_MINUTES = 15
 
 
 def _candidates(db: Session, limit: int) -> list[dict]:
+    """Pick up to `limit` live micromodel decisions for the LLM to re-check:
+    unchecked, at least MIN_AGE_MINUTES old, and weak (the user skipped the
+    questions, no similar trusted example was found, or confidence was
+    below LOW_CONFIDENCE). Duplicate prompts are dropped so each is checked once."""
     # 1. Unchecked live decisions that are old enough and look weak.
     #    Order: skipped questions first, then no similar example, then least sure.
     rows = db.execute(text(f"""
@@ -56,6 +65,8 @@ def _candidates(db: Session, limit: int) -> list[dict]:
 
 
 def _existing_teacher_row(db: Session, submission_text: str):
+    """Return the LLM's earlier verdict on this exact prompt (seed or teacher
+    row), or None. Lets a run reuse that answer instead of paying for a new call."""
     return db.execute(text("""
         SELECT needs_clarification, questions FROM clarity_corpus
         WHERE source IN ('llm_seed', 'llm_teacher') AND lower(submission_text) = lower(:t)
@@ -64,28 +75,71 @@ def _existing_teacher_row(db: Session, submission_text: str):
 
 
 def _mark_reviewed(db: Session, submission_text: str, agreed: bool) -> None:
-    # Every live row with this exact prompt shares the verdict.
+    """Stamp every unchecked live row with this exact prompt as reviewed, with
+    whether the LLM agreed, so _candidates never picks them again."""
     db.execute(text("""
         UPDATE clarity_corpus SET teacher_reviewed_at = :now, teacher_agreed = :agreed
         WHERE source = 'live' AND teacher_reviewed_at IS NULL AND lower(submission_text) = lower(:t)
-    """), {"now": datetime.now(timezone.utc), "agreed": agreed, "t": submission_text})
+    """), {"now": datetime.now(UTC), "agreed": agreed, "t": submission_text})
 
 
-async def run_teacher_batch(db: Session, limit: int = 20) -> dict:
-    """Reviews up to `limit` weak live decisions. Returns counts for logging."""
+async def run_teacher_batch(db: Session, limit: int = 20, trigger: str = "scheduled") -> dict:
+    """Reviews up to `limit` weak live decisions. Returns counts for logging.
+    Every run and every decision it checks is saved (clarity_teacher_runs,
+    clarity_teacher_calls) for the admin Micromodel page."""
+    run = ClarityTeacherRun(trigger=trigger, started_at=datetime.now(UTC))
+    db.add(run)
+    db.commit()
+    counts = {"candidates": 0, "reviewed": 0, "agreed": 0, "llm_calls": 0, "new_precedents": 0, "errors": 0}
+    try:
+        await _review_candidates(db, limit, run.id, counts)
+    except Exception as e:
+        db.rollback()
+        run.error = str(e)[:2000]
+        logger.error(f"[clarity-teacher] run {run.id} failed: {e}", exc_info=True)
+    for key, value in counts.items():
+        setattr(run, key, value)
+    run.finished_at = datetime.now(UTC)
+    db.commit()
+    return {"run_id": run.id, **counts, **({"error": run.error} if run.error else {})}
+
+
+def _log_call(db: Session, run_id: int, c: dict, **fields) -> None:
+    """Add one clarity_teacher_calls row for a checked decision: the prompt,
+    what the micromodel decided, and (via **fields) the LLM's answer,
+    agreement, timing or error. The caller commits."""
+    db.add(ClarityTeacherCall(
+        run_id=run_id,
+        corpus_id=c["id"],
+        submission_text=c["submission_text"][:4000],
+        micromodel_asked=bool(c["needs_clarification"]),
+        micromodel_confidence=c.get("confidence"),
+        decision_path=c.get("decision_path"),
+        **fields,
+    ))
+
+
+async def _review_candidates(db: Session, limit: int, run_id: int, counts: dict) -> None:
+    """The body of a teacher run. For each weak decision: get the LLM's
+    verdict (reusing an earlier one if it exists), compare it with the
+    micromodel's, save it as a trusted example, mark the decision reviewed
+    and log the check. Updates `counts` in place. One bad decision is logged
+    as an error and skipped; it never stops the rest of the run."""
     from decision_engine.agentic_analyzer import create_analyzer
     from decision_engine.clarity_engine import _generate_embedding
 
     # 1. Pick the weakest decisions to check.
     candidates = _candidates(db, limit)
+    counts["candidates"] = len(candidates)
     if not candidates:
-        return {"reviewed": 0, "agreed": 0, "new_precedents": 0, "errors": 0}
+        return
 
     analyzer = create_analyzer(db)
-    reviewed = agreed_n = new_rows = errors = 0
 
     for c in candidates:
         prompt = c["submission_text"]
+        started = time.monotonic()
+        called_llm = False
         try:
             # 2. Get the LLM's answer. If the LLM already judged this exact
             #    prompt, reuse that instead of paying for another call.
@@ -93,10 +147,15 @@ async def run_teacher_batch(db: Session, limit: int = 20) -> dict:
             if existing:
                 verdict = {"needs_clarification": existing["needs_clarification"], "questions": existing["questions"] or []}
             else:
+                called_llm = True
+                counts["llm_calls"] += 1
                 verdict = await analyzer.generate_clarifying_questions(prompt)
                 if verdict.get("error"):
                     # Leave the row unreviewed so the next run retries it.
-                    errors += 1
+                    counts["errors"] += 1
+                    _log_call(db, run_id, c, called_llm=True, error=str(verdict.get("error"))[:2000],
+                              duration_ms=int((time.monotonic() - started) * 1000))
+                    db.commit()
                     continue
 
             # 3. Did the micromodel make the same call (ask / don't ask)?
@@ -125,23 +184,75 @@ async def run_teacher_batch(db: Session, limit: int = 20) -> dict:
                     text("UPDATE clarity_corpus SET embedding = CAST(:emb AS vector) WHERE id = :id"),
                     {"emb": f"[{','.join(map(str, embedding))}]", "id": row.id},
                 )
-                new_rows += 1
+                counts["new_precedents"] += 1
 
-            # 5. Mark the decision as checked, so it isn't picked again.
+            # 5. Mark the decision as checked, so it isn't picked again,
+            #    and log the result for the admin page.
             _mark_reviewed(db, prompt, agreed)
+            _log_call(
+                db, run_id, c,
+                called_llm=called_llm,
+                llm_asked=bool(verdict["needs_clarification"]),
+                llm_questions=[q.get("question") for q in (verdict.get("questions") or []) if q.get("question")],
+                agreed=agreed,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
             db.commit()
-            reviewed += 1
-            agreed_n += int(agreed)
+            counts["reviewed"] += 1
+            counts["agreed"] += int(agreed)
             logger.info(
                 f"[clarity-teacher] {prompt[:60]!r} micromodel_asked={c['needs_clarification']} "
                 f"llm_asked={verdict['needs_clarification']} agreed={agreed}"
             )
         except Exception as e:
             db.rollback()
-            errors += 1
+            counts["errors"] += 1
             logger.warning(f"[clarity-teacher] failed on corpus row {c['id']}: {e}")
+            try:
+                _log_call(db, run_id, c, called_llm=called_llm, error=str(e)[:2000],
+                          duration_ms=int((time.monotonic() - started) * 1000))
+                db.commit()
+            except Exception:
+                db.rollback()
 
-    return {"reviewed": reviewed, "agreed": agreed_n, "new_precedents": new_rows, "errors": errors}
+
+def teacher_activity(db: Session, runs: int = 20, calls: int = 50) -> dict:
+    """For the admin Micromodel page and the status pill: the latest runs,
+    the latest decisions the LLM checked, and when the next run is due."""
+    run_rows = db.query(ClarityTeacherRun).order_by(ClarityTeacherRun.started_at.desc()).limit(runs).all()
+    call_rows = db.query(ClarityTeacherCall).order_by(ClarityTeacherCall.created_at.desc()).limit(calls).all()
+    last_llm_call = (
+        db.query(ClarityTeacherCall.created_at)
+        .filter(ClarityTeacherCall.called_llm.is_(True))
+        .order_by(ClarityTeacherCall.created_at.desc())
+        .first()
+    )
+    # Datetimes go out as ISO strings (None stays None) for the admin app.
+    def iso(d):
+        return d.isoformat() if d else None
+    return {
+        "next_run_at": iso(next_scheduled_run_at),
+        "run_every_hours": RUN_EVERY_SECONDS // 3600,
+        "last_llm_call_at": iso(last_llm_call[0]) if last_llm_call else None,
+        "runs": [
+            {
+                "id": r.id, "trigger": r.trigger, "started_at": iso(r.started_at), "finished_at": iso(r.finished_at),
+                "candidates": r.candidates, "reviewed": r.reviewed, "agreed": r.agreed,
+                "llm_calls": r.llm_calls, "new_precedents": r.new_precedents, "errors": r.errors, "error": r.error,
+            }
+            for r in run_rows
+        ],
+        "calls": [
+            {
+                "id": c.id, "run_id": c.run_id, "created_at": iso(c.created_at),
+                "submission_text": c.submission_text[:300], "called_llm": c.called_llm,
+                "micromodel_asked": c.micromodel_asked, "micromodel_confidence": c.micromodel_confidence,
+                "decision_path": c.decision_path, "llm_asked": c.llm_asked, "llm_questions": c.llm_questions or [],
+                "agreed": c.agreed, "duration_ms": c.duration_ms, "error": c.error,
+            }
+            for c in call_rows
+        ],
+    }
 
 
 def clarity_stats(db: Session, days: int = 30) -> dict:

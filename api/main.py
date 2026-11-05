@@ -790,13 +790,18 @@ async def run_clarity_teacher_job():
     certain decisions and saves its answers as new examples to learn from
     (see decision_engine/clarity_teacher.py).
     """
+    from datetime import datetime, timedelta, timezone
+    from decision_engine import clarity_teacher
     while True:
-        await asyncio.sleep(6 * 60 * 60)
+        # Shown on the admin Micromodel page as "next run".
+        clarity_teacher.next_scheduled_run_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=clarity_teacher.RUN_EVERY_SECONDS)
+        )
+        await asyncio.sleep(clarity_teacher.RUN_EVERY_SECONDS)
         try:
             from database.pg_connections import SessionLocal
-            from decision_engine.clarity_teacher import run_teacher_batch
             with SessionLocal() as db:
-                result = await run_teacher_batch(db, limit=20)
+                result = await clarity_teacher.run_teacher_batch(db, limit=20, trigger="scheduled")
             logger.info("[clarity-teacher-job] %s", result)
         except Exception as exc:
             logger.error("[clarity-teacher-job] error: %s", exc)
