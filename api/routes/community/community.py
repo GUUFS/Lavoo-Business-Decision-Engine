@@ -402,7 +402,7 @@ def _validate_angle_data(
     11. Clean dashes while preserving hyphens
     12. Strip stray greetings, quotes, markdown
     """
-    required_fields = ["respond", "question_type", "reasoning", "obvious_answer", "angle_type", "angle", "test"]
+    required_fields = ["respond", "reasoning", "obvious_answer", "angle_type", "angle", "test"]
     for field in required_fields:
         if field not in data:
             return False, f"Missing required field: '{field}'", None
@@ -410,9 +410,10 @@ def _validate_angle_data(
     if not data.get("respond"):
         return True, None, data
 
-    q_type = str(data.get("question_type", "")).strip().lower()
+    # question_type is optional in newer developer pack prompts (defaults to 'decision')
+    q_type = str(data.get("question_type", "decision") or "decision").strip().lower()
     if q_type not in ("direct", "decision"):
-        return False, f"Invalid question_type: '{q_type}' (expected 'direct' or 'decision')", None
+        q_type = "decision"
 
     raw_angle = str(data.get("angle", ""))
     raw_test = str(data.get("test", ""))
@@ -481,6 +482,7 @@ def _validate_angle_data(
     cleaned_data = dict(data)
     cleaned_data["angle"] = angle
     cleaned_data["test"] = test
+    cleaned_data["question_type"] = q_type
     return True, None, cleaned_data
 
 
@@ -631,7 +633,7 @@ def _call_voo_llm(
     def _call_nvidia():
         if not nvidia_key:
             return None
-        model_name = os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
+        model_name = os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
         client = OpenAI(
             api_key=nvidia_key,
             base_url="https://integrate.api.nvidia.com/v1",
