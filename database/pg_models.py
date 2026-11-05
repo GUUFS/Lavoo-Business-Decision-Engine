@@ -302,6 +302,25 @@ class ClarityTeacherCall(Base):
     error = Column(Text, nullable=True)
 
 
+class CheckupUsage(Base):
+    """One Decision Engine checkup a user started, used to enforce the weekly
+    limit (decision_engine/checkup_limits.py): Pro 1 and Premium 2 per 7
+    days, on every billing period. Kept separate from BusinessAnalysis on
+    purpose: deleting an analysis must not give the checkup back.
+    status: 'started' -> 'completed' (analysis saved, analysis_id set), or
+    'failed' / 'cancelled', which don't count toward the limit. The admin
+    Engine Health page uses these rows for its success/failure numbers."""
+    __tablename__ = "checkup_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="started", server_default="started")
+    analysis_id = Column(Integer, nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    error = Column(Text, nullable=True)
+
+
 class BusinessAnalysis(Base):
     """
     Stores complete business analysis results from AI analyzer.
