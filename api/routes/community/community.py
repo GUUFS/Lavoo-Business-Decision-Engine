@@ -987,12 +987,10 @@ async def cron_process_pending_voo_replies(db: Session):
                 logger.info(f"[voo-bot] Skipping Voo answer for discussion {d.id}: author {author_user.id} is a beta/free account.")
                 continue
 
-            # Section 3: Member details (None for Lavoo staff accounts)
+            # Section 3: Member details (Prioritize author's real Build Room journey and posts)
+            bits = []
             is_staff = bool(getattr(author_user, "is_admin", False))
-            if is_staff:
-                member_details = "None"
-            else:
-                bits = []
+            if not is_staff:
                 if getattr(author_user, "company_name", None):
                     bits.append(f"Business: {author_user.company_name}")
                 if getattr(author_user, "industry", None):
@@ -1001,7 +999,35 @@ async def cron_process_pending_voo_replies(db: Session):
                     bits.append(f"Stage: {author_user.venture_stage}")
                 if getattr(author_user, "location", None):
                     bits.append(f"Country/Location: {author_user.location}")
-                member_details = ", ".join(bits) if bits else "None"
+
+            # Fetch author's recent public posts/reflections in the Build Room (up to 3, excluding current post)
+            recent_author_discussions = (
+                db.query(CommunityDiscussion)
+                .filter(
+                    CommunityDiscussion.user_id == d.user_id,
+                    CommunityDiscussion.id != d.id,
+                    CommunityDiscussion.visibility == "public"
+                )
+                .order_by(CommunityDiscussion.id.desc())
+                .limit(4)
+                .all()
+            )
+            seen_recent_titles = set()
+            recent_history_snippets = []
+            for past_d in recent_author_discussions:
+                t = (past_d.title or "").strip()
+                if t and t.lower() not in seen_recent_titles:
+                    seen_recent_titles.add(t.lower())
+                    c_snip = " ".join((past_d.content or "").strip().split()[:15])
+                    if c_snip:
+                        recent_history_snippets.append(f'"{t}" ({c_snip}...)')
+                    else:
+                        recent_history_snippets.append(f'"{t}"')
+
+            if recent_history_snippets:
+                bits.append(f"Recent Build Room activity: {'; '.join(recent_history_snippets[:3])}")
+
+            member_details = " | ".join(bits) if bits else "None"
 
             # Post type: Only staff accounts can create Platform Polls
             post_type_label = "Platform Poll" if (d.post_type == "poll" or d.poll_data) else "Question"
