@@ -3048,7 +3048,7 @@ async def get_public_discussion(
     author_ids = list(set([r.user_id for r in replies_raw] + [d.user_id]))
     authors = {u.id: u for u in db.query(User).filter(User.id.in_(author_ids)).all()} if author_ids else {}
     
-    replies_data = []
+    reply_map = {}
     for r in replies_raw:
         r_author = authors.get(r.user_id) or r.user
         is_bot = bool(
@@ -3058,27 +3058,43 @@ async def get_public_discussion(
             or (r_author and (getattr(r_author, 'name', '') or '').lower() in ('voo', 'voo angle', "voo's angle"))
         )
         author_name = "Voo's Angle" if is_bot else (r_author.name if r_author else "Member")
-        replies_data.append({
+        reply_map[r.id] = {
             "id": r.id,
             "user_id": r.user_id,
             "content": r.content,
             "like_count": r.like_count or 0,
             "chops_gifted": getattr(r, 'chops_gifted', 0) or 0,
             "created_at": r.created_at.isoformat() if r.created_at else None,
+            "parent_reply_id": r.parent_reply_id,
             "author": {
                 "id": r.user_id,
                 "name": author_name,
+                "username": getattr(r_author, 'username', '') if r_author else '',
                 "initials": (author_name or "M")[:2].upper(),
                 "role": getattr(r_author, 'role', '') if r_author else '',
                 "is_bot": is_bot,
-            }
-        })
-        
+                "is_paid": bool(
+                    (getattr(r_author, 'subscription_status', '') or '').strip().lower()
+                    in ("active", "trialing", "pro", "premium", "lifetime")
+                ) or bool(getattr(r_author, 'is_admin', False) if r_author else False),
+            },
+            "sub_replies": []
+        }
+
+    top_level = []
+    for r in replies_raw:
+        item = reply_map[r.id]
+        if r.parent_reply_id and r.parent_reply_id in reply_map:
+            reply_map[r.parent_reply_id]["sub_replies"].append(item)
+        elif r.parent_reply_id is None:
+            top_level.append(item)
+
     resp = {
         "success": True,
         "data": {
             **discussion_data,
-            "replies_list": replies_data
+            "replies": top_level,
+            "replies_list": list(reply_map.values())
         }
     }
     await set_cached(cache_key, resp, ttl_seconds=60)
