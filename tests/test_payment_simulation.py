@@ -37,5 +37,9 @@ def test_payment_and_payout_simulation_has_no_violations(tmp_path):
     assert summary["payments"] >= 50 and summary["checks"] >= 500
     coverage = summary["coverage"]
     for scenario in ("stripe_first", "stripe_renewal", "flutterwave_first", "flutterwave_renewal",
-                     "duplicate_webhook_ignored", "underpayment_refused"):
+                     "duplicate_webhook_ignored", "underpayment_refused",
+                     # the 6-month rule both ways, around missed months
+                     "rule_paid_months_after_missed_month_earned",
+                     "rule_straight_count_after_missed_month_earned",
+                     "rule_straight_count_after_missed_month_not_earned"):
         assert coverage.get(scenario, 0) > 0, f"scenario not exercised: {scenario}"

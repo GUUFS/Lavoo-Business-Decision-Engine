@@ -129,6 +129,17 @@ def test_admins_are_not_limited(db):
     assert checkup_allowance(db, admin)["unlimited"] is True
 
 
+def test_staff_are_not_limited(db):
+    """Staff test the decision engine, so they have no weekly limit."""
+    staff = make_subscriber(db, "pro")
+    staff.is_staff = True
+    db.commit()
+    for _ in range(5):
+        assert reserve_checkup(db, staff).status == "started"
+    allowance = checkup_allowance(db, staff)
+    assert allowance["unlimited"] is True and allowance["tier"] == "staff"
+
+
 # ── Through the real analyze endpoints ──────────────────────────────────────
 
 class FakeAnalyzer:

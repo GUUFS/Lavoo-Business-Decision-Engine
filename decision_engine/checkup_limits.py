@@ -40,7 +40,12 @@ def user_plan_tier(db: Session, user: User) -> str:
     """'pro' or 'premium' for a subscriber: the plan on their latest
     successful payment. Older payments without a saved plan are matched
     against the Stripe prices; accounts with no payment at all (beta or
-    permanent accounts) use the plan they picked, or Pro."""
+    permanent accounts) use the plan they picked, or Pro. A partner on
+    their free 6 months of Premium (subscriptions/partner_service.py) is
+    Premium whatever they pay for."""
+    from subscriptions.partner_service import partner_premium_active
+    if partner_premium_active(user):
+        return "premium"
     latest = (
         db.query(Subscriptions)
         .filter(Subscriptions.user_id == user.id, Subscriptions.status.in_(PAID_STATUSES))
@@ -72,15 +77,19 @@ def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> d
 
     Returns {tier, limit, used, remaining, next_available_at, unlimited}.
     next_available_at is when the week resets (next Monday 00:00 UTC, ISO
-    time) if they have none left, otherwise None. Admins get unlimited=True."""
+    time) if they have none left, otherwise None. Admins and Staff (the
+    Lavoo team, who test the decision engine) get unlimited=True."""
     now = now or datetime.now(UTC)
-    if getattr(user, "is_admin", False):
-        return {"tier": "admin", "limit": None, "used": 0, "remaining": None,
+    # 1. Admins and Staff: no weekly limit.
+    if getattr(user, "is_admin", False) or getattr(user, "is_staff", False):
+        tier = "admin" if getattr(user, "is_admin", False) else "staff"
+        return {"tier": tier, "limit": None, "used": 0, "remaining": None,
                 "next_available_at": None, "unlimited": True}
 
+    # 2. Everyone else: their plan's weekly limit (Pro 1, Premium 2).
     tier = user_plan_tier(db, user)
     limit = CHECKUPS_PER_WEEK[tier]
-    # Checkups started since Monday 00:00 UTC this week.
+    # 3. Checkups started since Monday 00:00 UTC this week.
     start = week_start(now)
     used = (
         db.query(CheckupUsage)
@@ -92,7 +101,7 @@ def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> d
         .count()
     )
     remaining = max(0, limit - used)
-    # When none are left, they all come back at the start of next week.
+    # 4. When none are left, they all come back at the start of next week.
     next_available = start + timedelta(days=7) if remaining == 0 else None
     return {
         "tier": tier, "limit": limit, "used": used, "remaining": remaining,

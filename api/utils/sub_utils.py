@@ -5,12 +5,21 @@ from database.pg_models import User, Subscriptions
 
 logger = logging.getLogger(__name__)
 
-def sync_user_subscription(db: Session, user: User) -> User:
+def sync_user_subscription(db: Session, user: User, now: datetime | None = None) -> User:
     """
     Syncs the user's subscription status based on the LATEST successful transaction.
     Returns the updated user object.
+
+    A partner whose free Premium is still running (subscriptions/partner_service.py)
+    is kept active whatever their payments say, and nothing else is changed.
+    `now` is the time to check that at (default: now).
     """
     try:
+        # 0. Partners on their free 6 months of Premium stay active; nothing else changes.
+        from subscriptions.partner_service import enforce_partner_premium
+        if enforce_partner_premium(db, user, now):
+            return user
+
         # Get the LATEST successful/active subscription (by ID/Creation)
         # Ordering by ID ensures that the VERY LAST payment made is prioritized.
         latest_sub = db.query(Subscriptions).filter(

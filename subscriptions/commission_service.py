@@ -9,11 +9,19 @@ Rules (enforced in CommissionService._eligibility_for_payment):
   - The rate comes from the REFERRER's own plan at the time of the payment:
     Premium 40%, Pro 25%. A referrer who isn't actively subscribed is
     treated as free (Starter).
-  - Pro/Premium referrer: earns on the referral's payments until the
-    referral has paid for 6 months of subscription (6 monthly or 2
-    quarterly payments). Months the referral wasn't subscribed don't count.
-    A yearly payment earns once (it already covers 12 months, so nothing
-    after it earns).
+  - Pro/Premium referrer: earns on the referral's payments for 6 months of
+    the referral's subscription. How the 6 months are counted depends on
+    the REFERRER's own billing period at the time of each payment:
+      - referrer on a YEARLY plan: only months the referral actually paid
+        for count. If the referral pays month 1 and misses month 2, 1 month
+        is used and 5 are left, whenever they come back.
+      - referrer on a MONTHLY or QUARTERLY plan (and partners/staff with no
+        yearly plan): a straight count of 6 calendar months from the
+        referral's first payment. If the referral pays month 1 and misses
+        month 2, 1 month is earned and 4 are left (months 3 to 6).
+    In both cases a payment never earns once the referral has already paid
+    for 6 months (6 monthly or 2 quarterly payments), and a yearly payment
+    earns once (it covers 12 months, so nothing after it earns).
   - Free referrer: 10% of the referral's first payment only.
   - Staff-pool signups (no referral code): flat 30%.
 """
@@ -44,12 +52,15 @@ COMMISSION_RATE_STARTER = Decimal("0.10")    # 10% — referrer is on the free S
 COMMISSION_RATE_STANDARD = COMMISSION_RATE_PREMIUM
 COMMISSION_RATE_FREE = COMMISSION_RATE_STARTER
 
-# A Pro/Premium referrer earns from a referral until the referral has PAID
-# FOR 6 months of subscription. Only months they were actively subscribed
-# count: if they stop paying and come back later, the gap doesn't use up
-# any of the 6 months. Each payment adds the months it covers:
+# A Pro/Premium referrer earns from a referral for 6 months of the
+# referral's subscription (see the module docstring for how a yearly
+# referrer's months are counted differently). Each payment adds the months
+# it covers:
 PAID_MONTHS_LIMIT = 6
 MONTHS_PER_PAYMENT = {"monthly": 1, "quarterly": 3, "yearly": 12}
+# Referrers on a monthly or quarterly plan: the 6 months are calendar months
+# from the referral's first payment (a straight count; missed months are lost).
+EARNING_WINDOW_MONTHS = 6
 
 # A referrer counts as actively subscribed while their status is one of
 # these ('canceling' = cancelled at period end, still paid up) and their
@@ -63,6 +74,15 @@ def months_covered(billing_period: "str | None") -> int:
     """How many months of subscription one payment pays for: monthly 1,
     quarterly 3, yearly 12. An unknown or missing period counts as 1."""
     return MONTHS_PER_PAYMENT.get((billing_period or "monthly").lower(), 1)
+
+
+def add_calendar_months(dt: datetime, months: int) -> datetime:
+    """The same day `months` calendar months later, clamped to the last day
+    of a shorter month (31 January + 1 month = 28/29 February)."""
+    from calendar import monthrange
+    years, month_index = divmod(dt.month - 1 + months, 12)
+    year, month = dt.year + years, month_index + 1
+    return dt.replace(year=year, month=month, day=min(dt.day, monthrange(year, month)[1]))
 
 
 def _as_utc(dt: "datetime | None") -> "datetime | None":
@@ -134,7 +154,18 @@ class CommissionService:
             # Their paid period is over; the status just hasn't caught up yet.
             return "starter"
 
-        own_sub = (
+        own_sub = CommissionService._referrer_own_subscription(referrer_id, db)
+        if not own_sub:
+            return "starter"
+        tier = CommissionService._subscription_tier(own_sub)
+        return tier or "starter"
+
+    @staticmethod
+    def _referrer_own_subscription(referrer_id: int, db: Session) -> "Subscriptions | None":
+        """The referrer's own most recent active (or cancelled-at-period-end)
+        subscription payment: it says which plan (Pro/Premium) and which
+        billing period (monthly/quarterly/yearly) they are on now."""
+        return (
             db.query(Subscriptions)
             .filter(
                 Subscriptions.user_id == referrer_id,
@@ -143,10 +174,14 @@ class CommissionService:
             .order_by(Subscriptions.created_at.desc())
             .first()
         )
-        if not own_sub:
-            return "starter"
-        tier = CommissionService._subscription_tier(own_sub)
-        return tier or "starter"
+
+    @staticmethod
+    def _referrer_on_yearly_plan(referrer_id: int, db: Session) -> bool:
+        """True if the referrer's own current plan is billed yearly. Only
+        yearly referrers have the 6 months counted as months the referral
+        actually paid for; everyone else gets a straight calendar count."""
+        own_sub = CommissionService._referrer_own_subscription(referrer_id, db)
+        return bool(own_sub) and (own_sub.subscription_plan or "").lower() == "yearly"
 
     @staticmethod
     def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
@@ -201,8 +236,17 @@ class CommissionService:
                 if, BEFORE it, the referral had paid for fewer than 6
                 months of subscription (PAID_MONTHS_LIMIT). The months are
                 added up from their earlier successful payments (monthly 1,
-                quarterly 3, yearly 12), so months they weren't subscribed
-                never count. In practice:
+                quarterly 3, yearly 12). How a gap in the referral's
+                payments is treated depends on the REFERRER's own billing
+                period (_referrer_on_yearly_plan):
+                  - yearly referrer: months the referral wasn't subscribed
+                    never count; they earn whenever the referral pays,
+                    until 6 months are paid for;
+                  - monthly/quarterly referrer (and partners/staff without
+                    a yearly plan): the payment must also clear within 6
+                    calendar months of the referral's first payment
+                    (EARNING_WINDOW_MONTHS), so missed months are lost.
+                In practice, with no gaps:
                   - monthly: the first 6 payments earn, wherever they fall;
                   - quarterly: the first 2 payments earn;
                   - yearly: the first yearly payment earns if fewer than 6
@@ -228,7 +272,8 @@ class CommissionService:
         ]
         if exclude_subscription_id is not None:
             filters.append(Subscriptions.id != exclude_subscription_id)
-        earlier_periods = [row[0] for row in db.query(Subscriptions.subscription_plan).filter(*filters).all()]
+        earlier = db.query(Subscriptions.subscription_plan, Subscriptions.created_at).filter(*filters).all()
+        earlier_periods = [row[0] for row in earlier]
 
         # 2. Free (Starter) referrer: 10% of the referral's first payment only.
         if tier == "starter":
@@ -247,7 +292,24 @@ class CommissionService:
         # 3. Add up how many months of subscription the referral had already
         #    paid for. This payment earns only if that is under 6.
         months_paid_before = sum(months_covered(period) for period in earlier_periods)
-        return months_paid_before < PAID_MONTHS_LIMIT, rate
+        if months_paid_before >= PAID_MONTHS_LIMIT:
+            return False, rate
+
+        # 4. A referrer on a yearly plan: only paid months count, so a gap
+        #    in the referral's payments uses up nothing (paid month 1,
+        #    missed month 2: 1 used, 5 left).
+        if CommissionService._referrer_on_yearly_plan(referrer_id, db):
+            return True, rate
+
+        # 5. Everyone else: a straight count of 6 calendar months from the
+        #    referral's first payment; months they missed are lost (paid
+        #    month 1, missed month 2: 1 earned, 4 left). The first payment
+        #    itself always starts the window.
+        if not earlier:
+            return True, rate
+        first_payment = min(_as_utc(created) for _, created in earlier)
+        window_end = add_calendar_months(first_payment, EARNING_WINDOW_MONTHS)
+        return payment_time < window_end, rate
 
     @staticmethod
     def _commission_eligibility(subscription, referral, db: Session) -> "tuple[bool, Decimal]":
