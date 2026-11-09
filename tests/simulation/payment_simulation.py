@@ -22,8 +22,12 @@ reach a real provider or send a real email.
 An independent "oracle" model of the business rules predicts every
 outcome, and each event is checked against it:
   - price charged (registered founding/standard price, founding rules)
-  - whether a commission exists, its rate and amount (6 paid months rule,
-    referrer tier at payment time, Starter first-payment-only, staff pool)
+  - whether a commission exists, its rate and amount (6-month rule:
+    a straight 6 calendar months from the referral's first payment for
+    referrers on a monthly/quarterly plan, 6 paid months for referrers on a
+    yearly plan; referrer tier at payment time, Starter first-payment-only,
+    staff pool), including referrals who miss months, referrers who lapse
+    and come back, and referrers who move to a yearly plan
   - how it is paid: Flutterwave split, Flutterwave transfer in NGN, Stripe
     Connect transfer in the referrer's currency (cross-currency via FX), or
     left pending (no payout account / not enough balance), and later paid
@@ -36,6 +40,10 @@ create the lavoo_sim database, which is dropped and rebuilt each run):
 
     SIM_BASE_DATABASE_URL=postgresql://postgres@localhost/postgres \\
         venv/bin/python -m tests.simulation.payment_simulation --out /tmp/sim
+
+Time is simulated: a SimClock is the "now" of the commission rules and the
+created_at of every payment row, so months can pass in a run that takes
+minutes, and stored times match the simulated ones exactly.
 
 It prints a summary, writes events.jsonl (every event and check),
 report.json and report.md to --out, and exits 1 if any check failed.
@@ -98,9 +106,58 @@ def price_id(price_type: str, tier: str, currency: str, period: str) -> str:
 
 
 def add_months(dt: datetime, months: int) -> datetime:
-    """Same day `months` later (day clamped to 28 to keep it simple)."""
+    """Same day `months` later (day clamped to 28 to keep it simple).
+    Used to schedule payments; see calendar_add_months for the rule."""
     y, m = divmod(dt.month - 1 + months, 12)
     return dt.replace(year=dt.year + y, month=m + 1, day=min(dt.day, 28))
+
+
+def calendar_add_months(dt: datetime, months: int) -> datetime:
+    """The oracle's own calendar month step for the 6-month window: same
+    day, clamped to the last day of a shorter month."""
+    from calendar import monthrange
+    y, m = divmod(dt.month - 1 + months, 12)
+    year, month = dt.year + y, m + 1
+    return dt.replace(year=year, month=month, day=min(dt.day, monthrange(year, month)[1]))
+
+
+# ── Simulated time ──────────────────────────────────────────────────────────
+
+class SimClock:
+    """The simulation's "now". Set before every event; the commission rules
+    read it through SimDatetime, and new payment rows take it as created_at."""
+    now: datetime = SIM_START
+
+
+class SimDatetime(datetime):
+    """datetime whose now()/utcnow() return SimClock.now. Patched in as the
+    `datetime` name of the modules whose rules depend on the current time."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return SimClock.now.astimezone(tz) if tz else SimClock.now.replace(tzinfo=None)
+
+    @classmethod
+    def utcnow(cls):
+        return SimClock.now.replace(tzinfo=None)
+
+
+def install_clock(stack: ExitStack) -> None:
+    """Make the commission rules and payment rows use SimClock: patch the
+    `datetime` used by commission_service and flutterwave_split, and stamp
+    each new Subscriptions row with the simulated time (the real column's
+    default is the database's clock, which can't be moved)."""
+    from sqlalchemy import event
+
+    from database.pg_models import Subscriptions
+
+    def stamp(_mapper, _connection, target):
+        if target.created_at is None:
+            target.created_at = SimClock.now
+    event.listen(Subscriptions, "before_insert", stamp)
+    stack.callback(event.remove, Subscriptions, "before_insert", stamp)
+    for module in ("subscriptions.commission_service", "subscriptions.flutterwave_split"):
+        stack.enter_context(patch(f"{module}.datetime", SimDatetime))
 
 
 # ── Database and environment ────────────────────────────────────────────────
@@ -376,13 +433,17 @@ class Providers:
 @dataclass
 class Referrer:
     """A user who refers others. tier: pro/premium/starter/partner;
-    rail: how they get paid (flw_subaccount, flw_bank, stripe_gbp, stripe_usd, none)."""
+    rail: how they get paid (flw_subaccount, flw_bank, stripe_gbp, stripe_usd, none);
+    period: the billing period of their own plan (pro/premium only), which
+    decides how their referrals' 6 months are counted."""
     key: str
     tier: str
     rail: str
+    period: str | None = None    # own plan: monthly / quarterly / yearly
     user_id: int = 0
     active: bool = True          # oracle: actively subscribed right now
-    lapse: str | None = None     # "free" or "expired" partway through
+    lapse: str | None = None     # "free", "expired" or "returns" (free, then back)
+    switch_to_yearly: bool = False   # moves their own plan to yearly partway through
     earned: Counter = field(default_factory=Counter)
 
 
@@ -401,13 +462,22 @@ class Referral:
     user_id: int = 0
     email: str = ""
     paid_periods: list[str] = field(default_factory=list)   # oracle: recorded payments
+    paid_dates: list[datetime] = field(default_factory=list)  # oracle: when each was made
     founding_paid: set = field(default_factory=set)          # oracle: periods paid at founding price
     stripe_sub: str | None = None
     stripe_period: str | None = None
 
 
+# "skip" is a month the referral doesn't pay (cancelled, or the card failed);
+# they come back with a fresh checkout / new Stripe subscription.
 PATTERNS = {
     "monthly_x8": ["monthly"] * 8,
+    "paid_m1_missed_m2": ["monthly", "skip"] + ["monthly"] * 7,
+    "monthly_long_break": ["monthly"] * 3 + ["skip"] * 4 + ["monthly"] * 4,
+    "missed_months_then_quarterly": ["monthly", "skip", "skip", "quarterly", "quarterly"],
+    "quarterly_gap": ["quarterly", "skip", "skip", "skip", "quarterly", "quarterly"],
+    "comeback_after_window_yearly": ["monthly", "monthly"] + ["skip"] * 6 + ["yearly"],
+    "on_off_monthly": ["monthly", "skip", "monthly", "skip", "monthly", "skip", "monthly", "monthly", "monthly"],
     "quarterly_x3": ["quarterly"] * 3,
     "yearly_x2": ["yearly", "yearly"],
     "monthly_then_yearly": ["monthly", "monthly", "yearly", "yearly"],
@@ -425,8 +495,13 @@ def build_world(seed: int, n_referrers: int, referrals_each: int) -> tuple[list[
     rails = ["flw_subaccount", "flw_bank", "stripe_gbp", "stripe_usd", "none"]
     referrers, referrals = [], []
     for i in range(n_referrers):
-        lapse = rng.choice([None, None, None, "free", "expired"]) if tiers[i % 4] in ("pro", "premium") else None
-        referrers.append(Referrer(key=f"R{i + 1}", tier=tiers[i % 4], rail=rails[(i // 4 + i) % 5], lapse=lapse))
+        tier = tiers[i % 4]
+        paid = tier in ("pro", "premium")
+        period = PERIODS[i % 3] if paid else None    # every population has monthly, quarterly and yearly referrers
+        lapse = rng.choice([None, None, None, "free", "expired", "returns"]) if paid else None
+        switch = paid and period != "yearly" and lapse is None and rng.random() < 0.3
+        referrers.append(Referrer(key=f"R{i + 1}", tier=tier, rail=rails[(i // 4 + i) % 5], period=period,
+                                  lapse=lapse, switch_to_yearly=switch))
     n = 0
     for r in referrers:
         for _ in range(referrals_each):
@@ -453,16 +528,32 @@ class Oracle:
     """Predicts what the system should do, from the business rules alone."""
 
     @staticmethod
-    def commission(referral: Referral) -> tuple[bool, Decimal, str]:
-        """(eligible, rate, tier used) for the referral's NEXT payment."""
+    def commission(referral: Referral, when: datetime) -> tuple[bool, Decimal, str, str]:
+        """(eligible, rate, tier used, reason) for the referral's NEXT
+        payment, made at `when`.
+
+        Pro/Premium/partner: never once 6 months are paid for. Then:
+          - referrer on a yearly plan: eligible (paid months only count);
+          - anyone else: eligible only within 6 calendar months of the
+            referral's first payment (a straight count)."""
         if referral.staff_pool:
-            return True, RATES["staff_pool"], "staff_pool"
+            return True, RATES["staff_pool"], "staff_pool", "staff pool"
         r = referral.referrer
         tier = r.tier if (r.tier == "partner" or r.active) else "starter"
         if tier == "starter":
-            return not referral.paid_periods, RATES["starter"], "starter"
+            first = not referral.paid_periods
+            return first, RATES["starter"], "starter", "first payment" if first else "starter: not first payment"
         months_before = sum(MONTHS[p] for p in referral.paid_periods)
-        return months_before < 6, RATES[tier], tier
+        if months_before >= 6:
+            return False, RATES[tier], tier, f"{months_before} months already paid"
+        if r.period == "yearly":
+            return True, RATES[tier], tier, f"yearly referrer, {months_before} paid months before"
+        if not referral.paid_dates:
+            return True, RATES[tier], tier, "first payment starts the window"
+        window_end = calendar_add_months(referral.paid_dates[0], 6)
+        inside = when < window_end
+        return inside, RATES[tier], tier, (f"{r.period or 'no'}-plan referrer, window "
+                                           f"{'open' if inside else 'closed'} (ends {window_end:%Y-%m-%d})")
 
     @staticmethod
     def flw_price_type(referral: Referral, period: str) -> str:
@@ -557,16 +648,17 @@ class Simulation:
                 user = User(name=f"Referrer {r.key}", email=f"{r.key.lower()}@sim.local", password="x",
                             confirm_password="x", is_partner=r.tier == "partner", is_staff=r.tier == "staff",
                             subscription_status="active" if r.tier in ("pro", "premium") else "Free",
-                            subscription_expires_at=now + timedelta(days=400) if r.tier in ("pro", "premium") else None)
+                            subscription_expires_at=now + timedelta(days=3650) if r.tier in ("pro", "premium") else None)
                 db.add(user)
                 db.flush()
                 r.user_id = user.id
                 if r.tier in ("pro", "premium"):
-                    price = catalog_price("founding", r.tier, "USD", "yearly")
-                    db.add(Subscriptions(user_id=user.id, subscription_plan="yearly", plan_tier=r.tier,
+                    price = catalog_price("founding", r.tier, "USD", r.period)
+                    db.add(Subscriptions(user_id=user.id, subscription_plan=r.period, plan_tier=r.tier,
                                          transaction_id=f"own-{r.key}", tx_ref=f"own-{r.key}", amount=price,
                                          currency="USD", status="completed", subscription_status="active",
-                                         payment_provider="stripe", start_date=now, end_date=now + timedelta(days=365)))
+                                         payment_provider="stripe", created_at=now - timedelta(days=1),
+                                         start_date=now, end_date=add_months(now, MONTHS[r.period])))
                     self.coverage["referrer_own_plan_rows"] += 1
                 if r.rail in ("flw_subaccount", "flw_bank"):
                     db.add(PayoutAccount(user_id=user.id, payment_method="flutterwave", bank_name="Sim Bank",
@@ -694,14 +786,20 @@ class Simulation:
         """One payment by one referral, then every check on what happened."""
         from database.pg_models import Commission, Payout, Subscriptions
         period = f.steps[step]
-        eligible, rate, tier_used = Oracle.commission(f)
+        after_gap = step > 0 and f.steps[step - 1] == "skip"
+        if after_gap:
+            # They come back with a new checkout / Stripe subscription.
+            f.stripe_sub = None
+        eligible, rate, tier_used, reason = Oracle.commission(f, sim_date)
         same_plan_renewal = step > 0 and f.steps[step - 1] == period
         if f.provider == "stripe":
             how = "Stripe " + ("renewal" if same_plan_renewal else "first payment")
         else:
             how = "Flutterwave " + ("renewal (saved card)" if same_plan_renewal else "checkout")
-        event = self.new_event("payment", f"{how} | {f.key} ({f.tier} {period} {f.currency}, pattern {f.pattern}) "
-                                          f"referred by {f.referrer.key} ({f.referrer.tier}, {f.referrer.rail}"
+        event = self.new_event("payment", f"{sim_date:%Y-%m-%d} {how}{' after missed month(s)' if after_gap else ''} | "
+                                          f"{f.key} ({f.tier} {period} {f.currency}, pattern {f.pattern}) "
+                                          f"referred by {f.referrer.key} ({f.referrer.tier}"
+                                          f"{' ' + f.referrer.period if f.referrer.period else ''}, {f.referrer.rail}"
                                           f"{'' if f.referrer.active or f.referrer.tier in ('partner', 'staff') else ', lapsed'})")
         before_id = self.snapshot(f.user_id)
         transfers_before = len(self.providers.transfers)
@@ -735,8 +833,13 @@ class Simulation:
             self.check(outcome["split"] == split_expected, event, "Flutterwave split used iff eligible + Nigerian bank account",
                        split_expected, outcome["split"])
             self.check(len(commissions) == (1 if eligible else 0), event,
-                       f"commission {'created' if eligible else 'not created'} ({tier_used}, "
-                       f"{sum(MONTHS[p] for p in f.paid_periods)} paid months before)", int(eligible), len(commissions))
+                       f"commission {'created' if eligible else 'not created'} ({tier_used}: {reason})",
+                       int(eligible), len(commissions))
+            if tier_used in ("pro", "premium", "partner"):
+                counting = "paid_months" if f.referrer.period == "yearly" else "straight_count"
+                self.coverage[f"rule_{counting}_{'earned' if eligible else 'not_earned'}"] += 1
+                if after_gap:
+                    self.coverage[f"rule_{counting}_after_missed_month_{'earned' if eligible else 'not_earned'}"] += 1
 
             new_transfers = self.providers.transfers[transfers_before:]
             result = {"amount": str(sub.amount), "currency": sub.currency, "eligible": eligible, "rate": str(rate),
@@ -781,6 +884,7 @@ class Simulation:
 
         # Update the oracle's model of the world.
         f.paid_periods.append(period)
+        f.paid_dates.append(sim_date)
         if outcome["price_type"] == "founding":
             f.founding_paid.add(period)
         self.coverage[f"{f.provider}_{'renewal' if same_plan_renewal else 'first'}"] += 1
@@ -818,14 +922,36 @@ class Simulation:
         event = self.new_event("lapse", f"Referrer {r.key} ({r.tier}) lapses: {r.lapse}")
         with self.session() as db:
             user = db.get(User, r.user_id)
-            if r.lapse == "free":
+            if r.lapse in ("free", "returns"):
                 user.subscription_status = "Free"
             else:
-                user.subscription_expires_at = datetime.now(UTC) - timedelta(days=10)
+                user.subscription_expires_at = SimClock.now - timedelta(days=10)
             db.commit()
         r.active = False
         event["checks"].append({"check": "lapsed", "ok": True})
         self.coverage[f"referrer_lapse_{r.lapse}"] += 1
+
+    def own_plan_payment(self, r: Referrer, period: str, why: str) -> None:
+        """The referrer pays for their own plan (coming back, or moving to
+        yearly): a new active subscription row, so the rules see the new
+        billing period from now on."""
+        from database.pg_models import Subscriptions, User
+        event = self.new_event("referrer_plan", f"{SimClock.now:%Y-%m-%d} Referrer {r.key} ({r.tier}) {why}: "
+                                                f"own plan now {period}")
+        with self.session() as db:
+            user = db.get(User, r.user_id)
+            user.subscription_status = "active"
+            user.subscription_expires_at = SimClock.now + timedelta(days=3650)
+            n = next(self.ids)
+            db.add(Subscriptions(user_id=r.user_id, subscription_plan=period, plan_tier=r.tier,
+                                 transaction_id=f"own-{r.key}-{n}", tx_ref=f"own-{r.key}-{n}",
+                                 amount=catalog_price("founding", r.tier, "USD", period), currency="USD",
+                                 status="completed", subscription_status="active", payment_provider="stripe",
+                                 start_date=SimClock.now, end_date=add_months(SimClock.now, MONTHS[period])))
+            db.commit()
+        r.active, r.period = True, period
+        event["checks"].append({"check": why, "ok": True})
+        self.coverage[f"referrer_{why.replace(' ', '_')}"] += 1
 
     def top_up_and_settle(self) -> None:
         """Top up both platform balances and run the payout retry jobs: every
@@ -916,11 +1042,19 @@ class Simulation:
         for f in self.referrals:
             date = SIM_START + timedelta(days=self.rng.randint(0, 20))
             for step, period in enumerate(f.steps):
+                if period == "skip":
+                    date = add_months(date, 1)      # a month they don't pay
+                    continue
                 timeline.append((date, self.rng.random(), "pay", f, step))
                 date = add_months(date, MONTHS[period])
         for r in self.referrers:
-            if r.lapse:
+            if r.lapse == "returns":
+                timeline.append((add_months(SIM_START, 2) + timedelta(days=1), self.rng.random(), "lapse", r, 0))
+                timeline.append((add_months(SIM_START, 4) + timedelta(days=1), self.rng.random(), "comeback", r, 0))
+            elif r.lapse:
                 timeline.append((add_months(SIM_START, 3), self.rng.random(), "lapse", r, 0))
+            if r.switch_to_yearly:
+                timeline.append((add_months(SIM_START, 2) + timedelta(days=12), self.rng.random(), "switch", r, 0))
         flw = [f for f in self.referrals if f.provider == "flutterwave" and not f.staff_pool]
         for f in flw[:3]:
             # Before anyone pays, so it always runs (a first payment, underpaid).
@@ -931,11 +1065,17 @@ class Simulation:
 
         with ExitStack() as stack:
             self.providers.install(stack)
+            install_clock(stack)
             for date, _, kind, obj, step in timeline:
+                SimClock.now = date
                 if kind == "pay":
                     self.run_payment(obj, step, date)
                 elif kind == "lapse":
                     self.lapse(obj)
+                elif kind == "comeback":
+                    self.own_plan_payment(obj, obj.period, "comes back")
+                elif kind == "switch":
+                    self.own_plan_payment(obj, "yearly", "moves to yearly")
                 elif kind == "underpay":
                     if not obj.paid_periods:
                         self.underpaid_checkout(obj)

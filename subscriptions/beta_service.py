@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 from database.pg_models import User
 from dotenv import dotenv_values
 
+
+# Free days before a new user must subscribe (overridable with GRACE_PERIOD_DAYS).
+DEFAULT_GRACE_PERIOD_DAYS = 3
+
 class BetaService:
     
     @staticmethod
@@ -94,15 +98,16 @@ class BetaService:
     
     @staticmethod
     def get_grace_period_days() -> int:
-        """Get grace period duration (default: 7 days)"""
+        """How many days new users get free before they must subscribe:
+        GRACE_PERIOD_DAYS from .env / the environment, or DEFAULT_GRACE_PERIOD_DAYS (3)."""
         env_vars = BetaService._get_dynamic_env()
         days = env_vars.get("GRACE_PERIOD_DAYS")
         if days is None:
-            days = os.getenv("GRACE_PERIOD_DAYS", "7")
+            days = os.getenv("GRACE_PERIOD_DAYS", str(DEFAULT_GRACE_PERIOD_DAYS))
         try:
             return int(days)
         except:
-            return 7
+            return DEFAULT_GRACE_PERIOD_DAYS
     
     @staticmethod
     def calculate_grace_period_end(launch_date: datetime) -> datetime:
@@ -241,7 +246,7 @@ class BetaService:
                     "is_beta_user": True
                 }
         
-        # GRACE PERIOD (Launch Day + N Days OR Signup Day + N Days (N = GRACE_PERIOD_DAYS, default 7))
+        # GRACE PERIOD (Launch Day + N Days OR Signup Day + N Days (N = GRACE_PERIOD_DAYS, default 3))
         
 
         if BetaService.is_in_grace_period(user):
@@ -349,8 +354,8 @@ class BetaService:
     def initialize_grace_period(user: User, db: Session):
         """
         Initialize grace period based on user type:
-        - Beta users: GRACE_PERIOD_DAYS (default 7) from launch date
-        - New users: GRACE_PERIOD_DAYS (default 7) from signup date
+        - Beta users: GRACE_PERIOD_DAYS (default 3) from launch date
+        - New users: GRACE_PERIOD_DAYS (default 3) from signup date
         """
         is_beta = BetaService.is_beta_mode()
         launch_date = BetaService.get_launch_date()

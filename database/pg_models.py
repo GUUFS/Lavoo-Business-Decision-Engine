@@ -64,6 +64,11 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     is_bot = Column(Boolean, default=False, server_default="false")
     is_partner = Column(Boolean, default=False)   # partners/staff receive 50% payout; display shows 40% — a COMMISSION-RATE flag, unrelated to is_staff below
+    # Set on the admin Permissions page (subscriptions/partner_service.py):
+    # the day they became a partner, and the end of the free Premium that
+    # comes with it (6 calendar months from partner_since).
+    partner_since = Column(DateTime(timezone=True), nullable=True)
+    partner_premium_until = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True)
     user_status = Column(String(20), server_default="active", nullable=False)
 

@@ -596,10 +596,17 @@ async def run_subscription_expiry_job():
                 renewed = 0
                 expired_count = 0
                 affected_users: set[int] = set()
+                # Partners on their free 6 months of Premium
+                # (subscriptions/partner_service.py): not charged for a
+                # renewal and not moved to Free until it ends.
+                from subscriptions.partner_service import partner_premium_user_ids
+                on_partner_premium = partner_premium_user_ids(db, now)
 
                 for user_id, sub in latest_per_user.items():
                     # Yield to the event loop between users to prevent blocking health checks
                     await asyncio.sleep(0.1)
+                    if user_id in on_partner_premium:
+                        continue
 
                     user = db.query(User).filter(User.id == user_id).first()
                     plan = sub.subscription_plan or "monthly"
@@ -704,6 +711,18 @@ async def run_subscription_expiry_job():
                 db.rollback()
             finally:
                 db.close()
+
+            # Partners whose free 6 months of Premium have ended go back to
+            # what they actually pay for, or Free.
+            partner_db = SessionLocal()
+            try:
+                from subscriptions.partner_service import end_expired_partner_premium
+                end_expired_partner_premium(partner_db)
+            except Exception as exc:
+                logger.error("[subscription-expiry-job] partner premium error: %s", exc, exc_info=True)
+                partner_db.rollback()
+            finally:
+                partner_db.close()
 
             # Move founding members' Stripe subscriptions to the standard
             # price once it's due (subscriptions/founding.py). Normally done

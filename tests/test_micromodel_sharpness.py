@@ -158,3 +158,49 @@ def test_teacher_agrees_when_the_questions_match(db):
     call = db.query(ClarityTeacherCall).filter_by(run_id=result["run_id"]).one()
     assert call.question_match >= clarity_teacher.QUESTION_MATCH_THRESHOLD
     assert call.agreed is True
+
+
+# ── Prompts the micromodel used to ask the wrong question for ───────────────
+
+def texts(prompt):
+    """Just the wording of the reasoner's questions for a prompt."""
+    return [q["question"] for q in questions_for(prompt)]
+
+
+def test_named_new_business_asks_budget_timeline_and_demand_not_current_numbers():
+    qs = texts("I want to start a laundry pickup service for students in Abuja.")
+    assert len(qs) == 1
+    assert "laundry pickup service" in qs[0] and "budget" in qs[0] and "pay for it" in qs[0]
+    assert "right now" not in qs[0] and "monthly revenue" not in qs[0]
+
+
+def test_named_new_business_with_budget_and_timeline_needs_no_questions():
+    assert texts("I want to start a laundry pickup service for students in Abuja. "
+                         "I have N1.5m and want to launch in 2 months.") == []
+
+
+def test_choice_between_ways_to_grow_asks_budget_not_team_hours():
+    qs = texts("Should I hire a sales person or run ads?")
+    assert any("budget" in q for q in qs)
+    assert not any("hours a week" in q for q in qs)
+
+
+def test_many_problems_at_once_asks_which_hurts_most():
+    qs = texts("Everything is going wrong with my business. Marketing, cash, staff, product. Where do I start?")
+    assert qs[0].startswith("Of marketing, cash, staff and product, which one is hurting the business most")
+    assert not any("hours a week" in q for q in qs)
+
+
+def test_busy_some_days_empty_others_asks_quiet_vs_busy_days():
+    qs = texts("My restaurant is busy on weekends but empty Monday to Thursday.")
+    assert len(qs) == 1 and "quiet day compared with a busy one" in qs[0]
+
+
+def test_coach_is_not_asked_what_the_business_sells():
+    qs = texts("I'm a coach. I want more clients.")
+    assert not any("sell or do" in q for q in qs)
+
+
+def test_website_reads_as_your_website():
+    qs = texts("Should I sell on Jumia, Konga, or my own website?")
+    assert not any("on Website" in q for q in qs)

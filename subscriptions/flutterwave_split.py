@@ -18,6 +18,7 @@ manual-payout path is exactly that fallback, not a separate system.
 """
 import logging
 import os
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -361,7 +362,6 @@ def get_split_config_for_referred_user(
     # none); omitting it is safe because a referred user's very FIRST
     # payment is always eligible under every branch of
     # _eligibility_for_payment regardless of billing period.
-    from datetime import datetime, timezone
     eligible, rate = CommissionService._eligibility_for_payment(
         referrer_id=referral.referrer_id,
         via_staff_pool=referral.via_staff_pool,

@@ -46,7 +46,27 @@ _INDUSTRY_WORDS = {
     "kids", "baby", "pet", "pets", "vet", "pharma", "health", "wellness",
     "edtech", "proptech", "insurance", "lending", "microfinance", "b2b",
     "d2c", "dtc", "subscription box", "dropshipping", "wholesale", "retail",
+    # Service professionals: "I'm a coach" says what they sell (their service).
+    "coach", "consultant", "therapist", "counsellor", "counselor", "trainer",
+    "personal trainer", "tutor", "lawyer", "doctor", "nurse", "photographer",
+    "makeup artist", "stylist", "caterer", "realtor", "estate agent",
+    "architect", "virtual assistant", "planner", "event planner",
 }
+
+# Areas of a business. A prompt naming three or more of these and asking
+# where to start ("marketing, cash, staff, product") needs a focus first.
+_BUSINESS_AREAS = {
+    "marketing": "marketing", "sales": "sales", "cash": "cash", "cash flow": "cash", "money": "cash",
+    "finances": "cash", "staff": "staff", "team": "staff", "hiring": "staff", "employees": "staff",
+    "product": "product", "products": "product", "customers": "customers", "customer service": "customers",
+    "operations": "operations", "pricing": "pricing", "prices": "pricing", "suppliers": "suppliers",
+    "stock": "stock", "inventory": "stock", "delivery": "delivery", "website": "website",
+}
+_WHERE_TO_START_RE = re.compile(
+    r"where (?:do|should) (?:i|we) (?:start|begin)|what (?:do|should) (?:i|we) (?:fix|tackle|do) first"
+    r"|everything is (?:going wrong|a mess|falling apart)|nothing is working",
+    re.I,
+)
 # Creators and personal brands: saying "I'm a content creator" says what
 # they do, even though nothing is "sold". Their questions are about
 # platforms, audience and focus, not stock, orders or customers.
@@ -63,6 +83,14 @@ _CREATOR_RE = re.compile(
 _BROAD_SCOPE_RE = re.compile(
     r"\b(?:various|many|different|several|all)\s+(?:aspects?|areas?|topics?|niches?|things|parts)\b"
     r"|\baspects? of life\b|\beverything\b|\ball sorts of\b|\bwide range of\b|\bmany things\b",
+    re.I,
+)
+
+# The idea named in "start a laundry pickup service for students": the words
+# after "start a/an", up to "for", "in", "at" or the end of the sentence.
+_IDEA_RE = re.compile(
+    r"\b(?:start(?:ing)?|launch(?:ing)?|open(?:ing)?|set(?:ting)? up)\s+(?:a|an|my|our)\s+(?:new\s+)?"
+    r"([a-z][a-z\s&'-]{2,50}?)(?=\s+(?:for|in|at|to|with|that|which|so)\b|[,.;!?]|$)",
     re.I,
 )
 
@@ -137,11 +165,19 @@ _PROBLEM_TYPES = [
         r"|\bpositive(?:ly)?\s+(?:impact|influence|change|effect|difference)\b"
         r"|\bmake (?:a|an) (?:difference|impact)\b|\bchange lives\b",
         re.I)),
+    # Busy at some times and quiet at others ("busy on weekends but empty
+    # Monday to Thursday"): a demand-pattern problem, not a staffing one.
+    ("slow_periods", re.compile(
+        r"\b(?:empty|quiet|slow|dead|no customers?)\b[^.!?]{0,40}\b(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|"
+        r"saturdays?|sundays?|weekdays?|weekends?|mornings?|afternoons?|evenings?|nights?|low season|off[- ]season)\b"
+        r"|\bbusy (?:on|at|in|during)\b[^.!?]{0,40}\bbut\b",
+        re.I)),
     ("start", re.compile(r"\b(?:start(?:ing)? a (?:new )?(?:business|company|startup)|want to start|business idea|launch(?:ing)? (?:a|my) (?:first|new)|which business (?:to|should))\b", re.I)),
     ("decline", re.compile(r"\b(?:dropp?(?:ed|ing)|declin\w*|fell|falling|down by|went down|reduced|reducing|slow(?:ed|ing)? down|dead|dried up|losing (?:customers|sales|money)|going down|sales are down|revenue is down|stopped buying)\b", re.I)),
     ("conversion", re.compile(r"\b(?:convert\w*|conversion|nobody buys|no one buys|not buying|visit\w* but|traffic but|views but|abandon\w*|checkout)\b", re.I)),
     ("retention", re.compile(r"\b(?:churn\w*|come back|coming back|repeat|retention|retain|one-time|once and never|cancel\w*)\b", re.I)),
-    ("acquisition", re.compile(r"\b(?:more (?:customers|clients|leads|sales|users|members|followers|traffic)|get (?:customers|clients|leads)|find (?:customers|clients)|grow\w*|scale|scaling|reach more|visibility|awareness|go viral|engagement|ads? (?:aren't|are not|not) working)\b", re.I)),
+    ("acquisition", re.compile(r"\b(?:more (?:customers|clients|leads|sales|users|members|followers|traffic)|get (?:customers|clients|leads)|find (?:customers|clients)|grow\w*|scale|scaling|reach more|visibility|awareness|go viral|engagement|ads? (?:aren't|are not|not) working"
+                                r"|sales ?(?:person|people|rep|reps|team)|run(?:ning)? ads|advertis\w*)\b", re.I)),
     ("pricing", re.compile(
         r"\b(?:pric(?:e|es|ing)|charge|expensive|too high|too cheap|discount\w*|margin\w*|rate card|brand deals?|sponsorships?)\b"
         r"|\b(?:brands?|sponsors?|clients?)\s+(?:aren't|are not|don't|do not|won't|will not)\s+pay", re.I)),
@@ -212,12 +248,28 @@ def extract_facts(text: str) -> dict:
     # 7. Creator or business? And does it cover many topics at once?
     creator = [m.group(0).strip() for m in _CREATOR_RE.finditer(text)]
     broad_scope = bool(_BROAD_SCOPE_RE.search(text))
+    # 7b. Business areas named ("marketing, cash, staff, product"), in the
+    #     order they appear, and whether they ask where to start.
+    areas: list[str] = []
+    for word in sorted(_BUSINESS_AREAS, key=lambda w: lower.find(w) if w in lower else 10**6):
+        area = _BUSINESS_AREAS[word]
+        if re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", lower) and area not in areas:
+            areas.append(area)
+    where_to_start = bool(_WHERE_TO_START_RE.search(text))
+    # 7c. A new business idea they name ("a laundry pickup service").
+    idea_match = _IDEA_RE.search(text)
+    idea = idea_match.group(1).strip() if idea_match else None
+    if idea and idea.lower() in _GENERIC_BUSINESS_WORDS:
+        idea = None
 
     # 8. Put it all together, plus what kind of decision it is (if any).
     return {
         "domain": "creator" if creator else "business",
         "creator": creator,
         "broad_scope": broad_scope,
+        "areas": areas,
+        "where_to_start": where_to_start,
+        "idea": idea,
         "industry": industry,
         "generic_business": generic,
         "channels": channels,
@@ -339,6 +391,16 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
         trace.append("They're starting out, so ask about the idea and resources, not current numbers.")
         gaps.append({"type": "missing_idea_context", "why": "no idea, budget or skills given for a new business"})
         return _finish(facts, gaps, trace, fuzz)
+    # 5b. Starting a business they have named ("a laundry pickup service for
+    #     students"): there are no sales yet, so ask for the budget, the
+    #     timeline and any proof that people will pay, not current numbers.
+    if problem == "start" and business_named:
+        if facts["money"] and (facts["durations"] or facts["tried"]):
+            trace.append("A named idea with a budget and a timeline or a test, so no questions are needed.")
+            return _finish(facts, gaps, trace, fuzz)
+        trace.append("A new business with the idea named but no sales yet: ask about budget, timeline and demand.")
+        gaps.append({"type": "missing_launch_plan", "why": "new idea without budget, timeline or proof of demand"})
+        return _finish(facts, gaps, trace, fuzz)
 
     # 6. A choice with no options named: we can't rank what we haven't been told.
     if decision["kind"] == "open":
@@ -354,6 +416,15 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
     if facts["broad_scope"] and (is_creator or problem == "impact"):
         trace.append("It covers many topics at once, so ask which one or two to focus on and who it's for.")
         gaps.append({"type": "missing_focus", "why": "many topics, no main focus or audience"})
+    # 7b. A business with many problems at once ("marketing, cash, staff,
+    #     product... where do I start?"): ask which one hurts most first.
+    elif not is_creator and len(facts["areas"]) >= 3 and (facts["where_to_start"] or facts["broad_scope"]):
+        trace.append(f"It lists {len(facts['areas'])} problem areas ({', '.join(facts['areas'][:4])}) at once, "
+                     "so ask which one hurts most before anything else.")
+        gaps.append({"type": "missing_focus", "why": "many business problems at once, no main one"})
+        # The focus question already asks what the main problem costs, so a
+        # separate numbers question would repeat it.
+        has_evidence = True
 
     # 8. Ask for whatever basics are still missing.
     if not business_named:
@@ -394,7 +465,13 @@ _NUMBERS_BY_PROBLEM = {
     "pricing": "What do you charge now, and roughly what do competitors charge for the same thing?",
     "decline": "What were your monthly sales before the drop, and what are they now?",
     "operations": "How many people are on the team, and roughly how many hours a week go into this?",
+    "slow_periods": ("Roughly how many customers or sales do you get on a quiet day compared with a busy one, "
+                     "and what have you already tried on the quiet days?"),
 }
+# The numbers that settle a choice between two ways of spending ("hire a
+# sales person or run ads?"): the money available and the starting point.
+_DECISION_NUMBERS = ("What budget do you have for this, and roughly how many customers or sales "
+                     "do you get in a month now (and where do most of them come from)?")
 
 
 def _creator_numbers_question(channel: Optional[str], problem: str) -> str:
@@ -420,8 +497,13 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
     what = (facts["sells"] or facts["industry"] or [None])[0]
     is_creator = facts.get("domain") == "creator"
 
-    # Focus: which topics, and for whom (creators covering many topics).
+    # Focus. Creators: which topics, and for whom. Businesses with many
+    # problems at once: which named area hurts most, and what it costs.
     if gap_type == "missing_focus":
+        if not is_creator and facts.get("areas"):
+            listed = _join_areas(facts["areas"])
+            return (f"Of {listed}, which one is hurting the business most right now, "
+                    "and what is it costing you (lost sales, unpaid bills, hours)?")
         return "Which one or two topics do you most want to be known for, and who is the person you most want your content to help?"
 
     # What the business is: mention the platform or word they used, if any.
@@ -438,6 +520,9 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
         if problem == "impact":
             return ("Who do you most want to reach, how do you share your work with them today, "
                     "and roughly how many people see it?")
+        # A choice between named options (not about price): budget and starting point.
+        if facts["decision"]["kind"] == "compare" and problem != "pricing":
+            return _DECISION_NUMBERS
         q = _NUMBERS_BY_PROBLEM.get(problem)
         if q:
             return q
@@ -451,11 +536,29 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
         return "When did this start, and did anything change around then (prices, ads, season, competitors)?"
     if gap_type == "missing_idea_context":
         return "What business are you thinking of starting, and what budget, skills or contacts do you have to start with?"
+    # A named new idea: budget, timeline and proof people will pay.
+    if gap_type == "missing_launch_plan":
+        named = facts.get("idea") or what
+        idea = f"the {named}" if named else "it"
+        return (f"What budget and timeline do you have for {idea}, and what have you seen so far that says "
+                "people will pay for it (pre-orders, a waitlist, people asking for it)?")
     return ""
 
 
+def _join_areas(areas: list[str]) -> str:
+    """'marketing, cash, staff and product' from the areas a prompt named."""
+    # 1. Up to four areas, in the order they were written.
+    named = areas[:4]
+    # 2. Join them like a sentence.
+    return named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+
+
 def _display_channel(c: str) -> str:
-    special = {"tiktok": "TikTok", "whatsapp": "WhatsApp", "linkedin": "LinkedIn", "youtube": "YouTube", "dms": "DMs"}
+    """How a channel reads inside a question: "TikTok", "your website"."""
+    # 1. Names with their own spelling, and channels that read as "your ...".
+    special = {"tiktok": "TikTok", "whatsapp": "WhatsApp", "linkedin": "LinkedIn", "youtube": "YouTube", "dms": "DMs",
+               "website": "your website", "storefront": "your storefront", "store front": "your storefront"}
+    # 2. Anything else: capitalised if it is one word.
     return special.get(c, c.title() if c.isalpha() else c)
 
 
@@ -475,8 +578,10 @@ def classify_question(question: str) -> str:
     written by the LLM can be reused for the same gap."""
     q = question.lower()
     # Check the most specific kinds first. Anything else is a "numbers" question.
-    if re.search(r"\b(which (?:one or two |one |two )?topics?|known for|your niche|main focus|focus on one|who is the person)\b", q):
+    if re.search(r"\b(which (?:one or two |one |two )?topics?|known for|your niche|main focus|focus on one|who is the person|hurting the business most|which (?:one|area|problem) (?:is )?(?:hurt|matter|cost)s? (?:you )?most)\b", q):
         return "missing_focus"
+    if re.search(r"\b(pre-?orders?|waitlist|will pay for it|proof (?:that )?people|people will pay)\b", q):
+        return "missing_launch_plan"
     if re.search(r"\b(options?|choosing between|ideas? (?:are|you're)|on the table)\b", q):
         return "unnamed_options"
     if re.search(r"\b(thinking of starting|want to start|budget, skills)\b", q):

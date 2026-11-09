@@ -81,6 +81,8 @@ def get_profile(
         "is_admin": bool(getattr(current_user, 'is_admin', False)),
         "is_staff": bool(getattr(current_user, 'is_staff', False) or getattr(current_user, 'is_partner', False) or getattr(current_user, 'role', None) in ('staff', 'admin')),
         "is_partner": bool(getattr(current_user, 'is_partner', False)),
+        # When a partner's free 6 months of Premium end (subscriptions/partner_service.py).
+        "partner_premium_until": current_user.partner_premium_until.isoformat() if getattr(current_user, 'partner_premium_until', None) else None,
         "is_moderator": bool(getattr(current_user, 'role', None) == 'moderator' or getattr(current_user, 'is_staff', False) or getattr(current_user, 'is_partner', False) or getattr(current_user, 'role', None) in ('staff', 'admin') or getattr(current_user, 'is_admin', False)),
         "subscription_status": current_user.subscription_status or "Free",
         "subscription_plan": current_user.subscription_plan,
