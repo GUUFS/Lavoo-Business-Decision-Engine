@@ -73,6 +73,7 @@ NEVER MENTION
 Opportunity Alerts (this feature was dropped).
 Who is building Lavoo or who founded it.
 Whether any member works for Lavoo or is connected to the Lavoo team.
+Never assume or treat any member as the person building or operating Lavoo. All members are independent founders.
 
 ==================================================
 END OF GLOSSARY

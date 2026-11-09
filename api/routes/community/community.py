@@ -163,7 +163,7 @@ VOO_FOLLOWUP_SYSTEM_PROMPT_HASH: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT_HASH: Optional[str] = None
 
-ANGLE_PROMPT_VERSION = "angle_v2.1"
+ANGLE_PROMPT_VERSION = "angle_v2.2"
 SUMMARY_PROMPT_VERSION = "summary_v2.0"
 FOLLOWUP_PROMPT_VERSION = "followup_v1.0"
 
@@ -991,8 +991,9 @@ async def cron_process_pending_voo_replies(db: Session):
             bits = []
             is_staff = bool(getattr(author_user, "is_admin", False))
             if not is_staff:
-                if getattr(author_user, "company_name", None):
-                    bits.append(f"Business: {author_user.company_name}")
+                company = getattr(author_user, "company_name", None)
+                if company and company.strip().lower() not in ("lavoo", "lavoo creators", "lavoo team"):
+                    bits.append(f"Business: {company.strip()}")
                 if getattr(author_user, "industry", None):
                     bits.append(f"Industry: {author_user.industry}")
                 if getattr(author_user, "venture_stage", None):
@@ -1067,7 +1068,7 @@ async def cron_process_pending_voo_replies(db: Session):
             # Extract author handle, role and post topic
             author_handle = (f"@{author_user.username}" if getattr(author_user, "username", None) else (f"@{author_user.name}" if getattr(author_user, "name", None) else "@builder")).strip()
             is_staff = bool(getattr(author_user, "is_admin", False))
-            author_role = "lavoo_team" if is_staff else "member"
+            author_role = "lavoo_team" if (is_staff and (d.post_type == "poll" or d.poll_data)) else "member"
             post_topic = "General"
             if d.channel_id:
                 ch = db.query(CommunityChannel).filter_by(id=d.channel_id).first()
