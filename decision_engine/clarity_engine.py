@@ -11,6 +11,10 @@ For each prompt it:
        0.85 or more:  copy the example
        0.55 to 0.85:  use its own thinking, but borrow the example's wording
        below 0.55:    use its own thinking only
+     An example is only copied or borrowed from when it's the same kind of
+     prompt (creator vs business, same problem type), and a borrowed
+     question is only used when it fits this prompt at least as well as the
+     micromodel's own question (_precedent_fits, _fits_prompt_better).
   4. Saves the decision. Later, the teacher job (clarity_teacher.py) has the
      LLM check the weakest decisions, so the micromodel keeps improving.
 """
@@ -30,8 +34,18 @@ logger = logging.getLogger(__name__)
 NEAR_DUPLICATE_THRESHOLD = 0.85
 BLEND_THRESHOLD = 0.55
 MAX_QUESTIONS = 3
+# A borrowed question must be at least this close to the prompt, compared
+# with the micromodel's own question (cosine similarity of their embeddings).
+RELEVANCE_MARGIN = 0.02
 
 _TRUSTED_FILTER = "(source IN ('llm_seed', 'llm_teacher') OR (source = 'live' AND outcome = 'answered'))"
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity of two embeddings (1 = same meaning, 0 = unrelated)."""
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm = (sum(x * x for x in a) ** 0.5) * (sum(y * y for y in b) ** 0.5)
+    return dot / norm if norm else 0.0
 
 
 def _generate_embedding(text_in: str) -> list[float]:
@@ -112,9 +126,47 @@ def _precedent_questions_by_gap(neighbor: dict) -> dict[str, str]:
     return out
 
 
-def _decide(submission_text: str, reasoning: dict, neighbor: Optional[dict], similarity: float) -> tuple[str, bool, list[dict]]:
-    """Returns (decision_path, needs_clarification, questions)."""
+def _precedent_fits(facts: dict, neighbor: dict) -> tuple[bool, str]:
+    """Is the stored example the same kind of prompt as this one? Same
+    domain (creator or business) and same main problem type. Two prompts
+    can read alike to the embedding model while needing different
+    questions, e.g. a creator wanting positive impact and a shop owner
+    wanting more sales. Returns (fits, reason)."""
+    other = extract_facts(neighbor.get("submission_text") or "")
+    if facts.get("domain") != other.get("domain"):
+        return False, f"it's about a {other.get('domain')}, this prompt is about a {facts.get('domain')}"
+    mine = (facts.get("problem_types") or ["general"])[0]
+    theirs = (other.get("problem_types") or ["general"])[0]
+    if mine != theirs:
+        return False, f"it's a '{theirs}' problem, this prompt is a '{mine}' one"
+    return True, ""
+
+
+def _fits_prompt_better(prompt_embedding: list[float], own: str, borrowed: str) -> bool:
+    """Use the example's wording only if it's at least as relevant to the
+    user's prompt as the micromodel's own question."""
+    own_score = _cosine(prompt_embedding, _generate_embedding(own))
+    borrowed_score = _cosine(prompt_embedding, _generate_embedding(borrowed))
+    return borrowed_score >= own_score - RELEVANCE_MARGIN
+
+
+def _decide(
+    submission_text: str, reasoning: dict, neighbor: Optional[dict], similarity: float,
+    prompt_embedding: Optional[list[float]] = None,
+) -> tuple[str, bool, list[dict]]:
+    """Returns (decision_path, needs_clarification, questions).
+    prompt_embedding: the prompt's embedding if already computed (saves
+    work); otherwise it's computed when needed."""
     trace = reasoning["trace"]
+
+    # 0. Only learn from an example that's the same kind of prompt.
+    if neighbor and similarity >= BLEND_THRESHOLD:
+        fits, why_not = _precedent_fits(reasoning["facts"], neighbor)
+        if not fits:
+            trace.append(
+                f"The closest trusted precedent ({similarity:.2f}) isn't the same kind of prompt ({why_not}), so it isn't used."
+            )
+            neighbor = None
 
     # 1. Very similar trusted example (0.85+): copy its decision and questions.
     if neighbor and similarity >= NEAR_DUPLICATE_THRESHOLD:
@@ -136,20 +188,25 @@ def _decide(submission_text: str, reasoning: dict, neighbor: Optional[dict], sim
     questions = build_questions(reasoning)
 
     # 3. Fairly similar example (0.55 to 0.85): keep our questions, but use the
-    #    example's wording where it asks about the same thing.
+    #    example's wording where it asks about the same thing AND fits this
+    #    prompt at least as well as our own wording.
     if neighbor and similarity >= BLEND_THRESHOLD and questions:
         borrowed = _precedent_questions_by_gap(neighbor)
+        if prompt_embedding is None:
+            prompt_embedding = _generate_embedding(submission_text)
         used = 0
         for q in questions:
-            if q["gap_type"] in borrowed:
-                q["question"] = borrowed[q["gap_type"]]
+            wording = borrowed.get(q["gap_type"])
+            if wording and _fits_prompt_better(prompt_embedding, q["question"], wording):
+                q["question"] = wording
                 used += 1
         trace.append(
             f"Closest trusted precedent ({similarity:.2f}) supplied wording for {used} of {len(questions)} question(s)."
         )
         return "blend", True, questions
 
-    # 4. No useful example: our own thinking only.
+    # 4. No useful example: our own thinking only. (A neighbor dropped in
+    #    step 0 has already explained itself in the trace.)
     if neighbor and similarity >= BLEND_THRESHOLD:
         trace.append(f"Nothing is missing, so the closest precedent ({similarity:.2f}) isn't needed.")
     elif neighbor:
@@ -212,7 +269,7 @@ def get_clarifying_questions(
     similarity = float(neighbor["similarity_score"]) if neighbor else 0.0
 
     # 3. Decide whether to ask, and what.
-    decision_path, needs_clarification, questions = _decide(submission_text, reasoning, neighbor, similarity)
+    decision_path, needs_clarification, questions = _decide(submission_text, reasoning, neighbor, similarity, embedding)
     questions = questions[:MAX_QUESTIONS]
     if not questions:
         needs_clarification = False

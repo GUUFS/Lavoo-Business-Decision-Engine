@@ -2,10 +2,17 @@
 The teacher job: the LLM checks the micromodel's work.
 
 Every 6 hours it picks the decisions the micromodel was least sure about
-(questions the user skipped, or prompts with no similar example). For each
-one it asks the LLM the same question, notes whether they agreed, and saves
-the LLM's answer as a new trusted example. Next time a similar prompt
-comes in, the micromodel copies the LLM's answer.
+(questions the user skipped, prompts with no similar example, or questions
+whose wording was borrowed from another example). For each one it asks the
+LLM the same question and saves the LLM's answer as a new trusted example.
+Next time a similar prompt comes in, the micromodel copies the LLM's answer.
+
+"Agreed" means BOTH:
+  - the same call on whether to ask questions at all, and
+  - when both ask, the same questions in meaning: every micromodel question
+    has an LLM question close to it (question_match >= QUESTION_MATCH_THRESHOLD,
+    measured with the local embedding model, no extra LLM call).
+So the micromodel asking the wrong question counts as a disagreement.
 
 clarity_stats shows how often they agree. That number going up means the
 micromodel is getting smarter.
@@ -23,6 +30,9 @@ from decision_engine.clarity_reasoner import classify_question
 logger = logging.getLogger(__name__)
 
 LOW_CONFIDENCE = 0.6
+# Two questions mean the same thing above this similarity. Measured on real
+# pairs: same meaning scored 0.50-0.72, different questions 0.09-0.28.
+QUESTION_MATCH_THRESHOLD = 0.45
 # How often api/main.py runs the job, and when the next run is due (set by
 # that job; shown on the admin page). None until the server's job has started.
 RUN_EVERY_SECONDS = 6 * 60 * 60
@@ -35,7 +45,8 @@ def _candidates(db: Session, limit: int) -> list[dict]:
     """Pick up to `limit` live micromodel decisions for the LLM to re-check:
     unchecked, at least MIN_AGE_MINUTES old, and weak (the user skipped the
     questions, no similar trusted example was found, or confidence was
-    below LOW_CONFIDENCE). Duplicate prompts are dropped so each is checked once."""
+    below LOW_CONFIDENCE), or blended (question wording borrowed from another
+    example). Duplicate prompts are dropped so each is checked once."""
     # 1. Unchecked live decisions that are old enough and look weak.
     #    Order: skipped questions first, then no similar example, then least sure.
     rows = db.execute(text(f"""
@@ -44,9 +55,10 @@ def _candidates(db: Session, limit: int) -> list[dict]:
         WHERE source = 'live'
           AND teacher_reviewed_at IS NULL
           AND created_at < now() - interval '{MIN_AGE_MINUTES} minutes'
-          AND (outcome = 'skipped' OR decision_path = 'reasoner' OR confidence < :low)
+          AND (outcome = 'skipped' OR decision_path IN ('reasoner', 'blend') OR confidence < :low)
         ORDER BY
-          CASE WHEN outcome = 'skipped' THEN 0 WHEN decision_path = 'reasoner' THEN 1 ELSE 2 END,
+          CASE WHEN outcome = 'skipped' THEN 0 WHEN decision_path = 'blend' THEN 1
+               WHEN decision_path = 'reasoner' THEN 2 ELSE 3 END,
           confidence ASC NULLS FIRST,
           created_at DESC
         LIMIT :limit
@@ -104,6 +116,24 @@ async def run_teacher_batch(db: Session, limit: int = 20, trigger: str = "schedu
     return {"run_id": run.id, **counts, **({"error": run.error} if run.error else {})}
 
 
+def _question_texts(questions) -> list[str]:
+    """The question strings from a stored or LLM question list."""
+    return [q.get("question") for q in (questions or []) if isinstance(q, dict) and q.get("question")]
+
+
+def question_match(micromodel_questions: list[str], llm_questions: list[str]) -> float | None:
+    """How well the micromodel's questions match the LLM's, 0 to 1: for each
+    micromodel question, the similarity of the closest LLM question, and the
+    LOWEST of those (one off-topic question is enough to disagree). None if
+    either side asked nothing."""
+    if not micromodel_questions or not llm_questions:
+        return None
+    from decision_engine.clarity_engine import _cosine, _generate_embedding
+    llm_vectors = [_generate_embedding(q) for q in llm_questions]
+    best = [max(_cosine(_generate_embedding(q), v) for v in llm_vectors) for q in micromodel_questions]
+    return round(min(best), 3)
+
+
 def _log_call(db: Session, run_id: int, c: dict, **fields) -> None:
     """Add one clarity_teacher_calls row for a checked decision: the prompt,
     what the micromodel decided, and (via **fields) the LLM's answer,
@@ -113,6 +143,7 @@ def _log_call(db: Session, run_id: int, c: dict, **fields) -> None:
         corpus_id=c["id"],
         submission_text=c["submission_text"][:4000],
         micromodel_asked=bool(c["needs_clarification"]),
+        micromodel_questions=_question_texts(c.get("questions")),
         micromodel_confidence=c.get("confidence"),
         decision_path=c.get("decision_path"),
         **fields,
@@ -159,7 +190,12 @@ async def _review_candidates(db: Session, limit: int, run_id: int, counts: dict)
                     continue
 
             # 3. Did the micromodel make the same call (ask / don't ask)?
-            agreed = bool(verdict["needs_clarification"]) == bool(c["needs_clarification"])
+            #    And when both ask, did it ask the same things?
+            same_call = bool(verdict["needs_clarification"]) == bool(c["needs_clarification"])
+            match = None
+            if same_call and c["needs_clarification"]:
+                match = question_match(_question_texts(c.get("questions")), _question_texts(verdict.get("questions")))
+            agreed = same_call and (match is None or match >= QUESTION_MATCH_THRESHOLD)
 
             # 4. Save the LLM's answer as a new trusted example the
             #    micromodel can copy next time.
@@ -193,6 +229,7 @@ async def _review_candidates(db: Session, limit: int, run_id: int, counts: dict)
                 db, run_id, c,
                 called_llm=called_llm,
                 llm_asked=bool(verdict["needs_clarification"]),
+                question_match=match,
                 llm_questions=[q.get("question") for q in (verdict.get("questions") or []) if q.get("question")],
                 agreed=agreed,
                 duration_ms=int((time.monotonic() - started) * 1000),
@@ -202,7 +239,7 @@ async def _review_candidates(db: Session, limit: int, run_id: int, counts: dict)
             counts["agreed"] += int(agreed)
             logger.info(
                 f"[clarity-teacher] {prompt[:60]!r} micromodel_asked={c['needs_clarification']} "
-                f"llm_asked={verdict['needs_clarification']} agreed={agreed}"
+                f"llm_asked={verdict['needs_clarification']} question_match={match} agreed={agreed}"
             )
         except Exception as e:
             db.rollback()
@@ -247,6 +284,7 @@ def teacher_activity(db: Session, runs: int = 20, calls: int = 50) -> dict:
                 "id": c.id, "run_id": c.run_id, "created_at": iso(c.created_at),
                 "submission_text": c.submission_text[:300], "called_llm": c.called_llm,
                 "micromodel_asked": c.micromodel_asked, "micromodel_confidence": c.micromodel_confidence,
+                "micromodel_questions": c.micromodel_questions or [], "question_match": c.question_match,
                 "decision_path": c.decision_path, "llm_asked": c.llm_asked, "llm_questions": c.llm_questions or [],
                 "agreed": c.agreed, "duration_ms": c.duration_ms, "error": c.error,
             }

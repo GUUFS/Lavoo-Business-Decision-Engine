@@ -1093,6 +1093,17 @@ async def get_flutterwave_split_info(
 
     user_id = extract_user_id(current_user)
     split_config = get_split_config_for_referred_user(user_id, db)
+    # get_split_config_for_referred_user may have just created the referrer's
+    # missing Flutterwave subaccount (self-heal) and only flushed it. Save it
+    # now: without this commit the new subaccount id was thrown away when the
+    # request ended, so every checkout tried to create it again, Flutterwave
+    # refused the duplicate, and the id had to be looked up again (2 extra
+    # Flutterwave calls per checkout).
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[FLW split-info] could not save self-healed subaccount: %s", e)
     if not split_config:
         return {"status": "success", "data": {"subaccount_id": None, "main_account_charge_percentage": None}}
     return {"status": "success", "data": split_config}

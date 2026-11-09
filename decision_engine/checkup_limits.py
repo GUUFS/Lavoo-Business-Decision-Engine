@@ -5,8 +5,9 @@ Weekly checkup limits for the Decision Engine.
   - Premium: 2 checkups per week
 
 The limit is the same on every billing period (monthly, quarterly, yearly).
-A "week" is the last 7 days (rolling), so a checkup comes back exactly 7
-days after it was started. Admins have no limit.
+A "week" is a calendar week, Monday 00:00 to Sunday 23:59 UTC: every
+user's checkups reset together at midnight UTC on Monday (01:00 in Lagos,
+00:00 in London in winter). Admins have no limit.
 
 Every checkup that starts is recorded in checkup_usage (CheckupUsage):
   1. reserve_checkup()   - before the analysis runs: refuses with HTTP 429
@@ -28,7 +29,6 @@ from sqlalchemy.orm import Session
 from database.pg_models import CheckupUsage, Subscriptions, User
 
 CHECKUPS_PER_WEEK = {"pro": 1, "premium": 2}
-WINDOW = timedelta(days=7)
 # Payment statuses that mean "this subscription payment went through"
 # (Stripe and Flutterwave each use their own words).
 PAID_STATUSES = ("completed", "active", "paid", "successful", "succeeded")
@@ -60,12 +60,19 @@ def user_plan_tier(db: Session, user: User) -> str:
     return tier if tier in CHECKUPS_PER_WEEK else "pro"
 
 
+def week_start(now: datetime) -> datetime:
+    """Monday 00:00 UTC of the week `now` falls in."""
+    now = now.astimezone(UTC)
+    monday = now - timedelta(days=now.weekday())
+    return monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> dict:
     """How many checkups the user has left this week.
 
     Returns {tier, limit, used, remaining, next_available_at, unlimited}.
-    next_available_at is when the next checkup frees up (ISO time), or None
-    if they have one available now. Admins get unlimited=True."""
+    next_available_at is when the week resets (next Monday 00:00 UTC, ISO
+    time) if they have none left, otherwise None. Admins get unlimited=True."""
     now = now or datetime.now(UTC)
     if getattr(user, "is_admin", False):
         return {"tier": "admin", "limit": None, "used": 0, "remaining": None,
@@ -73,22 +80,20 @@ def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> d
 
     tier = user_plan_tier(db, user)
     limit = CHECKUPS_PER_WEEK[tier]
-    # Checkups started in the last 7 days, oldest first.
-    recent = [
-        row[0] for row in
-        db.query(CheckupUsage.created_at)
+    # Checkups started since Monday 00:00 UTC this week.
+    start = week_start(now)
+    used = (
+        db.query(CheckupUsage)
         .filter(
             CheckupUsage.user_id == user.id,
-            CheckupUsage.created_at > now - WINDOW,
+            CheckupUsage.created_at >= start,
             CheckupUsage.status.in_(COUNTED_STATUSES),
         )
-        .order_by(CheckupUsage.created_at.asc())
-        .all()
-    ]
-    used = len(recent)
+        .count()
+    )
     remaining = max(0, limit - used)
-    # When full, the oldest checkup in the window is the next to free up.
-    next_available = (recent[used - limit] + WINDOW) if remaining == 0 and used else None
+    # When none are left, they all come back at the start of next week.
+    next_available = start + timedelta(days=7) if remaining == 0 else None
     return {
         "tier": tier, "limit": limit, "used": used, "remaining": remaining,
         "next_available_at": next_available.isoformat() if next_available else None,
@@ -104,9 +109,10 @@ def _limit_message(allowance: dict) -> str:
     when = ""
     if allowance["next_available_at"]:
         when_dt = datetime.fromisoformat(allowance["next_available_at"])
-        when = f" Your next checkup is available on {when_dt.strftime('%a %d %b at %H:%M')} UTC."
+        when = f" Your checkups reset on {when_dt.strftime('%a %d %b at %H:%M')} UTC."
     upgrade = " Upgrade to Premium for 2 checkups a week." if allowance["tier"] == "pro" else ""
-    return f"{plan} includes {count} {plural} a week, and you've used yours.{when}{upgrade}"
+    return (f"{plan} includes {count} {plural} a week (Monday to Sunday), and you've used "
+            f"{'it' if count == 1 else 'them'}.{when}{upgrade}")
 
 
 def reserve_checkup(db: Session, user: User) -> CheckupUsage:

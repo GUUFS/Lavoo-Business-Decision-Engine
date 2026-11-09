@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, desc
 from database.pg_connections import get_db, SessionLocal
 from database.pg_models import (
-    User, Insight, Alert, BusinessAnalysis, Subscriptions,
+    User, Insight, Alert, BusinessAnalysis, Subscriptions, Trend,
     InsightCreate, AlertCreate
 )
 from api.routes.dependencies import admin_required
