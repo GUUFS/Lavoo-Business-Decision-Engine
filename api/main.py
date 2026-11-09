@@ -12,7 +12,7 @@ except (ImportError, RuntimeError):
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # Third-party imports
 from dotenv import load_dotenv
@@ -438,12 +438,19 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
                     # here rather than left as a separate task since a split
                     # renewal charge with no matching Commission row would
                     # itself be a correctness gap in the earnings history.
+                    # The payment is already committed above. The commission
+                    # (and any payout it sent, and the subscriber's chops) is
+                    # saved by its own commit here: without it, leaving the
+                    # `with SessionLocal()` block rolled it all back, while a
+                    # transfer to the referrer had already really been sent.
                     try:
                         from subscriptions.commission_service import CommissionService
                         CommissionService.calculate_commission(
                             subscription=new_sub, db=db, already_settled=bool(split_config)
                         )
+                        db.commit()
                     except Exception as comm_exc:
+                        db.rollback()
                         logger.error("[flw-renewal] commission calc failed for user %s: %s", user_id, comm_exc, exc_info=True)
 
                     logger.info("[flw-renewal] ✅ renewed user %s plan=%s tx=%s split=%s", user_id, plan, tx_ref, bool(split_config))

@@ -3,7 +3,8 @@ Tests for the weekly Decision Engine checkup limits
 (decision_engine/checkup_limits.py and the analyze routes in
 api/routes/decision_engine/analyzer.py).
 
-  - Pro: 1 checkup per 7 days. Premium: 2. Same on monthly, quarterly and yearly.
+  - Pro: 1 checkup per calendar week (Mon 00:00 to Sun 23:59 UTC). Premium: 2.
+    Same on monthly, quarterly and yearly.
   - A failed or cancelled checkup is given back; deleting an analysis is not.
   - Admins have no limit.
 
@@ -51,12 +52,6 @@ def make_subscriber(db, tier="pro", period="monthly", is_admin=False):
     return user
 
 
-def used_checkup(db, user, days_ago):
-    """Record a checkup the user started `days_ago` days ago."""
-    db.add(CheckupUsage(user_id=user.id, created_at=datetime.now(UTC) - timedelta(days=days_ago)))
-    db.commit()
-
-
 # ── The limits themselves ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize("period", ["monthly", "quarterly", "yearly"])
@@ -82,24 +77,42 @@ def test_premium_gets_two_checkups_a_week_on_every_billing_period(db, period):
     assert "Premium includes 2 checkups a week" in refused.value.detail["message"]
 
 
-def test_week_is_rolling_seven_days(db):
+def used_checkup_at(db, user, when):
+    """Record a checkup the user started at `when`."""
+    db.add(CheckupUsage(user_id=user.id, created_at=when))
+    db.commit()
+
+
+# Wednesday 11 Nov 2026, 15:00 UTC; that week runs Mon 9 Nov 00:00 to Sun 15 Nov.
+WEDNESDAY = datetime(2026, 11, 11, 15, 0, tzinfo=UTC)
+NEXT_MONDAY = datetime(2026, 11, 16, 0, 0, tzinfo=UTC)
+
+
+def test_week_is_monday_to_sunday(db):
     user = make_subscriber(db, "pro")
-    used_checkup(db, user, days_ago=8)            # outside the week: doesn't count
-    assert checkup_allowance(db, user)["remaining"] == 1
-    used_checkup(db, user, days_ago=2)            # inside the week
-    allowance = checkup_allowance(db, user)
+    used_checkup_at(db, user, datetime(2026, 11, 8, 23, 59, tzinfo=UTC))   # Sunday last week
+    assert checkup_allowance(db, user, now=WEDNESDAY)["remaining"] == 1
+    used_checkup_at(db, user, datetime(2026, 11, 9, 0, 0, tzinfo=UTC))     # Monday 00:00 this week
+    allowance = checkup_allowance(db, user, now=WEDNESDAY)
     assert allowance["remaining"] == 0
-    # Frees up 7 days after it was used, i.e. in 5 days.
-    next_at = datetime.fromisoformat(allowance["next_available_at"])
-    assert timedelta(days=4, hours=23) < next_at - datetime.now(UTC) < timedelta(days=5, hours=1)
+    assert datetime.fromisoformat(allowance["next_available_at"]) == NEXT_MONDAY
 
 
-def test_premium_next_checkup_is_when_the_oldest_frees_up(db):
+def test_checkups_reset_at_monday_midnight_utc(db):
+    user = make_subscriber(db, "pro")
+    used_checkup_at(db, user, datetime(2026, 11, 15, 22, 0, tzinfo=UTC))   # Sunday night
+    assert checkup_allowance(db, user, now=datetime(2026, 11, 15, 23, 59, tzinfo=UTC))["remaining"] == 0
+    assert checkup_allowance(db, user, now=NEXT_MONDAY)["remaining"] == 1   # reset
+
+
+def test_premium_two_checkups_reset_together_on_monday(db):
     user = make_subscriber(db, "premium")
-    used_checkup(db, user, days_ago=6)
-    used_checkup(db, user, days_ago=1)
-    next_at = datetime.fromisoformat(checkup_allowance(db, user)["next_available_at"])
-    assert timedelta(hours=23) < next_at - datetime.now(UTC) < timedelta(days=1, hours=1)
+    used_checkup_at(db, user, datetime(2026, 11, 9, 8, 0, tzinfo=UTC))
+    used_checkup_at(db, user, datetime(2026, 11, 10, 8, 0, tzinfo=UTC))
+    allowance = checkup_allowance(db, user, now=WEDNESDAY)
+    assert (allowance["used"], allowance["remaining"]) == (2, 0)
+    assert datetime.fromisoformat(allowance["next_available_at"]) == NEXT_MONDAY
+    assert checkup_allowance(db, user, now=NEXT_MONDAY)["remaining"] == 2
 
 
 def test_released_checkup_is_given_back(db):

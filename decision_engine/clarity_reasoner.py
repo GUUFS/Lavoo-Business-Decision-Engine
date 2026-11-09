@@ -47,6 +47,25 @@ _INDUSTRY_WORDS = {
     "edtech", "proptech", "insurance", "lending", "microfinance", "b2b",
     "d2c", "dtc", "subscription box", "dropshipping", "wholesale", "retail",
 }
+# Creators and personal brands: saying "I'm a content creator" says what
+# they do, even though nothing is "sold". Their questions are about
+# platforms, audience and focus, not stock, orders or customers.
+_CREATOR_RE = re.compile(
+    r"\b(?:content creators?|creators?|influencers?|youtubers?|bloggers?|vloggers?|podcasters?|streamers?|"
+    r"tiktokers?|instagrammers?|ugc|personal brand|public speaker|thought leader)\b"
+    r"|\b(?:i|we)\s+(?:create|make|post|produce|share|publish|film|record)\s+(?:\w+\s){0,2}?"
+    r"(?:content|videos?|posts?|reels?|shorts|episodes?|podcasts?|blogs?|articles?|newsletters?)\b"
+    r"|\b(?:i|we)\s+(?:post|make videos|talk|share)\s+(?:on\s+\w+\s+)?about\b",
+    re.I,
+)
+# Prompts that cover many topics at once ("content across various aspects
+# of life"): the first thing to pin down is the focus.
+_BROAD_SCOPE_RE = re.compile(
+    r"\b(?:various|many|different|several|all)\s+(?:aspects?|areas?|topics?|niches?|things|parts)\b"
+    r"|\baspects? of life\b|\beverything\b|\ball sorts of\b|\bwide range of\b|\bmany things\b",
+    re.I,
+)
+
 _GENERIC_BUSINESS_WORDS = {"business", "businesses", "company", "startup", "side hustle", "venture", "brand new business"}
 
 _CHANNEL_WORDS = {
@@ -110,12 +129,22 @@ _COMPARE_RE = re.compile(r"\b(?:vs\.?|versus)\b|\bor\b", re.I)
 _BINARY_DECISION_RE = re.compile(r"\b(?:should (?:i|we)|is it (?:worth|time)|do i need to)\b", re.I)
 
 _PROBLEM_TYPES = [
+    # Wanting to influence or help people (a goal about impact, not money).
+    ("impact", re.compile(
+        r"\b(?:influence|impact|affect|inspire|motivate|empower|uplift|transform|change|help|educate|reach)\s+"
+        r"(?:\w+\s)?(?:people|others|lives|my audience|my followers|young people|the world|society|women|men|youths?)\b"
+        r"|\b(?:people|others|lives|audience|followers)\s+positively\b"
+        r"|\bpositive(?:ly)?\s+(?:impact|influence|change|effect|difference)\b"
+        r"|\bmake (?:a|an) (?:difference|impact)\b|\bchange lives\b",
+        re.I)),
     ("start", re.compile(r"\b(?:start(?:ing)? a (?:new )?(?:business|company|startup)|want to start|business idea|launch(?:ing)? (?:a|my) (?:first|new)|which business (?:to|should))\b", re.I)),
     ("decline", re.compile(r"\b(?:dropp?(?:ed|ing)|declin\w*|fell|falling|down by|went down|reduced|reducing|slow(?:ed|ing)? down|dead|dried up|losing (?:customers|sales|money)|going down|sales are down|revenue is down|stopped buying)\b", re.I)),
     ("conversion", re.compile(r"\b(?:convert\w*|conversion|nobody buys|no one buys|not buying|visit\w* but|traffic but|views but|abandon\w*|checkout)\b", re.I)),
     ("retention", re.compile(r"\b(?:churn\w*|come back|coming back|repeat|retention|retain|one-time|once and never|cancel\w*)\b", re.I)),
     ("acquisition", re.compile(r"\b(?:more (?:customers|clients|leads|sales|users|members|followers|traffic)|get (?:customers|clients|leads)|find (?:customers|clients)|grow\w*|scale|scaling|reach more|visibility|awareness|go viral|engagement|ads? (?:aren't|are not|not) working)\b", re.I)),
-    ("pricing", re.compile(r"\b(?:pric(?:e|es|ing)|charge|expensive|too high|too cheap|discount\w*|margin\w*)\b", re.I)),
+    ("pricing", re.compile(
+        r"\b(?:pric(?:e|es|ing)|charge|expensive|too high|too cheap|discount\w*|margin\w*|rate card|brand deals?|sponsorships?)\b"
+        r"|\b(?:brands?|sponsors?|clients?)\s+(?:aren't|are not|don't|do not|won't|will not)\s+pay", re.I)),
     ("operations", re.compile(r"\b(?:overwhelm\w*|busy|time|delegate|hire|hiring|team|staff|process|system|cash ?flow|expenses|costs?|admin)\b", re.I)),
 ]
 
@@ -173,10 +202,22 @@ def extract_facts(text: str) -> dict:
         tried = [m.group(0).strip() for m in _TRIED_RE.finditer(text) if _TRIED_STRONG.search(m.group(0)) or "spent" in m.group(0).lower()]
 
     # 6. What kind of problem it is (sales drop, getting customers, pricing...).
+    #    A concrete business problem (a drop, conversion...) outranks the
+    #    impact goal, so "views dropped" is a decline, not an impact question.
     problem_types = [name for name, rx in _PROBLEM_TYPES if rx.search(text)]
+    if "impact" in problem_types and len(problem_types) > 1:
+        problem_types.remove("impact")
+        problem_types.append("impact")
 
-    # 7. Put it all together, plus what kind of decision it is (if any).
+    # 7. Creator or business? And does it cover many topics at once?
+    creator = [m.group(0).strip() for m in _CREATOR_RE.finditer(text)]
+    broad_scope = bool(_BROAD_SCOPE_RE.search(text))
+
+    # 8. Put it all together, plus what kind of decision it is (if any).
     return {
+        "domain": "creator" if creator else "business",
+        "creator": creator,
+        "broad_scope": broad_scope,
         "industry": industry,
         "generic_business": generic,
         "channels": channels,
@@ -256,11 +297,14 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
     gaps: list[dict] = []
     fuzz = 0  # number of judgement calls made on weak evidence
 
-    business_named = bool(facts["industry"] or facts["sells"])
+    business_named = bool(facts["industry"] or facts["sells"] or facts["creator"])
     history_business = (history or {}).get("business")
+    is_creator = facts["domain"] == "creator"
 
     # 2. Do we know what the business is? From the prompt, or from earlier checkups.
-    if business_named:
+    if is_creator:
+        trace.append(f"They're a creator ('{facts['creator'][0]}'), so ask about platforms, audience and focus, not stock or orders.")
+    elif business_named:
         what = ", ".join((facts["sells"] or facts["industry"])[:2])
         trace.append(f"The prompt says what the business is: {what}.")
     elif history_business:
@@ -305,7 +349,13 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
     elif decision["kind"] == "binary":
         trace.append("It's a yes/no decision, so the option itself is known.")
 
-    # 7. Ask for whatever basics are still missing.
+    # 7. Covering many topics at once: the focus comes first, because the
+    #    advice for "parenting" and "money" content is completely different.
+    if facts["broad_scope"] and (is_creator or problem == "impact"):
+        trace.append("It covers many topics at once, so ask which one or two to focus on and who it's for.")
+        gaps.append({"type": "missing_focus", "why": "many topics, no main focus or audience"})
+
+    # 8. Ask for whatever basics are still missing.
     if not business_named:
         gaps.append({"type": "missing_business_type", "why": "doesn't say what is sold"})
     if not has_evidence:
@@ -313,13 +363,13 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
         if facts["counts"] == [] and re.search(r"\d", text):
             fuzz += 1  # a number is present but couldn't be read as a metric
 
-    # 8. For a drop in sales, knowing when it started changes the answer
+    # 9. For a drop in sales, knowing when it started changes the answer
     #    (a slow season, a new competitor, a price change).
     if problem == "decline" and not facts["durations"] and len(gaps) < 3:
         trace.append("It's a decline with no timing, and when it started changes the diagnosis.")
         gaps.append({"type": "missing_timeline", "why": "decline without a start date"})
 
-    # 9. Nothing missing: no questions needed.
+    # 10. Nothing missing: no questions needed.
     if not gaps:
         trace.append("Business and hard evidence are both present, so no questions are needed.")
 
@@ -347,10 +397,32 @@ _NUMBERS_BY_PROBLEM = {
 }
 
 
+def _creator_numbers_question(channel: Optional[str], problem: str) -> str:
+    """The "numbers" question for a creator: platform and audience size,
+    plus what success looks like for their kind of goal."""
+    audience = (f"Roughly how many people follow or watch you on {_display_channel(channel)}"
+                if channel else "Where do you post and roughly how many people follow or watch you")
+    if problem == "impact":
+        return (f"{audience}? And what would positive influence look like in your audience "
+                "(comments, messages, people acting on what you share)?")
+    if problem == "decline":
+        return f"{audience} now, compared with before the drop? And did anything change around then?"
+    if problem == "pricing":
+        return f"{audience}? And what do brands pay you per post now, compared with creators your size?"
+    return f"{audience}? And what have you already tried to grow it?"
+
+
 def write_question(gap_type: str, facts: dict, problem: str) -> str:
+    """Writes the question for one missing piece of information, using the
+    details the prompt already gave (platform, product, creator or business)."""
     # Details from the prompt that we can use in the wording.
     channel = facts["channels"][0] if facts["channels"] else None
     what = (facts["sells"] or facts["industry"] or [None])[0]
+    is_creator = facts.get("domain") == "creator"
+
+    # Focus: which topics, and for whom (creators covering many topics).
+    if gap_type == "missing_focus":
+        return "Which one or two topics do you most want to be known for, and who is the person you most want your content to help?"
 
     # What the business is: mention the platform or word they used, if any.
     if gap_type == "missing_business_type":
@@ -361,6 +433,11 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
         return "What does your business sell or do, and how do customers usually reach you (in person, online, a marketplace)?"
     # Numbers: ask for the number that matters for this kind of problem.
     if gap_type == "missing_numbers_or_constraint":
+        if is_creator:
+            return _creator_numbers_question(channel, problem)
+        if problem == "impact":
+            return ("Who do you most want to reach, how do you share your work with them today, "
+                    "and roughly how many people see it?")
         q = _NUMBERS_BY_PROBLEM.get(problem)
         if q:
             return q
@@ -398,6 +475,8 @@ def classify_question(question: str) -> str:
     written by the LLM can be reused for the same gap."""
     q = question.lower()
     # Check the most specific kinds first. Anything else is a "numbers" question.
+    if re.search(r"\b(which (?:one or two |one |two )?topics?|known for|your niche|main focus|focus on one|who is the person)\b", q):
+        return "missing_focus"
     if re.search(r"\b(options?|choosing between|ideas? (?:are|you're)|on the table)\b", q):
         return "unnamed_options"
     if re.search(r"\b(thinking of starting|want to start|budget, skills)\b", q):

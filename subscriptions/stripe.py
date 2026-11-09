@@ -1440,7 +1440,11 @@ async def stripe_webhook(
             new_sub = Subscriptions(
                 user_id=user.id, subscription_plan=plan_type,
                 transaction_id=payment_intent_id,
-                tx_ref=f"{'STRIPE-INITIAL' if is_initial_payment else 'RENEW'}-{user.id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}",
+                # Built from this payment's own Stripe id, so it's unique
+                # per payment. (It used to be user id + the time to the
+                # second, so two invoices for one user in the same second
+                # collided on the unique tx_ref and the second was lost.)
+                tx_ref=f"{'STRIPE-INITIAL' if is_initial_payment else 'RENEW'}-{user.id}-{payment_intent_id}",
                 amount=Decimal(str(amount_paid / 100)),
                 currency=currency.upper(),
                 status="completed", subscription_status="active",
@@ -1729,8 +1733,14 @@ async def stripe_webhook(
         event_type = event.type if 'event' in locals() else 'unknown'
         logger.error(f"❌ Webhook error [{event_type}]: {str(e)}")
         traceback.print_exc()
-        # Return 200 so Stripe does not keep retrying unhandled/unknown events.
-        # Only signature failures warrant a 400.
+        db.rollback()
+        # A payment that failed to record must be retried: answering 200
+        # tells Stripe it was handled, and the customer's payment would be
+        # lost for good. Retries are safe (the payment's id is checked
+        # before recording). Other event types still answer 200 so Stripe
+        # doesn't keep retrying events we don't act on.
+        if event_type == "invoice.payment_succeeded":
+            raise HTTPException(status_code=500, detail="Payment could not be recorded; Stripe will retry.")
         return {"status": "error", "detail": str(e)}
 
 

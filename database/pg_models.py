@@ -281,8 +281,8 @@ class ClarityTeacherRun(Base):
 
 
 class ClarityTeacherCall(Base):
-    """One decision the teacher checked: what the micromodel said, what the
-    LLM said, and whether they agreed. called_llm is False when an earlier
+    """One decision the teacher checked: what the micromodel said (and asked),
+    what the LLM said (and asked), and whether they agreed. called_llm is False when an earlier
     LLM answer for the exact same prompt was reused (no new LLM call)."""
     __tablename__ = "clarity_teacher_calls"
 
@@ -293,10 +293,14 @@ class ClarityTeacherCall(Base):
     submission_text = Column(Text, nullable=False)
     called_llm = Column(Boolean, nullable=False, default=True)
     micromodel_asked = Column(Boolean, nullable=True)
+    micromodel_questions = Column(JSON, nullable=True)
     micromodel_confidence = Column(Float, nullable=True)
     decision_path = Column(String(20), nullable=True)
     llm_asked = Column(Boolean, nullable=True)
     llm_questions = Column(JSON, nullable=True)
+    # How closely the micromodel's questions match the LLM's in meaning
+    # (0-1, clarity_teacher.question_match); None if either asked nothing.
+    question_match = Column(Float, nullable=True)
     agreed = Column(Boolean, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     error = Column(Text, nullable=True)
