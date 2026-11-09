@@ -564,7 +564,7 @@ def _validate_followup_data(
 
     output_handles = re.findall(r"@([a-zA-Z0-9_]+)", reply)
     if output_handles:
-        allowed_handles = [h.lower() for h in re.findall(r"@([a-zA-Z0-9_]+)", conversation_str or "")]
+        allowed_handles = [h.lower() for h in re.findall(r"@([a-zA-Z0-9_]+)", f"{post_title} {post_content} {conversation_str}")]
         for h in output_handles:
             if h.lower() not in allowed_handles:
                 return False, f"Handle guard triggered: '@{h}' was not in conversation history", None
@@ -1191,25 +1191,49 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
             logger.info(f"[voo-followup] No Voo Angle found for discussion {discussion_id}; skipping follow-up.")
             return
 
-        # Caps check
-        now = datetime.now(timezone.utc)
-        user_24h_count = db.query(VooFollowupLog).filter(
+        replier_user = db.query(User).filter_by(id=replier_user_id).first()
+        if not replier_user:
+            return
+
+        # Sync user subscription to ensure latest status
+        try:
+            from api.utils.sub_utils import sync_user_subscription
+            sync_user_subscription(db, replier_user)
+        except Exception as se:
+            logger.warning(f"[voo-followup] Failed to sync subscription for user {replier_user_id}: {se}")
+
+        sub_status = (getattr(replier_user, "subscription_status", "") or "").strip().lower()
+        sub_plan = (getattr(replier_user, "subscription_plan", "") or "").strip().lower()
+        is_admin = bool(getattr(replier_user, "is_admin", False))
+        is_staff = bool(getattr(replier_user, "is_staff", False))
+
+        is_paid = (
+            is_admin or
+            is_staff or
+            sub_status in ("active", "trialing", "pro", "premium", "lifetime", "paid") or
+            (sub_plan and sub_plan not in ("free", "none", ""))
+        )
+
+        if not is_paid:
+            logger.info(f"[voo-followup] Skipping follow-up for user {replier_user_id}: not an active paid or admin account (status='{sub_status}', plan='{sub_plan}')")
+            return
+
+        # Caps check: hard cap of 3 follow-up responses per user per thread; 15 total for thread
+        user_thread_count = db.query(VooFollowupLog).filter(
             VooFollowupLog.post_id == discussion_id,
-            VooFollowupLog.replier_user_id == replier_user_id,
-            VooFollowupLog.created_at >= now - timedelta(hours=24)
+            VooFollowupLog.replier_user_id == replier_user_id
         ).count()
 
         total_thread_count = db.query(VooFollowupLog).filter(
             VooFollowupLog.post_id == discussion_id
         ).count()
 
-        replier_user = db.query(User).filter_by(id=replier_user_id).first()
         replier_handle = (replier_user.username if replier_user and replier_user.username else (replier_user.name if replier_user and replier_user.name else "builder")).strip().lstrip("@")
 
-        if user_24h_count >= 5 or total_thread_count >= 20:
-            logger.info(f"[voo-followup] Cap reached for discussion {discussion_id} (user_24h={user_24h_count}, thread_total={total_thread_count})")
-            if user_24h_count == 5:
-                cap_msg = f"@{replier_handle} I have shared what I can in this thread for today. Pick it up again tomorrow, or post a new question if things have moved on."
+        if user_thread_count >= 3 or total_thread_count >= 15:
+            logger.info(f"[voo-followup] Cap reached for discussion {discussion_id} (user_thread_count={user_thread_count}, total_thread_count={total_thread_count})")
+            if user_thread_count == 3:
+                cap_msg = f"@{replier_handle} I have shared what I can in this thread for today. Take that test into the real world this week and share what happens in your next reflection!"
                 cap_reply = DiscussionReply(
                     discussion_id=discussion_id,
                     user_id=voo_user.id,
@@ -1218,18 +1242,43 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
                     tagged_user_ids=[replier_user_id]
                 )
                 db.add(cap_reply)
+                db.flush()
+
+                cap_log = VooFollowupLog(
+                    post_id=discussion_id,
+                    parent_message_id=trigger_reply_id,
+                    replier_user_id=replier_user_id,
+                    prompt_version=FOLLOWUP_PROMPT_VERSION,
+                    reply_type="cap_reached",
+                    changes_original=False,
+                    reply=cap_msg,
+                    reasoning="Thread per-user cap reached (3 replies)",
+                    model="static"
+                )
+                db.add(cap_log)
+                d.reply_count = (d.reply_count or 0) + 1
                 db.commit()
+                await delete_cached(f"community:public_post:{discussion_id}")
+                await delete_cached("community:discussions:*")
             return
 
         trigger_reply = db.query(DiscussionReply).filter_by(id=trigger_reply_id).first()
         if not trigger_reply:
             return
 
-        # Debounce join for rapid replies
+        # Debounce join for rapid replies: find replies by this user created after the last Voo reply
+        last_voo_reply = db.query(DiscussionReply).filter(
+            DiscussionReply.discussion_id == discussion_id,
+            DiscussionReply.user_id == voo_user.id
+        ).order_by(DiscussionReply.created_at.desc()).first()
+
+        debounce_cutoff = last_voo_reply.created_at if last_voo_reply else (trigger_reply.created_at - timedelta(seconds=60))
+
         recent_user_replies = db.query(DiscussionReply).filter(
             DiscussionReply.discussion_id == discussion_id,
             DiscussionReply.user_id == replier_user_id,
-            DiscussionReply.created_at >= trigger_reply.created_at - timedelta(seconds=60)
+            DiscussionReply.created_at >= debounce_cutoff,
+            DiscussionReply.created_at <= trigger_reply.created_at
         ).order_by(DiscussionReply.created_at.asc()).all()
 
         if recent_user_replies:
@@ -2722,7 +2771,7 @@ async def get_discussion(
     if author_is_paid and d.ai_takeaways is None and not is_q:
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
-    def _serialise_reply(r) -> dict:
+    def _serialise_reply_node(r) -> dict:
         is_bot = bool(
             (r.user and getattr(r.user, 'is_bot', False))
             or (r.user and getattr(r.user, 'role', '') == 'ai_bot')
@@ -2748,12 +2797,25 @@ async def get_discussion(
                 ) or bool(getattr(r.user, 'is_admin', False)),
             } if r.user else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
-            "sub_replies": [_serialise_reply(sr) for sr in (r.sub_replies or [])],
+            "sub_replies": [],
         }
 
-    # Only return top-level replies; sub_replies are nested inside each
-    top_level = [r for r in (d.replies or []) if r.parent_reply_id is None]
-    replies = [_serialise_reply(r) for r in top_level]
+    all_replies = (
+        db.query(DiscussionReply)
+        .options(joinedload(DiscussionReply.user))
+        .filter_by(discussion_id=discussion_id)
+        .order_by(DiscussionReply.created_at.asc())
+        .all()
+    )
+    reply_map = {r.id: _serialise_reply_node(r) for r in all_replies}
+    top_level = []
+    for r in all_replies:
+        item = reply_map[r.id]
+        if r.parent_reply_id and r.parent_reply_id in reply_map:
+            reply_map[r.parent_reply_id]["sub_replies"].append(item)
+        elif r.parent_reply_id is None:
+            top_level.append(item)
+    replies = top_level
 
     liked = {d.id} if (current_user and db.query(DiscussionLike.id).filter_by(user_id=current_user.id, discussion_id=d.id).first()) else set()
     saved = {d.id} if (current_user and db.query(SavedItem.id).filter_by(user_id=current_user.id, item_id=d.id).first()) else set()
@@ -2986,7 +3048,7 @@ async def get_public_discussion(
     author_ids = list(set([r.user_id for r in replies_raw] + [d.user_id]))
     authors = {u.id: u for u in db.query(User).filter(User.id.in_(author_ids)).all()} if author_ids else {}
     
-    replies_data = []
+    reply_map = {}
     for r in replies_raw:
         r_author = authors.get(r.user_id) or r.user
         is_bot = bool(
@@ -2996,27 +3058,43 @@ async def get_public_discussion(
             or (r_author and (getattr(r_author, 'name', '') or '').lower() in ('voo', 'voo angle', "voo's angle"))
         )
         author_name = "Voo's Angle" if is_bot else (r_author.name if r_author else "Member")
-        replies_data.append({
+        reply_map[r.id] = {
             "id": r.id,
             "user_id": r.user_id,
             "content": r.content,
             "like_count": r.like_count or 0,
             "chops_gifted": getattr(r, 'chops_gifted', 0) or 0,
             "created_at": r.created_at.isoformat() if r.created_at else None,
+            "parent_reply_id": r.parent_reply_id,
             "author": {
                 "id": r.user_id,
                 "name": author_name,
+                "username": getattr(r_author, 'username', '') if r_author else '',
                 "initials": (author_name or "M")[:2].upper(),
                 "role": getattr(r_author, 'role', '') if r_author else '',
                 "is_bot": is_bot,
-            }
-        })
-        
+                "is_paid": bool(
+                    (getattr(r_author, 'subscription_status', '') or '').strip().lower()
+                    in ("active", "trialing", "pro", "premium", "lifetime")
+                ) or bool(getattr(r_author, 'is_admin', False) if r_author else False),
+            },
+            "sub_replies": []
+        }
+
+    top_level = []
+    for r in replies_raw:
+        item = reply_map[r.id]
+        if r.parent_reply_id and r.parent_reply_id in reply_map:
+            reply_map[r.parent_reply_id]["sub_replies"].append(item)
+        elif r.parent_reply_id is None:
+            top_level.append(item)
+
     resp = {
         "success": True,
         "data": {
             **discussion_data,
-            "replies_list": replies_data
+            "replies": top_level,
+            "replies_list": list(reply_map.values())
         }
     }
     await set_cached(cache_key, resp, ttl_seconds=60)
