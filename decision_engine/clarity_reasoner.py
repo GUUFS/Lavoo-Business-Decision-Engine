@@ -63,8 +63,8 @@ _BUSINESS_AREAS = {
     "stock": "stock", "inventory": "stock", "delivery": "delivery", "website": "website",
 }
 _WHERE_TO_START_RE = re.compile(
-    r"where (?:do|should) (?:i|we) (?:start|begin)|what (?:do|should) (?:i|we) (?:fix|tackle|do) first"
-    r"|everything is (?:going wrong|a mess|falling apart)|nothing is working",
+    r"\bwhere (?:do|should) (?:i|we) (?:start|begin)\b|\bwhat (?:do|should) (?:i|we) (?:fix|tackle|do) first\b"
+    r"|\beverything is (?:going wrong|a mess|falling apart)\b|\bnothing is working\b",
     re.I,
 )
 # Creators and personal brands: saying "I'm a content creator" says what
@@ -95,6 +95,42 @@ _IDEA_RE = re.compile(
 )
 
 _GENERIC_BUSINESS_WORDS = {"business", "businesses", "company", "startup", "side hustle", "venture", "brand new business"}
+
+# Kinds of business that don't say what is sold or what it does: "my app",
+# "my store", "our agency". Named alone, we still ask what it is ("What does
+# your app do, and who is it for?"). "fitness app" or "perfume store" is fine.
+_VAGUE_KINDS = {
+    "app", "store", "shop", "brand", "marketplace", "software", "saas", "agency", "firm",
+    "studio", "ecommerce", "e-commerce", "shopify",
+}
+# How each vague kind reads in a question, and which question it gets.
+_VAGUE_KIND_LABEL = {"shopify": "Shopify store", "ecommerce": "online store", "e-commerce": "online store", "saas": "software"}
+_PRODUCT_KINDS = {"app", "software", "saas"}               # "What does your app do?"
+_SERVICE_KINDS = {"agency", "firm", "studio"}               # "What service does your agency offer?"
+
+# A creator saying what their content is about: "about personal finance",
+# "cooking videos". Words that never name a topic are skipped.
+_TOPIC_STOP = {
+    "it", "this", "that", "them", "my", "our", "the", "a", "an", "life", "lives", "people", "what", "how",
+    "things", "stuff", "everything", "anything", "of", "short", "long", "form", "video", "good", "great",
+    "more", "quality", "new", "any", "some", "create", "make", "post", "i", "we", "your", "social", "media",
+    "positive", "daily", "weekly", "original", "viral", "and", "to", "its", "own", "better", "is", "me",
+    "instagram", "tiktok", "youtube", "facebook", "twitter", "linkedin", "x", "online", "free", "useful",
+}
+_TOPIC_ABOUT_RE = re.compile(r"\b(?:about|covering|focused on|niche is|niche:)\s+([a-z][a-z'-]+)", re.I)
+_TOPIC_FORMAT_RE = re.compile(
+    r"\b([a-z][a-z'-]+)\s+(?:content|videos?|reels?|shorts|podcasts?|blogs?|vlogs?|tutorials?|channel|newsletters?|threads?)\b",
+    re.I,
+)
+# Industry words that are a format, not a topic ("podcast", "newsletter").
+_FORMAT_WORDS = {"newsletter", "podcast", "youtube channel", "media", "digital products", "course", "courses", "ebook"}
+
+# Choosing between business ideas: "I have 3 ideas", "which business idea".
+_IDEAS_RE = re.compile(
+    r"\b(?:\d+|two|three|four|five|a few|few|several|some|many|multiple|different|too many)\s+(?:business\s+|startup\s+)?ideas\b"
+    r"|\bwhich (?:business|idea|startup)\b|\bbusiness ideas\b",
+    re.I,
+)
 
 _CHANNEL_WORDS = {
     "online", "in-person", "in person", "physical", "instagram", "facebook",
@@ -150,7 +186,8 @@ _OPEN_DECISION_RE = re.compile(
     r"|\b(?:too many|several|many|different) (?:ideas|options|things|projects)\b"
     r"|\b(?:deciding|decide|can't decide|cannot decide|choose|choosing|pick between) (?:what|which|between)\b"
     r"|\bprioriti[sz]e\b(?! (?:between|[a-z]+,))"
-    r"|\bwhat (?:to|should i) focus on\b",
+    r"|\bwhat (?:to|should i) focus on\b"
+    r"|\bcan(?:'t|not| not) (?:choose|decide|pick)\b",
     re.I,
 )
 _COMPARE_RE = re.compile(r"\b(?:vs\.?|versus)\b|\bor\b", re.I)
@@ -220,7 +257,13 @@ def extract_facts(text: str) -> dict:
         s for s in sells
         if s.lower() not in _GENERIC_BUSINESS_WORDS and len(s) > 2
         and not re.match(r"(?:on|in|at|to|through|via|online|more|better|less|well|it|them|things|stuff)\b", s, re.I)
+        # "we built an app" says no more than "app": handled as a vague kind below.
+        and re.sub(r"^(?:a|an|the|my|our)\s+", "", s.lower()) not in _VAGUE_KINDS
     ]
+    # 2b. Kinds that don't say what is sold ("my app", "our store"): when
+    #     these are the only business words, we still ask what it is.
+    vague_kinds = [w for w in industry if w in _VAGUE_KINDS]
+    vague_only = bool(vague_kinds) and len(vague_kinds) == len(industry) and not sells
 
     # 3. Timeframes ("3 months", "last week", "by March").
     durations = [m.group(0).strip() for m in _DURATION_RE.finditer(text)]
@@ -256,7 +299,14 @@ def extract_facts(text: str) -> dict:
         if re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", lower) and area not in areas:
             areas.append(area)
     where_to_start = bool(_WHERE_TO_START_RE.search(text))
-    # 7c. A new business idea they name ("a laundry pickup service").
+    # 7c. What a creator's content is about ("about personal finance",
+    #     "cooking videos", or a topic word like "fitness").
+    topic_words = [m.group(1) for m in _TOPIC_ABOUT_RE.finditer(text)] + [m.group(1) for m in _TOPIC_FORMAT_RE.finditer(text)]
+    topics = [w for w in topic_words if w.lower() not in _TOPIC_STOP]
+    topics += [w for w in industry if w not in _FORMAT_WORDS and w not in _VAGUE_KINDS]
+    # 7d. Choosing between business ideas ("I have 3 ideas", "which business idea").
+    idea_choice = bool(_IDEAS_RE.search(text))
+    # 7e. A new business idea they name ("a laundry pickup service").
     idea_match = _IDEA_RE.search(text)
     idea = idea_match.group(1).strip() if idea_match else None
     if idea and idea.lower() in _GENERIC_BUSINESS_WORDS:
@@ -270,6 +320,10 @@ def extract_facts(text: str) -> dict:
         "areas": areas,
         "where_to_start": where_to_start,
         "idea": idea,
+        "idea_choice": idea_choice,
+        "content_topics": topics,
+        "vague_kinds": vague_kinds,
+        "vague_only": vague_only,
         "industry": industry,
         "generic_business": generic,
         "channels": channels,
@@ -321,6 +375,10 @@ def _named_options(text: str) -> list[str]:
     # 1. Take the part after "should I" / "between", where the options are.
     m = re.search(r"\b(?:should (?:i|we)|whether to|between|is it better to)\s+(.+?)(?:[?.!]|$)", text, re.I)
     segment = m.group(1) if m else text
+    # 1b. "I can't choose: meal kits, a fitness app, or a tutoring
+    #     marketplace": the options are the list after the colon.
+    if not m and ":" in text:
+        segment = text.rsplit(":", 1)[1]
 
     # 2. Split it on "vs", commas or "or".
     if re.search(r"\bvs\.?\b|\bversus\b", segment, re.I):
@@ -349,7 +407,11 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
     gaps: list[dict] = []
     fuzz = 0  # number of judgement calls made on weak evidence
 
-    business_named = bool(facts["industry"] or facts["sells"] or facts["creator"])
+    # A bare "my app" or "my store" doesn't say what is sold, so it doesn't count.
+    business_named = bool((facts["industry"] and not facts["vague_only"]) or facts["sells"] or facts["creator"])
+    # Named in THIS prompt (not from earlier checkups). Starting a new
+    # business is about the new idea, so the old business never answers it.
+    prompt_named = business_named
     history_business = (history or {}).get("business")
     is_creator = facts["domain"] == "creator"
 
@@ -359,6 +421,8 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
     elif business_named:
         what = ", ".join((facts["sells"] or facts["industry"])[:2])
         trace.append(f"The prompt says what the business is: {what}.")
+    elif facts["vague_only"]:
+        trace.append(f"It says '{facts['vague_kinds'][0]}' but not what it sells or does, so ask what it is.")
     elif history_business:
         trace.append(f"The prompt doesn't name the business, but earlier checkups say: {history_business}. Not asking again.")
         business_named = True
@@ -385,11 +449,34 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
     trace.append(f"Problem type: {problem}.")
     decision = facts["decision"]
 
-    # 5. Starting a new business: there's nothing to describe yet, so ask
-    #    about the idea and resources instead, and stop here.
-    if problem == "start" and not business_named:
-        trace.append("They're starting out, so ask about the idea and resources, not current numbers.")
-        gaps.append({"type": "missing_idea_context", "why": "no idea, budget or skills given for a new business"})
+    # 4b. Choosing between new business ideas ("I have 3 ideas and can't
+    #     choose: meal kits, a fitness app..."): there are no sales to ask
+    #     about yet. What settles it is what fits their skills, money and
+    #     time, and which idea people have already shown they'd pay for.
+    if facts["idea_choice"] and decision["kind"] in ("compare", "open"):
+        if decision["kind"] == "open":
+            trace.append("Choosing between business ideas without naming them: ask what they are first.")
+            gaps.append({"type": "unnamed_options", "why": "ideas to choose between, none named"})
+        else:
+            trace.append(f"Choosing between new business ideas ({', '.join(decision['options'][:3])}): "
+                         "ask about fit and demand, not current numbers.")
+        if not facts["money"]:
+            gaps.append({"type": "missing_idea_fit", "why": "no money, time or skills given to compare the ideas"})
+        # Proof of demand only makes sense once we know what the ideas are.
+        if not facts["tried"] and decision["kind"] == "compare":
+            gaps.append({"type": "missing_launch_plan", "why": "no sign yet that people will pay for any idea"})
+        if not gaps:
+            trace.append("The ideas, the money and what was tested are all given, so no questions are needed.")
+        return _finish(facts, gaps, trace, fuzz)
+
+    # 5. Starting a new business with no idea named in the prompt (earlier
+    #    checkups don't count: they're about the old business). Ask what
+    #    kind of business first, then the money and time they have.
+    if problem == "start" and not prompt_named:
+        trace.append("They're starting out with no business named, so ask what kind of business, then money and time.")
+        gaps.append({"type": "missing_idea_context", "why": "no idea named for a new business"})
+        if not facts["money"]:
+            gaps.append({"type": "missing_idea_fit", "why": "no money or time given for a new business"})
         return _finish(facts, gaps, trace, fuzz)
     # 5b. Starting a business they have named ("a laundry pickup service for
     #     students"): there are no sales yet, so ask for the budget, the
@@ -426,7 +513,19 @@ def reason(text: str, history: Optional[dict] = None) -> dict:
         # separate numbers question would repeat it.
         has_evidence = True
 
-    # 8. Ask for whatever basics are still missing.
+    # 7c. A creator who hasn't said what their content is about, asking
+    #     how to grow or make an impact: the topic and who it's for change
+    #     the whole answer, so ask that first.
+    focus_asked = any(g["type"] == "missing_focus" for g in gaps)
+    if is_creator and not focus_asked and not facts["content_topics"] and problem in ("impact", "acquisition", "general"):
+        trace.append("A creator who hasn't said what their content is about, so ask the kind of content and who it's for.")
+        gaps.append({"type": "missing_content_type", "why": "creator with no topic or format named"})
+
+    # 8. Ask for whatever basics are still missing. A bare "my app" with
+    #    real numbers and something already tried is enough to go on.
+    if facts["vague_only"] and has_evidence and not business_named:
+        trace.append("It only says what kind of business it is, but gives hard evidence, so that's enough to go on.")
+        business_named = True
     if not business_named:
         gaps.append({"type": "missing_business_type", "why": "doesn't say what is sold"})
     if not has_evidence:
@@ -506,8 +605,24 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
                     "and what is it costing you (lost sales, unpaid bills, hours)?")
         return "Which one or two topics do you most want to be known for, and who is the person you most want your content to help?"
 
+    # A creator's kind of content: topic, format and audience.
+    if gap_type == "missing_content_type":
+        return ("What kind of content do you make (the topic and the format, e.g. short cooking videos or "
+                "personal finance threads), and who is it for?")
+
     # What the business is: mention the platform or word they used, if any.
     if gap_type == "missing_business_type":
+        # "my app", "our agency": ask what it does, in its own words.
+        if facts.get("vague_only"):
+            kind = facts["vague_kinds"][0]
+            label = _VAGUE_KIND_LABEL.get(kind, kind)
+            if kind in _PRODUCT_KINDS:
+                return f"What does your {label} do, and who is it for?"
+            if kind in _SERVICE_KINDS:
+                return f"What service does your {label} offer, and who are your clients?"
+            if kind == "marketplace":
+                return "What does your marketplace connect: who sells on it, and who buys?"
+            return f"What does your {label} sell, and who usually buys it?"
         if channel:
             return f"What do you sell on {_display_channel(channel)}, and who usually buys it?"
         if facts["generic_business"]:
@@ -523,6 +638,10 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
         # A choice between named options (not about price): budget and starting point.
         if facts["decision"]["kind"] == "compare" and problem != "pricing":
             return _DECISION_NUMBERS
+        # People who stop using an app are users, not repeat buyers.
+        if problem == "retention" and any(k in _PRODUCT_KINDS for k in facts.get("industry", [])):
+            return ("Out of every 10 people who sign up, roughly how many are still using it a week later, "
+                    "and what do most of them do (or not do) before they stop?")
         q = _NUMBERS_BY_PROBLEM.get(problem)
         if q:
             return q
@@ -535,9 +654,22 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
     if gap_type == "missing_timeline":
         return "When did this start, and did anything change around then (prices, ads, season, competitors)?"
     if gap_type == "missing_idea_context":
-        return "What business are you thinking of starting, and what budget, skills or contacts do you have to start with?"
+        return ("What kind of business are you thinking of starting: what would you sell, and to whom? "
+                "If you haven't picked one yet, what skills or experience do you have?")
+    # Money, time and skills: what decides between ideas, or how to start one.
+    if gap_type == "missing_idea_fit":
+        options = facts["decision"]["options"]
+        if facts.get("idea_choice"):
+            which = _join_areas(options, last="or") if options else "your ideas"
+            return (f"Which of {which} fits skills, experience or contacts you already have, "
+                    "and how much money and time a week can you put in to start?")
+        return "How much money and time a week can you put in to start, and do you need it to bring in income quickly?"
     # A named new idea: budget, timeline and proof people will pay.
     if gap_type == "missing_launch_plan":
+        # Several ideas: has any of them been tested with real buyers?
+        if facts.get("idea_choice") and facts["decision"]["options"]:
+            return ("Have you tested any of them with real buyers yet (people asking for it, pre-orders, a waitlist), "
+                    "and what happened?")
         named = facts.get("idea") or what
         idea = f"the {named}" if named else "it"
         return (f"What budget and timeline do you have for {idea}, and what have you seen so far that says "
@@ -545,12 +677,13 @@ def write_question(gap_type: str, facts: dict, problem: str) -> str:
     return ""
 
 
-def _join_areas(areas: list[str]) -> str:
-    """'marketing, cash, staff and product' from the areas a prompt named."""
+def _join_areas(areas: list[str], last: str = "and") -> str:
+    """'marketing, cash, staff and product' from the areas a prompt named
+    (or 'X, Y or Z' with last="or", for a choice)."""
     # 1. Up to four areas, in the order they were written.
     named = areas[:4]
     # 2. Join them like a sentence.
-    return named[0] if len(named) == 1 else ", ".join(named[:-1]) + " and " + named[-1]
+    return named[0] if len(named) == 1 else ", ".join(named[:-1]) + f" {last} " + named[-1]
 
 
 def _display_channel(c: str) -> str:
@@ -582,6 +715,10 @@ def classify_question(question: str) -> str:
         return "missing_focus"
     if re.search(r"\b(pre-?orders?|waitlist|will pay for it|proof (?:that )?people|people will pay)\b", q):
         return "missing_launch_plan"
+    if re.search(r"\b(what kind of content|kind of content do you|what (?:is|'s) your content about)\b", q):
+        return "missing_content_type"
+    if re.search(r"\b(fits? skills|time a week can you put|income quickly)\b", q):
+        return "missing_idea_fit"
     if re.search(r"\b(options?|choosing between|ideas? (?:are|you're)|on the table)\b", q):
         return "unnamed_options"
     if re.search(r"\b(thinking of starting|want to start|budget, skills)\b", q):

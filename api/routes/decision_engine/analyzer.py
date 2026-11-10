@@ -326,6 +326,19 @@ async def run_clarity_teacher_now(
     return {"success": True, "data": result}
 
 
+@router.get("/clarify/learning")
+async def get_clarity_learning(
+    days: int = 7,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: is the micromodel learning? Trusted examples gained from users'
+    answers and from the LLM teacher, how often new prompts use them, and a
+    working/broken check on each link of that loop."""
+    from decision_engine.clarity_teacher import learning_progress
+    return {"success": True, "data": learning_progress(db, days=max(1, min(days, 90)))}
+
+
 @router.get("/clarify/activity")
 async def get_clarity_teacher_activity(
     runs: int = 20,

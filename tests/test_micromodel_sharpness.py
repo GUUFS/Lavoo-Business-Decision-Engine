@@ -204,3 +204,58 @@ def test_coach_is_not_asked_what_the_business_sells():
 def test_website_reads_as_your_website():
     qs = texts("Should I sell on Jumia, Konga, or my own website?")
     assert not any("on Website" in q for q in qs)
+
+
+# ── Prompts from the 2026-11-10 review ──────────────────────────────────────
+
+def test_choosing_between_named_ideas_asks_fit_and_demand_not_current_numbers():
+    qs = texts("I have 3 ideas and can't choose: meal kits, a fitness app, or a tutoring marketplace")
+    assert len(qs) == 2
+    assert qs[0].startswith("Which of meal kits, a fitness app or a tutoring marketplace fits")
+    assert "pre-orders" in qs[1]
+    assert not any("right now" in q or "monthly revenue" in q or "your marketplace" in q for q in qs)
+
+
+def test_creator_who_names_no_topic_is_asked_the_kind_of_content():
+    qs = texts("I'm a content creator and I want my content to change lives")
+    assert qs[0].startswith("What kind of content do you make")
+    assert any("follow or watch you" in q for q in qs)
+
+
+def test_creator_who_names_a_topic_is_not_asked_the_kind_of_content():
+    qs = texts("I post on TikTok about personal finance and I want my videos to actually help people.")
+    assert not any("kind of content" in q for q in qs)
+
+
+def test_app_with_no_description_is_asked_what_it_does_and_about_users():
+    qs = texts("People sign up for my app but don't come back")
+    assert qs[0] == "What does your app do, and who is it for?"
+    assert "still using it a week later" in qs[1] and "buy again" not in qs[1]
+
+
+def test_app_with_hard_numbers_is_not_held_up_by_what_it_does():
+    assert texts("My SaaS has 400 paying users at $29/month, churn is 8% monthly, and I've already tried "
+                 "an onboarding email sequence with no improvement.") == []
+
+
+def test_start_a_business_asks_the_kind_of_business_first():
+    qs = texts("I want to start a business")
+    assert qs[0].startswith("What kind of business are you thinking of starting")
+    assert "money and time a week" in qs[1]
+
+
+def test_start_a_business_ignores_the_business_from_earlier_checkups():
+    """Earlier checkups were about their bakery; a NEW business is still unknown."""
+    qs = [q["question"] for q in build_questions(reason("I want to start a business", history={"business": "bakery"}))]
+    assert qs[0].startswith("What kind of business are you thinking of starting")
+    assert not any("for it, and what have you seen" in q for q in qs)
+
+
+def test_where_to_start_is_recognised():
+    assert extract_facts("Where do I start?")["where_to_start"] is True
+
+
+def test_new_question_kinds_are_classified():
+    from decision_engine.clarity_reasoner import classify_question
+    assert classify_question(texts("I'm a content creator and I want my content to change lives")[0]) == "missing_content_type"
+    assert classify_question(texts("I want to start a business")[1]) == "missing_idea_fit"

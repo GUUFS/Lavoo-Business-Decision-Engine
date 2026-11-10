@@ -39,6 +39,8 @@ RUN_EVERY_SECONDS = 6 * 60 * 60
 next_scheduled_run_at: datetime | None = None
 # Wait until the user has had time to answer or skip.
 MIN_AGE_MINUTES = 15
+# Rows the micromodel copies from (same rule as clarity_engine._TRUSTED_FILTER).
+_TRUSTED_SQL = "(source IN ('llm_seed', 'llm_teacher') OR (source = 'live' AND outcome = 'answered'))"
 
 
 def _candidates(db: Session, limit: int) -> list[dict]:
@@ -330,4 +332,191 @@ def clarity_stats(db: Session, days: int = 30) -> dict:
             }
             for r in weekly
         ],
+    }
+
+
+def _check(key: str, label: str, ok: bool | None, detail: str) -> dict:
+    """One link in the learning loop for the admin page. ok: True working,
+    False broken, None nothing to judge yet (e.g. no prompts this week)."""
+    return {"key": key, "label": label, "ok": ok, "detail": detail}
+
+
+def learning_progress(db: Session, days: int = 7, weeks: int = 8) -> dict:
+    """For the admin Micromodel page: is the micromodel learning from users
+    and from the LLM, and is every link of that loop connected?
+
+    The loop: the micromodel asks questions -> users answer or skip them ->
+    answered decisions become trusted examples; the teacher job has the LLM
+    re-check weak decisions -> the LLM's answers become trusted examples;
+    new prompts then copy or borrow from those examples instead of the
+    micromodel guessing. Returns the numbers for each part (this period vs
+    the one before), the weekly growth of trusted examples, and a check for
+    each link (working / broken / nothing to judge yet)."""
+    # 1. This period and the one before it, for "up from N" comparisons.
+    params = {"days": days}
+    period = "created_at > now() - make_interval(days => :days)"
+    previous = ("created_at <= now() - make_interval(days => :days) "
+                "AND created_at > now() - make_interval(days => :days * 2)")
+
+    # 2. Trusted examples: what the micromodel copies from. LLM seed rows,
+    #    LLM teacher rows, and live decisions a user answered.
+    trusted = db.execute(text(f"""
+        SELECT
+          count(*) FILTER (WHERE source = 'llm_seed') AS llm_seed,
+          count(*) FILTER (WHERE source = 'llm_teacher') AS llm_teacher,
+          count(*) FILTER (WHERE source = 'live' AND outcome = 'answered') AS user_answered,
+          count(*) FILTER (WHERE {period} AND source = 'llm_teacher') AS new_llm,
+          count(*) FILTER (WHERE {period} AND source = 'live' AND outcome = 'answered') AS new_user,
+          count(*) FILTER (WHERE {previous} AND (source = 'llm_teacher' OR (source = 'live' AND outcome = 'answered'))) AS new_before,
+          count(*) FILTER (WHERE {_TRUSTED_SQL} AND embedding IS NULL) AS missing_embedding
+        FROM clarity_corpus
+    """), params).mappings().one()
+    total_trusted = trusted["llm_seed"] + trusted["llm_teacher"] + trusted["user_answered"]
+
+    # 3. Feedback from users: questions shown, answered, skipped, and shown
+    #    over an hour ago with nothing recorded (the answer never came back).
+    users = db.execute(text(f"""
+        SELECT
+          count(*) AS decisions,
+          count(*) FILTER (WHERE needs_clarification) AS asked,
+          count(*) FILTER (WHERE outcome = 'answered') AS answered,
+          count(*) FILTER (WHERE outcome = 'skipped') AS skipped,
+          count(*) FILTER (WHERE needs_clarification AND outcome IS NULL
+                           AND created_at < now() - interval '1 hour') AS no_outcome,
+          count(*) FILTER (WHERE decision_path = 'neighbor') AS copied,
+          count(*) FILTER (WHERE decision_path = 'blend') AS borrowed,
+          count(*) FILTER (WHERE decision_path = 'reasoner') AS own,
+          max(created_at) FILTER (WHERE outcome = 'answered') AS last_answered_at
+        FROM clarity_corpus WHERE source = 'live' AND {period}
+    """), params).mappings().one()
+    users_before = db.execute(text(f"""
+        SELECT count(*) AS decisions,
+               count(*) FILTER (WHERE decision_path IN ('neighbor', 'blend')) AS learned
+        FROM clarity_corpus WHERE source = 'live' AND {previous}
+    """), params).mappings().one()
+
+    # 4. Feedback from the LLM: teacher checks this period and the one
+    #    before (agreement going up = the micromodel getting smarter).
+    def teacher_numbers(where: str) -> dict:
+        return dict(db.execute(text(f"""
+            SELECT count(*) AS checks,
+                   count(*) FILTER (WHERE agreed) AS agreed,
+                   count(*) FILTER (WHERE error IS NOT NULL) AS errors,
+                   count(*) FILTER (WHERE called_llm) AS llm_calls
+            FROM clarity_teacher_calls WHERE {where}
+        """), params).mappings().one())
+    teacher_now, teacher_before = teacher_numbers(period), teacher_numbers(previous)
+    last_run = db.query(ClarityTeacherRun).order_by(ClarityTeacherRun.started_at.desc()).first()
+
+    # 5. Weekly growth: trusted examples added each week, and the running total.
+    weekly = db.execute(text("""
+        SELECT date_trunc('week', created_at) AS week,
+               count(*) FILTER (WHERE source = 'llm_teacher') AS from_llm,
+               count(*) FILTER (WHERE source = 'live' AND outcome = 'answered') AS from_users
+        FROM clarity_corpus
+        WHERE created_at > date_trunc('week', now()) - make_interval(weeks => :weeks - 1)
+        GROUP BY 1 ORDER BY 1
+    """), {"weeks": weeks}).mappings().all()
+    added_in_window = sum(r["from_llm"] + r["from_users"] for r in weekly)
+    running = total_trusted - added_in_window
+    growth = []
+    for r in weekly:
+        running += r["from_llm"] + r["from_users"]
+        growth.append({"week": r["week"].date().isoformat(), "from_llm": r["from_llm"],
+                       "from_users": r["from_users"], "total": running})
+
+    # 6. Percentages (None when there's nothing to divide by).
+    def pct(a, b):
+        return round(100 * a / b, 1) if b else None
+    learned_now = users["copied"] + users["borrowed"]
+
+    # 7. Check each link of the loop.
+    checks = []
+    # 7a. Questions are being asked at all.
+    checks.append(_check(
+        "asking", "The micromodel is asking users questions",
+        None if not users["decisions"] else users["asked"] > 0,
+        f"{users['asked']} of {users['decisions']} checkups got questions in the last {days} days"
+        if users["decisions"] else f"No checkups in the last {days} days",
+    ))
+    # 7b. Users' answers come back with the checkup (the corpus_id link
+    #     from the app to /analyze). Answers can be abandoned, so it's only
+    #     broken when questions were shown and NONE came back.
+    recorded = users["answered"] + users["skipped"]
+    checks.append(_check(
+        "answers_saved", "Users' answers and skips are saved",
+        None if not users["asked"] else recorded > 0,
+        f"{recorded} recorded ({users['answered']} answered, {users['skipped']} skipped), "
+        f"{users['no_outcome']} shown with nothing back" if users["asked"] else "No questions shown yet",
+    ))
+    # 7c. Answered decisions are searchable as trusted examples.
+    checks.append(_check(
+        "examples_searchable", "Trusted examples can be found by new prompts",
+        trusted["missing_embedding"] == 0,
+        f"{total_trusted} trusted examples" + (f", {trusted['missing_embedding']} without a search vector"
+                                               if trusted["missing_embedding"] else ", all searchable"),
+    ))
+    # 7d. The teacher job runs on schedule (within 1.5x its interval).
+    overdue_after = RUN_EVERY_SECONDS * 1.5
+    last_age = (datetime.now(UTC) - last_run.started_at).total_seconds() if last_run and last_run.started_at else None
+    checks.append(_check(
+        "teacher_running", f"The LLM teacher runs every {RUN_EVERY_SECONDS // 3600} hours",
+        bool(last_run) and last_age is not None and last_age <= overdue_after,
+        f"Last run {round(last_age / 3600, 1)} hours ago" if last_age is not None else "It has never run",
+    ))
+    # 7e. The teacher's LLM checks succeed (not all failing).
+    checks.append(_check(
+        "teacher_ok", "The LLM's checks succeed",
+        None if not teacher_now["checks"] else teacher_now["errors"] < teacher_now["checks"],
+        f"{teacher_now['checks'] - teacher_now['errors']} of {teacher_now['checks']} checks succeeded in the last {days} days"
+        if teacher_now["checks"] else f"No checks in the last {days} days",
+    ))
+    # 7f. New prompts actually use what was learned.
+    checks.append(_check(
+        "examples_used", "New prompts use what it learned",
+        None if not users["decisions"] or not total_trusted else learned_now > 0,
+        f"{learned_now} of {users['decisions']} checkups copied or borrowed from a trusted example"
+        if users["decisions"] else f"No checkups in the last {days} days",
+    ))
+
+    # 8. One-line verdict for the top of the page.
+    broken = [c for c in checks if c["ok"] is False]
+    if broken:
+        status, headline = "attention", f"Not fully connected: {broken[0]['label'].lower()} isn't working."
+    elif trusted["new_llm"] + trusted["new_user"] > 0:
+        status = "learning"
+        headline = (f"Learning: {trusted['new_llm'] + trusted['new_user']} new trusted examples in the last {days} days "
+                    f"({trusted['new_user']} from users' answers, {trusted['new_llm']} from the LLM).")
+    else:
+        status, headline = "idle", f"Connected, but nothing new was learned in the last {days} days."
+
+    return {
+        "status": status,
+        "headline": headline,
+        "days": days,
+        "trusted": {
+            "total": total_trusted, "llm_seed": trusted["llm_seed"], "llm_teacher": trusted["llm_teacher"],
+            "user_answered": trusted["user_answered"], "new": trusted["new_llm"] + trusted["new_user"],
+            "new_from_llm": trusted["new_llm"], "new_from_users": trusted["new_user"], "new_before": trusted["new_before"],
+        },
+        "users": {
+            "decisions": users["decisions"], "asked": users["asked"], "answered": users["answered"],
+            "skipped": users["skipped"], "no_outcome": users["no_outcome"],
+            "answer_rate_pct": pct(users["answered"], recorded),
+            "last_answered_at": users["last_answered_at"].isoformat() if users["last_answered_at"] else None,
+        },
+        "llm": {
+            "checks": teacher_now["checks"], "agreed": teacher_now["agreed"], "errors": teacher_now["errors"],
+            "llm_calls": teacher_now["llm_calls"],
+            "agreement_pct": pct(teacher_now["agreed"], teacher_now["checks"] - teacher_now["errors"]),
+            "agreement_before_pct": pct(teacher_before["agreed"], teacher_before["checks"] - teacher_before["errors"]),
+            "last_run_at": last_run.started_at.isoformat() if last_run and last_run.started_at else None,
+        },
+        "usage": {
+            "copied": users["copied"], "borrowed": users["borrowed"], "own": users["own"],
+            "learned_pct": pct(learned_now, users["decisions"]),
+            "learned_before_pct": pct(users_before["learned"], users_before["decisions"]),
+        },
+        "growth": growth,
+        "checks": checks,
     }
