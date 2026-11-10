@@ -70,8 +70,13 @@ async def get_users_for_permissions(
         .all()
     )
 
+    # The plan each active user is on (Pro or Premium; a partner on their
+    # free 6 months counts as Premium), for the Subscription column.
+    from decision_engine.checkup_limits import user_plan_tier
+
     result = []
     for user in users:
+        active = (user.subscription_status or "").lower() == "active"
         result.append({
             "id": user.id,
             "name": user.name,
@@ -84,6 +89,7 @@ async def get_users_for_permissions(
             "is_active": user.is_active,
             "role": user.role or UserRole.NORMAL.value,
             "subscription_status": user.subscription_status or "none",
+            "plan_tier": user_plan_tier(db, user) if active else None,
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "avatar": get_user_avatar(user.name),
         })
