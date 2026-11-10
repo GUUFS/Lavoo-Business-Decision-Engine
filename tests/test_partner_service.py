@@ -185,3 +185,16 @@ def test_a_stripe_error_does_not_stop_someone_becoming_a_partner(db, monkeypatch
     with patch.object(stripe.Subscription, "list", side_effect=stripe.error.APIConnectionError("down")):
         assert grant_partner(db, user, now=JOINED) == {"stripe_paused": 0}
     assert user.is_partner is True
+
+
+def test_admin_permissions_list_shows_a_partner_as_premium(db):
+    """The admin Subscription column reads plan_tier: a partner on free
+    Premium is 'premium', not the 'Pro' every active user used to show."""
+    import asyncio
+
+    from api.routes.admin.permissions import get_users_for_permissions
+    partner = _partner(db, name="Listed Partner")
+    listing = asyncio.run(get_users_for_permissions(limit=10, page=1, search=partner.email, role="",
+                                                    current_user=None, db=db))
+    row = listing["users"][0]
+    assert row["subscription_status"] == "active" and row["plan_tier"] == "premium"
