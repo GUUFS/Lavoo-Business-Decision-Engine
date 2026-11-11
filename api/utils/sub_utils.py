@@ -15,7 +15,12 @@ def sync_user_subscription(db: Session, user: User, now: datetime | None = None)
     `now` is the time to check that at (default: now).
     """
     try:
-        # 0. Partners on their free 6 months of Premium stay active; nothing else changes.
+        # 0a. Premium-forever accounts stay active; nothing else changes.
+        from subscriptions.lifetime_premium import enforce_lifetime_premium
+        if enforce_lifetime_premium(db, user):
+            return user
+
+        # 0b. Partners on their free 6 months of Premium stay active; nothing else changes.
         from subscriptions.partner_service import enforce_partner_premium
         if enforce_partner_premium(db, user, now):
             return user

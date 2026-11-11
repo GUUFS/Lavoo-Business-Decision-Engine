@@ -599,8 +599,11 @@ async def run_subscription_expiry_job():
                 # Partners on their free 6 months of Premium
                 # (subscriptions/partner_service.py): not charged for a
                 # renewal and not moved to Free until it ends.
+                # Premium-forever accounts (subscriptions/lifetime_premium.py)
+                # are skipped the same way, for good.
+                from subscriptions.lifetime_premium import lifetime_premium_user_ids
                 from subscriptions.partner_service import partner_premium_user_ids
-                on_partner_premium = partner_premium_user_ids(db, now)
+                on_partner_premium = partner_premium_user_ids(db, now) | lifetime_premium_user_ids(db)
 
                 for user_id, sub in latest_per_user.items():
                     # Yield to the event loop between users to prevent blocking health checks
@@ -849,6 +852,31 @@ async def run_clarity_teacher_job():
             # 4. Keep the exact reason for the admin page, then try again next time.
             clarity_teacher.last_job_error = str(exc)[:500]
             logger.error("[clarity-teacher-job] error: %s", exc)
+
+
+async def run_tool_discovery_job():
+    """
+    Runs every hour. Looks up tool names analyses suggested that the
+    catalog doesn't have and are still pending, or failed and are under
+    the retry limit, and adds them to ai_tools (decision_engine/tool_discovery.py).
+    Most names are handled straight after their analysis; this catches
+    the rest (a restart mid-lookup, a website that was down).
+    """
+    from decision_engine.tool_discovery import process_pending
+    from database.pg_connections import SessionLocal
+    # 1. Give the server time to start before the first pass.
+    await asyncio.sleep(300)
+    while True:
+        # 2. Up to 10 names per pass; nothing to do costs one small query.
+        try:
+            with SessionLocal() as db:
+                result = await process_pending(db, limit=10)
+            if result.get("looked_up"):
+                logger.info("[tool-discovery-job] %s", result)
+        except Exception as exc:
+            logger.error("[tool-discovery-job] error: %s", exc)
+        # 3. Again in an hour.
+        await asyncio.sleep(3600)
 
 
 async def run_scheduled_voo_bot_job():
@@ -1720,6 +1748,7 @@ async def startup_event():
     asyncio.create_task(run_scheduled_reflections_job())
     asyncio.create_task(run_scheduled_voo_bot_job())
     asyncio.create_task(run_clarity_teacher_job())
+    asyncio.create_task(run_tool_discovery_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_balance_monitor_job())

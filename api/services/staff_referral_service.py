@@ -1,4 +1,9 @@
 """
+SWITCHED OFF (STAFF_POOL_ASSIGNMENT_ENABLED below): signups with no referral
+code are no longer given to a staff member; they simply have no referrer.
+Referrals already assigned stay as they are. Set the env var
+STAFF_REFERRAL_POOL_ENABLED=true to switch it back on.
+
 Auto-assigns a staff member as the "referrer" for anyone who signs up with
 no referral code at all, so every signup has someone attributed — fairly
 rotated across whichever staff emails an admin has added to the pool (see
@@ -6,6 +11,7 @@ api/routes/admin/staff_referrals.py), and rated differently from a real
 referral (see Referral.via_staff_pool / commission_service.py).
 """
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -20,6 +26,12 @@ logger = logging.getLogger(__name__)
 # (7302) and stripe.py (7301) — picking a staff member and paying a
 # commission are unrelated operations and must not block each other.
 _ASSIGNMENT_LOCK_ID = 7304
+
+
+def staff_pool_assignment_enabled() -> bool:
+    """Whether signups with no referral code are given to a staff member.
+    Off unless STAFF_REFERRAL_POOL_ENABLED is "true" (or "1"/"yes")."""
+    return os.getenv("STAFF_REFERRAL_POOL_ENABLED", "false").strip().lower() in ("true", "1", "yes")
 
 
 def assign_next_staff_referrer(db: Session) -> Optional[User]:
@@ -39,13 +51,18 @@ def assign_next_staff_referrer(db: Session) -> Optional[User]:
     their count matches the others', which reads as favouritism toward
     whoever just joined.
 
-    Returns the picked User, or None if the pool is empty. Never raises: a
+    Returns the picked User, or None if the pool is empty or assignment is
+    switched off (staff_pool_assignment_enabled). Never raises: a
     signup must succeed whether or not this finds anyone to assign.
 
     Caller is responsible for creating the actual Referral row — this only
     picks and reserves the slot, using its own single-purpose lock so two
     signups happening at the same moment can never be handed the same pick.
     """
+    # 0. Switched off: nobody is assigned (signup.py and google_oauth.py
+    #    then leave the new user without a referrer).
+    if not staff_pool_assignment_enabled():
+        return None
     try:
         db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": _ASSIGNMENT_LOCK_ID})
 

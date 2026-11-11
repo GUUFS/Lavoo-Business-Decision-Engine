@@ -55,6 +55,11 @@ def charge_beta_user(user_id: int) -> bool:
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 return False
+            # Premium-forever accounts are never charged (subscriptions/lifetime_premium.py).
+            from subscriptions.lifetime_premium import lifetime_premium_active
+            if lifetime_premium_active(user):
+                logger.info("[beta-charge] user %s is Premium forever; not charged", user_id)
+                return False
             if not user.stripe_customer_id or not user.stripe_payment_method_id:
                 logger.warning("[beta-charge] user %s has no saved Stripe card; skipped", user_id)
                 return False
