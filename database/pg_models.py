@@ -268,7 +268,7 @@ class ClarityCorpus(Base):
 class ClarityTeacherRun(Base):
     """One run of the teacher job (decision_engine/clarity_teacher.py), so
     the admin can see when the LLM last checked the micromodel and how it
-    went. trigger: 'scheduled' (every 6 hours) or 'manual' (admin button)."""
+    went. trigger: 'scheduled' (every 3 hours) or 'manual' (admin button)."""
     __tablename__ = "clarity_teacher_runs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -283,6 +283,9 @@ class ClarityTeacherRun(Base):
     errors = Column(Integer, nullable=False, default=0)
     # Set when the whole run failed (not just one prompt).
     error = Column(Text, nullable=True)
+    # Why the run did or didn't call the LLM, in plain words (e.g. "Nothing
+    # to check: 2 decisions under 15 minutes old"). Shown on the admin page.
+    note = Column(Text, nullable=True)
 
 
 class ClarityTeacherCall(Base):

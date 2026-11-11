@@ -33,7 +33,7 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from database.pg_models import AITool
-from decision_engine.text_cleanup import strip_dashes_deep
+from decision_engine.text_cleanup import strip_dashes_deep, strip_step_label
 from decision_engine.recommender_db import (
     _safe_parse_text_list,
     compile_catalog_name_pattern,
@@ -758,7 +758,7 @@ YOUR TASK:
 2. Select the tool(s) whose documented features directly automate or accelerate a named step above.
 3. Select UP TO 2 tools ONLY if the steps clearly need two different capabilities (e.g. step 1 needs analytics, step 3 needs email automation). Otherwise select 1.
 4. Return an empty array if no tool genuinely addresses a specific step.
-5. CRITICAL — "what_it_helps": name the exact step number(s) and describe what the tool does for that step in one concrete sentence. This text will appear on a card next to THIS specific action plan — it must be unique to these steps, not a generic description of the tool.
+5. CRITICAL — "what_it_helps": describe what the tool does for the step(s) it serves in one concrete sentence. Do NOT start with or include a step label such as "Step 3:" (the card already shows it under its step). This text will appear on a card next to THIS specific action plan — it must be unique to these steps, not a generic description of the tool.
 6. Return the tool's website URL from the candidate list exactly as shown.
 
 OUTPUT FORMAT (JSON only, no markdown, no leading dashes in any text value):
@@ -767,7 +767,7 @@ OUTPUT FORMAT (JSON only, no markdown, no leading dashes in any text value):
         {{
             "tool_name": "Exact name from the candidate list",
             "website": "Exact URL from the candidate list, or null",
-            "what_it_helps": "Step N: one concrete sentence describing what the tool does for that specific step"
+            "what_it_helps": "One concrete sentence describing what the tool does for that specific step, with no step label"
         }}
     ]
 }}"""
@@ -802,6 +802,8 @@ OUTPUT FORMAT (JSON only, no markdown, no leading dashes in any text value):
                 if canonical and canonical.strip().lower() not in used_normalised:
                     # Overwrite with the canonical DB name so storage is consistent
                     tk["tool_name"] = canonical
+                    # No "Step 3:" label in the card text (it sits under its step).
+                    tk["what_it_helps"] = strip_step_label(tk.get("what_it_helps") or "")
                     validated.append(tk)
                     if len(validated) == 2:
                         break
@@ -1274,8 +1276,8 @@ STEP 1 — FEATURE-LEVEL MATCH, PER STEP
 For each numbered step, identify tools in the catalog whose Key Features / Integrates With entries directly perform the capability that specific step names. Not "this tool is in the same category" — a listed feature or integration must literally execute the required function for THAT step. If a candidate has no Key Features/Integrates With line at all, treat its description alone as insufficient to clear task_relevance >= {bars['task_relevance']}.
 
 STEP 2 — SPECIFICITY OF DESCRIPTIONS
-"what_it_helps" must name the EXACT step number and describe what the tool does for THAT step in one concrete sentence, naming the specific Key Feature or integration from the catalog block that makes it a match. This text appears on the plan card under that step — it must be unique to that step, not a generic product description.
-Good: "Step 2: Its automated re-engagement sequences feature sends a personalised follow-up based on each contact's last action, so you never manually write or send one again."
+"what_it_helps" must describe what the tool does for THAT step in one concrete sentence, naming the specific Key Feature or integration from the catalog block that makes it a match. Do NOT start with a step label such as "Step 2:": "step_index" already says which step, and the text is shown under that step (and inside a numbered workflow, where a label reads as the wrong number). It must be unique to that step, not a generic product description.
+Good: "Its automated re-engagement sequences feature sends a personalised follow-up based on each contact's last action, so you never manually write or send one again."
 Bad: "A powerful automation platform that can help with re-engagement."
 
 STEP 3 — CANDIDATES, RANKED
@@ -1296,7 +1298,7 @@ OUTPUT FORMAT (JSON only, no markdown):
         {{
           "tool_name": "Exact name from the catalog",
           "website": "Exact URL from the catalog or null",
-          "what_it_helps": "Step 2: one concrete sentence in second person naming the documented feature used — unique to this step.",
+          "what_it_helps": "One concrete sentence in second person naming the documented feature used, unique to this step, with no step label.",
           "scores": {{"task_relevance": 0, "workflow_integration": 0, "expected_impact": 0, "ease_of_implementation": 0, "cost_efficiency": 0}}
         }}
       ]
@@ -1436,7 +1438,8 @@ step_index is 1-based, counting within THIS plan's own step list. Omit any step 
                 )
                 return None
 
-            what_it_helps = (candidate.get("what_it_helps") or "").strip()
+            # The step's tool text, without any "Step 3:" label the model added anyway.
+            what_it_helps = strip_step_label((candidate.get("what_it_helps") or "").strip())
             if not what_it_helps:
                 # Distinct from is_step_cited (which only controls the gate):
                 # a user-named tool resolved to a real DB record still has a

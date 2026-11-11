@@ -42,3 +42,19 @@ def strip_dashes_deep(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: strip_dashes_deep(v) for k, v in value.items()}
     return value
+
+
+# A step label at the start of a tool's text: "Step 3: ", "Steps 2 and 4 - ".
+_STEP_LABEL_RE = re.compile(r"^\s*steps?\s*\d+(?:\s*(?:,|&|and|-|–|—|to)\s*\d+)*\s*[:.\-–—)]\s*", re.I)
+
+
+def strip_step_label(text: str) -> str:
+    """Removes a leading "Step 3:" label from a tool's text. The text is
+    shown under its own step already, and inside a workflow the steps have
+    their own numbers, so the label reads as a wrong number."""
+    if not text or not isinstance(text, str):
+        return text
+    # 1. Drop the label.
+    cleaned = _STEP_LABEL_RE.sub("", text).strip()
+    # 2. Start with a capital letter again ("its ..." -> "Its ...").
+    return cleaned[:1].upper() + cleaned[1:]

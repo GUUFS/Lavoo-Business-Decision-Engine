@@ -812,24 +812,42 @@ async def run_scheduled_reflections_job():
 
 async def run_clarity_teacher_job():
     """
-    Runs every 6 hours. The LLM checks up to 20 of the micromodel's least
+    Runs every 3 hours. The LLM checks up to 20 of the micromodel's least
     certain decisions and saves its answers as new examples to learn from
     (see decision_engine/clarity_teacher.py).
+
+    The wait is worked out from the last run stored in the database, not
+    from when this server started, so a restart or redeploy doesn't push
+    the next run back (before, a redeploy within 6 hours meant no run).
     """
     from datetime import datetime, timedelta, timezone
     from decision_engine import clarity_teacher
+    from database.pg_connections import SessionLocal
+    # 0. Tell the admin page this server's scheduler is running.
+    clarity_teacher.scheduler_started_at = datetime.now(timezone.utc)
     while True:
-        # Shown on the admin Micromodel page as "next run".
-        clarity_teacher.next_scheduled_run_at = (
-            datetime.now(timezone.utc) + timedelta(seconds=clarity_teacher.RUN_EVERY_SECONDS)
-        )
-        await asyncio.sleep(clarity_teacher.RUN_EVERY_SECONDS)
+        # 1. How long until the next run is due (from the last run in the DB).
         try:
-            from database.pg_connections import SessionLocal
             with SessionLocal() as db:
+                wait = clarity_teacher.seconds_until_next_run(db)
+        except Exception as exc:
+            clarity_teacher.last_job_error = f"Couldn't read the last run time from the database: {exc}"
+            logger.error("[clarity-teacher-job] %s", clarity_teacher.last_job_error)
+            wait = clarity_teacher.RUN_EVERY_SECONDS
+        # 2. Shown on the admin Micromodel page as "next run".
+        clarity_teacher.next_scheduled_run_at = datetime.now(timezone.utc) + timedelta(seconds=wait)
+        await asyncio.sleep(wait)
+        # 3. Run, unless a run (e.g. "Run now") happened while we waited.
+        try:
+            with SessionLocal() as db:
+                if clarity_teacher.seconds_until_next_run(db) > clarity_teacher.MIN_FIRST_WAIT_SECONDS:
+                    continue
                 result = await clarity_teacher.run_teacher_batch(db, limit=20, trigger="scheduled")
+            clarity_teacher.last_job_error = None
             logger.info("[clarity-teacher-job] %s", result)
         except Exception as exc:
+            # 4. Keep the exact reason for the admin page, then try again next time.
+            clarity_teacher.last_job_error = str(exc)[:500]
             logger.error("[clarity-teacher-job] error: %s", exc)
 
 
