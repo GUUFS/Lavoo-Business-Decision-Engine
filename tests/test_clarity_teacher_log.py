@@ -129,7 +129,7 @@ def test_activity_feed_for_admin_page(db):
         clarity_teacher.next_scheduled_run_at = None
 
     assert activity["next_run_at"] == "2030-01-01T00:00:00+00:00"
-    assert activity["run_every_hours"] == 6
+    assert activity["run_every_hours"] == 3
     assert {r["id"] for r in activity["runs"]} >= {first_result["run_id"], result["run_id"]}
 
     # (Inside one test transaction Postgres now() is constant, so rows are

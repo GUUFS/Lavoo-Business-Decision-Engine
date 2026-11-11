@@ -163,9 +163,9 @@ VOO_FOLLOWUP_SYSTEM_PROMPT_HASH: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT_HASH: Optional[str] = None
 
-ANGLE_PROMPT_VERSION = "angle_v2.2"
+ANGLE_PROMPT_VERSION = "angle_v2.3"
 SUMMARY_PROMPT_VERSION = "summary_v2.0"
-FOLLOWUP_PROMPT_VERSION = "followup_v1.0"
+FOLLOWUP_PROMPT_VERSION = "followup_v1.1"
 
 
 def _load_voo_glossary() -> str:
@@ -322,6 +322,28 @@ LAVOO_PROTECTED_TERMS = (
     "decision engine",
     "reflection",
 )
+
+
+def _mentions_lavoo(text: str) -> bool:
+    """True when the text names Lavoo or one of its features (the same terms
+    the Lavoo guard checks). Used to keep Lavoo talk out of the context Voo
+    gets for an ordinary question, so it doesn't answer as if the member's
+    question were about Lavoo."""
+    lower = (text or "").lower()
+    return any(re.search(rf"\b{re.escape(term)}\b", lower) for term in LAVOO_PROTECTED_TERMS)
+
+
+_CONTEXT_STOPWORDS = {
+    "the", "and", "for", "you", "your", "with", "that", "this", "what", "how", "should", "would", "could",
+    "can", "are", "was", "have", "has", "from", "about", "into", "when", "why", "who", "any", "get", "more",
+}
+
+
+def _shares_topic(a: str, b: str) -> bool:
+    """True when two titles share at least two meaningful words, so a past
+    discussion is actually related to this question."""
+    words = lambda t: {w for w in re.findall(r"[a-z]{3,}", (t or "").lower()) if w not in _CONTEXT_STOPWORDS}
+    return len(words(a) & words(b)) >= 2
 
 
 def _clean_dashes(text: str) -> str:
@@ -989,7 +1011,12 @@ async def cron_process_pending_voo_replies(db: Session):
 
             # Section 3: Member details (Prioritize author's real Build Room journey and posts)
             bits = []
-            is_staff = bool(getattr(author_user, "is_admin", False))
+            # 3a. Does this question itself name Lavoo or a Lavoo feature? If
+            #     not, nothing about Lavoo may reach Voo through the context.
+            post_names_lavoo = _mentions_lavoo(f"{d.title or ''} {d.content or ''}")
+            # 3b. Admins and staff work on Lavoo: their profile describes Lavoo,
+            #     not a business of their own, so it isn't sent.
+            is_staff = bool(getattr(author_user, "is_admin", False) or getattr(author_user, "is_staff", False))
             if not is_staff:
                 company = getattr(author_user, "company_name", None)
                 if company and company.strip().lower() not in ("lavoo", "lavoo creators", "lavoo team"):
@@ -1017,6 +1044,11 @@ async def cron_process_pending_voo_replies(db: Session):
             recent_history_snippets = []
             for past_d in recent_author_discussions:
                 t = (past_d.title or "").strip()
+                # 3c. Skip platform polls and posts about Lavoo for an ordinary
+                #     question: they made Voo read the member as building Lavoo.
+                if not post_names_lavoo and (past_d.post_type == "poll" or past_d.poll_data
+                                             or _mentions_lavoo(f"{t} {past_d.content or ''}")):
+                    continue
                 if t and t.lower() not in seen_recent_titles:
                     seen_recent_titles.add(t.lower())
                     c_snip = " ".join((past_d.content or "").strip().split()[:15])
@@ -1052,11 +1084,18 @@ async def cron_process_pending_voo_replies(db: Session):
                 reply_lines.append(f"@{u_handle}: {r_trimmed}")
             thread_replies_str = "\n".join(reply_lines) if reply_lines else "None"
 
-            # Optional community context: up to 3 similar resolved questions
-            similar_resolved = db.query(CommunityDiscussion).filter(
+            # Optional community context: up to 3 resolved questions on the
+            # SAME topic (they used to be the latest 3, whatever their topic,
+            # which pulled unrelated and Lavoo threads into every answer).
+            recent_resolved = db.query(CommunityDiscussion).filter(
                 CommunityDiscussion.id != d.id,
                 CommunityDiscussion.is_resolved == True
-            ).order_by(CommunityDiscussion.created_at.desc()).limit(3).all()
+            ).order_by(CommunityDiscussion.created_at.desc()).limit(50).all()
+            similar_resolved = [
+                s for s in recent_resolved
+                if _shares_topic(s.title, f"{d.title or ''} {d.content or ''}")
+                and (post_names_lavoo or not _mentions_lavoo(f"{s.title or ''}"))
+            ][:3]
             if similar_resolved:
                 community_context_str = "Recent resolved discussions:\n" + "\n".join([f"- {s.title}" for s in similar_resolved])
             else:

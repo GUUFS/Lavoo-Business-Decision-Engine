@@ -1,7 +1,7 @@
 """
 The teacher job: the LLM checks the micromodel's work.
 
-Every 6 hours it picks the decisions the micromodel was least sure about
+Every 3 hours it picks the decisions the micromodel was least sure about
 (questions the user skipped, prompts with no similar example, or questions
 whose wording was borrowed from another example). For each one it asks the
 LLM the same question and saves the LLM's answer as a new trusted example.
@@ -19,7 +19,7 @@ micromodel is getting smarter.
 """
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -35,8 +35,14 @@ LOW_CONFIDENCE = 0.6
 QUESTION_MATCH_THRESHOLD = 0.45
 # How often api/main.py runs the job, and when the next run is due (set by
 # that job; shown on the admin page). None until the server's job has started.
-RUN_EVERY_SECONDS = 6 * 60 * 60
+RUN_EVERY_SECONDS = 3 * 60 * 60
 next_scheduled_run_at: datetime | None = None
+# Set by api/main.py's job: when this server's scheduler started, and the
+# last error that stopped a scheduled run (None when the last one ran).
+scheduler_started_at: datetime | None = None
+last_job_error: str | None = None
+# Never start a scheduled run sooner than this after the server starts.
+MIN_FIRST_WAIT_SECONDS = 60
 # Wait until the user has had time to answer or skip.
 MIN_AGE_MINUTES = 15
 # Rows the micromodel copies from (same rule as clarity_engine._TRUSTED_FILTER).
@@ -78,6 +84,86 @@ def _candidates(db: Session, limit: int) -> list[dict]:
     return out
 
 
+def seconds_until_next_run(db: Session, now: datetime | None = None) -> float:
+    """How long the scheduler should wait before the next run: RUN_EVERY_SECONDS
+    after the last run of any kind (scheduled or "Run now"), as stored in the
+    database. Because it reads the database, a server restart or redeploy no
+    longer resets the clock (a redeploy every few hours used to mean the job
+    never ran). Never less than MIN_FIRST_WAIT_SECONDS."""
+    # 1. When did the last run start?
+    now = now or datetime.now(UTC)
+    last = db.query(ClarityTeacherRun.started_at).order_by(ClarityTeacherRun.started_at.desc()).first()
+    # 2. Never run: start soon. Otherwise: whatever is left of the interval.
+    if not last or not last[0]:
+        return MIN_FIRST_WAIT_SECONDS
+    remaining = (last[0] + timedelta(seconds=RUN_EVERY_SECONDS) - now).total_seconds()
+    return max(MIN_FIRST_WAIT_SECONDS, remaining)
+
+
+# SQL: is this unchecked live decision too weak to trust without the LLM?
+# Mirrors the WHERE clause in _candidates.
+# NULL-safe (an unanswered row has outcome NULL), so NOT (...) works too.
+_WEAK_SQL = ("(COALESCE(outcome, '') = 'skipped' OR COALESCE(decision_path, '') IN ('reasoner', 'blend') "
+             "OR COALESCE(confidence, 0) < :low)")
+
+
+def why_nothing_to_check(db: Session) -> str:
+    """The exact reason a run found nothing for the LLM to check, from the
+    same rules _candidates uses: no unchecked decisions, decisions too new
+    (the user may still be answering), or decisions confident enough not to
+    need the LLM."""
+    # 1. Count the unchecked live decisions, and why each one isn't picked.
+    row = db.execute(text(f"""
+        SELECT count(*) AS unchecked,
+               count(*) FILTER (WHERE created_at >= now() - interval '{MIN_AGE_MINUTES} minutes') AS too_new,
+               count(*) FILTER (WHERE created_at < now() - interval '{MIN_AGE_MINUTES} minutes'
+                                AND NOT {_WEAK_SQL}) AS confident
+        FROM clarity_corpus WHERE source = 'live' AND teacher_reviewed_at IS NULL
+    """), {"low": LOW_CONFIDENCE}).mappings().one()
+    # 2. Nothing unchecked at all.
+    if not row["unchecked"]:
+        return ("Nothing to check, so the LLM wasn't called: every checkup prompt has already been checked "
+                "(no new prompts since the last run).")
+    # 3. Unchecked, but none of them qualify yet: say which rule held each back.
+    parts = []
+    if row["too_new"]:
+        parts.append(f"{row['too_new']} under {MIN_AGE_MINUTES} minutes old (the user may still be answering)")
+    if row["confident"]:
+        parts.append(f"{row['confident']} copied a trusted example with confidence of at least {LOW_CONFIDENCE}, "
+                     "so they don't need the LLM")
+    return (f"Nothing to check, so the LLM wasn't called: {row['unchecked']} unchecked prompt(s), "
+            + "; ".join(parts) + ".")
+
+
+def _run_note(db: Session, run: ClarityTeacherRun, counts: dict) -> str:
+    """One plain sentence for the admin page on what the run did, and if it
+    didn't call the LLM, exactly why."""
+    # 1. The whole run failed before or while checking.
+    if run.error:
+        return f"The run failed, so the LLM checks stopped: {run.error}"
+    # 2. Nothing qualified for checking.
+    if not counts["candidates"]:
+        return why_nothing_to_check(db)
+    # 3. Every LLM call failed: give the first error word for word.
+    if counts["errors"] and not counts["reviewed"]:
+        first = (db.query(ClarityTeacherCall.error).filter(ClarityTeacherCall.run_id == run.id,
+                                                         ClarityTeacherCall.error.isnot(None))
+                 .order_by(ClarityTeacherCall.id).first())
+        return f"All {counts['errors']} LLM check(s) failed. First error: {first[0] if first else 'unknown'}"
+    # 4. Checked, but every prompt reused an earlier LLM answer.
+    reused = counts["reviewed"] - counts["llm_calls"] + counts["errors"]
+    if counts["reviewed"] and not counts["llm_calls"]:
+        return (f"No LLM call was needed: all {counts['reviewed']} prompt(s) had an earlier LLM answer "
+                "for the exact same text, which was reused.")
+    # 5. A normal run.
+    note = (f"Checked {counts['reviewed']} of {counts['candidates']}: {counts['llm_calls']} LLM call(s), "
+            f"{max(reused, 0)} reused earlier answer(s), {counts['agreed']} agreed with the micromodel, "
+            f"{counts['new_precedents']} new trusted example(s).")
+    if counts["errors"]:
+        note += f" {counts['errors']} check(s) failed and will be retried next run."
+    return note
+
+
 def _existing_teacher_row(db: Session, submission_text: str):
     """Return the LLM's earlier verdict on this exact prompt (seed or teacher
     row), or None. Lets a run reuse that answer instead of paying for a new call."""
@@ -111,11 +197,17 @@ async def run_teacher_batch(db: Session, limit: int = 20, trigger: str = "schedu
         db.rollback()
         run.error = str(e)[:2000]
         logger.error(f"[clarity-teacher] run {run.id} failed: {e}", exc_info=True)
+    # Save the counts and a plain-words note on what happened (or why not).
     for key, value in counts.items():
         setattr(run, key, value)
+    try:
+        run.note = _run_note(db, run, counts)
+    except Exception as e:
+        db.rollback()
+        run.note = f"Couldn't work out the run's note: {e}"
     run.finished_at = datetime.now(UTC)
     db.commit()
-    return {"run_id": run.id, **counts, **({"error": run.error} if run.error else {})}
+    return {"run_id": run.id, **counts, "note": run.note, **({"error": run.error} if run.error else {})}
 
 
 def _question_texts(questions) -> list[str]:
@@ -269,15 +361,25 @@ def teacher_activity(db: Session, runs: int = 20, calls: int = 50) -> dict:
     # Datetimes go out as ISO strings (None stays None) for the admin app.
     def iso(d):
         return d.isoformat() if d else None
+    # Is this server's scheduler running, and if not, why.
+    if scheduler_started_at is None:
+        scheduler = ("The scheduled job hasn't started on this server, so no automatic runs will happen until it does "
+                     "(it starts with the API server).")
+    elif last_job_error:
+        scheduler = f"The last scheduled run couldn't start: {last_job_error}"
+    else:
+        scheduler = None
     return {
         "next_run_at": iso(next_scheduled_run_at),
         "run_every_hours": RUN_EVERY_SECONDS // 3600,
+        "scheduler_problem": scheduler,
         "last_llm_call_at": iso(last_llm_call[0]) if last_llm_call else None,
         "runs": [
             {
                 "id": r.id, "trigger": r.trigger, "started_at": iso(r.started_at), "finished_at": iso(r.finished_at),
                 "candidates": r.candidates, "reviewed": r.reviewed, "agreed": r.agreed,
                 "llm_calls": r.llm_calls, "new_precedents": r.new_precedents, "errors": r.errors, "error": r.error,
+                "note": r.note,
             }
             for r in run_rows
         ],
@@ -520,3 +622,186 @@ def learning_progress(db: Session, days: int = 7, weeks: int = 8) -> dict:
         "growth": growth,
         "checks": checks,
     }
+
+
+# Filters for the admin prompt history (decision_history), as SQL on clarity_corpus.
+_HISTORY_VIEWS = {
+    "all": "TRUE",
+    "disagreed": "teacher_agreed IS FALSE",
+    "agreed": "teacher_agreed IS TRUE",
+    "unchecked": "teacher_reviewed_at IS NULL",
+    "answered": "outcome = 'answered'",
+    "skipped": "outcome = 'skipped'",
+    "used_learning": "decision_path IN ('neighbor', 'blend')",
+}
+
+# How each decision path reads on the admin page.
+_PATH_LABEL = {
+    "neighbor": "Copied a trusted example (a near-identical prompt)",
+    "blend": "Its own reasoning, with wording borrowed from a trusted example",
+    "reasoner": "Its own reasoning only (no close trusted example yet)",
+}
+
+
+def _not_checked_reason(row: dict, now: datetime) -> str:
+    """Why the LLM hasn't checked this prompt yet, from the same rules as
+    _candidates: too new, confident enough not to need it, or waiting its turn."""
+    # 1. Too new: the user may still answer or skip.
+    created = row["created_at"]
+    if created and created > now - timedelta(minutes=MIN_AGE_MINUTES):
+        return f"Waiting: it's under {MIN_AGE_MINUTES} minutes old, so the user may still be answering."
+    # 2. Weak decisions are queued; confident copies are left alone.
+    weak = (row["outcome"] == "skipped" or row["decision_path"] in ("reasoner", "blend")
+            or (row["confidence"] or 0) < LOW_CONFIDENCE)
+    if not weak:
+        return (f"Not needed: it copied a trusted example with confidence {row['confidence']:.2f} "
+                f"(the LLM checks decisions below {LOW_CONFIDENCE}, skipped questions and the micromodel's own reasoning).")
+    when = f" at {next_scheduled_run_at.isoformat()}" if next_scheduled_run_at else ""
+    return f"Queued for the next LLM run{when} (up to 20 prompts per run, weakest first)."
+
+
+def decision_history(db: Session, view: str = "all", limit: int = 25, offset: int = 0) -> dict:
+    """Every prompt the micromodel handled, start to finish, for the admin
+    Micromodel page:
+      1. the prompt and who submitted it;
+      2. the micromodel: what it asked, how it decided (its own reasoning
+         notes, and the trusted example it copied or borrowed from);
+      3. the user: answered (with answers), skipped, or no reply;
+      4. the LLM teacher: what it asked, agreed or not, or why it hasn't
+         checked yet;
+      5. what was learned: the trusted example this prompt produced, and the
+         later prompts that used it.
+    view: a key of _HISTORY_VIEWS. Returns {items, total, counts}."""
+    from database.pg_models import User
+
+    # 1. The page of live decisions for this view, newest first, and the
+    #    size of every view (for the filter tabs).
+    where = _HISTORY_VIEWS.get(view, "TRUE")
+    rows = db.execute(text(f"""
+        SELECT id, submission_text, needs_clarification, questions, outcome, answers, confidence,
+               decision_path, reasoning, user_id, created_at, teacher_reviewed_at, teacher_agreed
+        FROM clarity_corpus WHERE source = 'live' AND {where}
+        ORDER BY created_at DESC, id DESC LIMIT :limit OFFSET :offset
+    """), {"limit": limit, "offset": offset}).mappings().all()
+    counts = dict(db.execute(text("SELECT " + ", ".join(
+        f"count(*) FILTER (WHERE {sql}) AS {name}" for name, sql in _HISTORY_VIEWS.items()
+    ) + " FROM clarity_corpus WHERE source = 'live'")).mappings().one())
+    if not rows:
+        return {"items": [], "total": counts.get(view, 0), "counts": counts}
+
+    ids = [r["id"] for r in rows]
+    texts_lower = list({(r["submission_text"] or "").lower() for r in rows})
+
+    # 2. Who submitted each prompt.
+    user_ids = {r["user_id"] for r in rows if r["user_id"]}
+    users = {u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+
+    # 3. The trusted examples each decision copied or borrowed from.
+    precedent_ids = {int(r["reasoning"]["precedent_id"]) for r in rows
+                     if isinstance(r["reasoning"], dict) and r["reasoning"].get("precedent_id")}
+    precedents = {p.id: p for p in db.query(ClarityCorpus).filter(ClarityCorpus.id.in_(precedent_ids)).all()} \
+        if precedent_ids else {}
+
+    # 4. The teacher's check of each prompt (by row, or by the same text,
+    #    since one check marks every identical prompt).
+    calls = (db.query(ClarityTeacherCall)
+             .filter((ClarityTeacherCall.corpus_id.in_(ids))
+                     | (text("lower(clarity_teacher_calls.submission_text) = ANY(:texts)")))
+             .params(texts=texts_lower)
+             .order_by(ClarityTeacherCall.created_at.desc()).all())
+    call_by_id, call_by_text = {}, {}
+    for c in calls:
+        if c.corpus_id:
+            call_by_id.setdefault(c.corpus_id, c)
+        if not c.error:
+            call_by_text.setdefault(c.submission_text.lower(), c)
+
+    # 5. The LLM's answer saved as a trusted example for the same prompt.
+    llm_rows = db.execute(text("""
+        SELECT id, source, created_at, questions, needs_clarification, lower(submission_text) AS t
+        FROM clarity_corpus
+        WHERE source IN ('llm_seed', 'llm_teacher') AND lower(submission_text) = ANY(:texts)
+        ORDER BY created_at DESC
+    """), {"texts": texts_lower}).mappings().all()
+    llm_by_text = {}
+    for r in llm_rows:
+        llm_by_text.setdefault(r["t"], r)
+
+    # 6. Later prompts that used what this prompt taught: copied or borrowed
+    #    from this row (if the user answered) or from its LLM example.
+    example_ids = ids + [r["id"] for r in llm_rows]
+    usage_rows = db.execute(text("""
+        SELECT id, submission_text, decision_path, created_at,
+               CAST(reasoning->>'precedent_id' AS INTEGER) AS precedent_id
+        FROM clarity_corpus
+        WHERE source = 'live' AND decision_path IN ('neighbor', 'blend')
+          AND reasoning IS NOT NULL AND CAST(reasoning->>'precedent_id' AS INTEGER) = ANY(:ids)
+        ORDER BY created_at DESC
+    """), {"ids": example_ids}).mappings().all()
+    used_by: dict[int, list] = {}
+    for u in usage_rows:
+        used_by.setdefault(u["precedent_id"], []).append({
+            "id": u["id"], "prompt": (u["submission_text"] or "")[:160], "path": u["decision_path"],
+            "created_at": u["created_at"].isoformat() if u["created_at"] else None,
+        })
+
+    # 7. Put each prompt's story together.
+    def iso(d):
+        return d.isoformat() if d else None
+    now = datetime.now(UTC)
+    items = []
+    for r in rows:
+        reasoning = r["reasoning"] if isinstance(r["reasoning"], dict) else {}
+        prompt_lower = (r["submission_text"] or "").lower()
+        user = users.get(r["user_id"])
+        # 7a. The trusted example the micromodel leaned on, if any.
+        precedent = None
+        pid = reasoning.get("precedent_id")
+        if pid and r["decision_path"] in ("neighbor", "blend") and int(pid) in precedents:
+            p = precedents[int(pid)]
+            precedent = {"id": p.id, "source": p.source, "prompt": (p.submission_text or "")[:300],
+                         "similarity": reasoning.get("precedent_similarity")}
+        # 7b. The teacher's check, or why there isn't one yet.
+        call = call_by_id.get(r["id"]) or call_by_text.get(prompt_lower)
+        teacher = None
+        if call:
+            teacher = {
+                "checked_at": iso(call.created_at), "run_id": call.run_id, "called_llm": call.called_llm,
+                "llm_asked": call.llm_asked, "llm_questions": call.llm_questions or [],
+                "question_match": call.question_match, "agreed": call.agreed, "error": call.error,
+            }
+        # 7c. What was learned from this prompt, and who used it since.
+        llm_example = llm_by_text.get(prompt_lower)
+        learned = []
+        if r["outcome"] == "answered":
+            learned.append({"kind": "user", "example_id": r["id"],
+                            "text": "The user answered, so this decision became a trusted example.",
+                            "used_by": used_by.get(r["id"], [])})
+        if llm_example:
+            learned.append({"kind": "llm", "example_id": llm_example["id"],
+                            "text": ("The LLM's answer to this prompt is a trusted example"
+                                     + (" (from the starter set)." if llm_example["source"] == "llm_seed" else ".")),
+                            "llm_questions": [q.get("question") for q in (llm_example["questions"] or []) if q.get("question")],
+                            "used_by": used_by.get(llm_example["id"], [])})
+        items.append({
+            "id": r["id"],
+            "created_at": iso(r["created_at"]),
+            "prompt": (r["submission_text"] or "")[:2000],
+            "user": {"id": user.id, "name": user.name, "email": user.email} if user else None,
+            "micromodel": {
+                "asked": bool(r["needs_clarification"]),
+                "questions": [q.get("question") for q in (r["questions"] or []) if isinstance(q, dict) and q.get("question")],
+                "path": r["decision_path"], "path_label": _PATH_LABEL.get(r["decision_path"] or "", r["decision_path"]),
+                "confidence": r["confidence"], "trace": reasoning.get("trace") or [],
+                "history_used": bool(reasoning.get("history_used")), "precedent": precedent,
+            },
+            "user_response": {
+                "outcome": r["outcome"] or ("not_asked" if not r["needs_clarification"] else "no_reply"),
+                "answers": r["answers"] or [],
+            },
+            "teacher": teacher,
+            "teacher_status": ("checked" if r["teacher_reviewed_at"] else "unchecked"),
+            "not_checked_reason": None if r["teacher_reviewed_at"] else _not_checked_reason(dict(r), now),
+            "learned": learned,
+        })
+    return {"items": items, "total": counts.get(view, 0), "counts": counts}

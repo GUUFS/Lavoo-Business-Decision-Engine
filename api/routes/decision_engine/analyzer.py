@@ -319,7 +319,7 @@ async def run_clarity_teacher_now(
     admin=Depends(admin_required),
     db: Session = Depends(get_db),
 ):
-    """Admin: run the teacher job now instead of waiting 6 hours.
+    """Admin: run the teacher job now instead of waiting 3 hours.
     Each prompt it checks costs one LLM call."""
     from decision_engine.clarity_teacher import run_teacher_batch
     result = await run_teacher_batch(db, limit=max(1, min(limit, 50)), trigger="manual")
@@ -337,6 +337,23 @@ async def get_clarity_learning(
     working/broken check on each link of that loop."""
     from decision_engine.clarity_teacher import learning_progress
     return {"success": True, "data": learning_progress(db, days=max(1, min(days, 90)))}
+
+
+@router.get("/clarify/history")
+async def get_clarity_history(
+    view: str = "all",
+    limit: int = 25,
+    offset: int = 0,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: every prompt the micromodel handled, start to finish: what it
+    asked and why, what the user did, what the LLM asked and whether they
+    agreed (or why it hasn't checked yet), and what was learned from it.
+    view: all | disagreed | agreed | unchecked | answered | skipped | used_learning."""
+    from decision_engine.clarity_teacher import decision_history
+    return {"success": True, "data": decision_history(
+        db, view=view, limit=max(1, min(limit, 100)), offset=max(0, offset))}
 
 
 @router.get("/clarify/activity")
