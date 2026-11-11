@@ -42,9 +42,12 @@ def user_plan_tier(db: Session, user: User) -> str:
     against the Stripe prices; accounts with no payment at all (beta or
     permanent accounts) use the plan they picked, or Pro. A partner on
     their free 6 months of Premium (subscriptions/partner_service.py) is
-    Premium whatever they pay for."""
+    Premium whatever they pay for, and so is a Premium-forever account
+    (subscriptions/lifetime_premium.py)."""
+    from subscriptions.lifetime_premium import lifetime_premium_active
     from subscriptions.partner_service import partner_premium_active
-    if partner_premium_active(user):
+    # 1. Free Premium (forever, or a partner's 6 months) beats any payment.
+    if lifetime_premium_active(user) or partner_premium_active(user):
         return "premium"
     latest = (
         db.query(Subscriptions)

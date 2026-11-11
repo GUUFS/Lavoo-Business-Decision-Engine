@@ -23,6 +23,7 @@ from api.routes.auth.login import get_current_user
 from api.routes.dependencies import admin_required, subscriber_required
 from api.cache import get_cached, set_cached, delete_cached
 from decision_engine.text_cleanup import strip_dashes_deep
+from decision_engine.tool_discovery import discover_tools_for_analysis
 from decision_engine.checkup_limits import (
     checkup_allowance,
     confirm_checkup,
@@ -356,6 +357,67 @@ async def get_clarity_history(
         db, view=view, limit=max(1, min(limit, 100)), offset=max(0, offset))}
 
 
+@router.get("/clarify/training-data")
+async def get_clarity_training_data(
+    dataset: str = "questions",
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: download what Lavoo has learned as a fine-tuning file (JSONL,
+    one chat example per line). dataset=questions: prompt -> the trusted
+    clarifying questions; dataset=checkups: prompt -> the full checkup the
+    LLM wrote. This is the data a Lavoo model of our own is trained on."""
+    from fastapi.responses import Response
+
+    from decision_engine.training_data import export_jsonl
+    # 1. Build the file.
+    body, count = export_jsonl(db, dataset)
+    # 2. Send it as a download, with the example count in a header.
+    return Response(content=body, media_type="application/jsonl", headers={
+        "Content-Disposition": f'attachment; filename="lavoo-{dataset}-training.jsonl"',
+        "X-Example-Count": str(count),
+    })
+
+
+@router.get("/clarify/training-summary")
+async def get_clarity_training_summary(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: how many training examples each dataset has, and how far each
+    is from the size worth fine-tuning on."""
+    from decision_engine.training_data import training_summary
+    return {"success": True, "data": training_summary(db)}
+
+
+@router.get("/tools/discoveries")
+async def get_tool_discoveries(
+    status: str = "all",
+    limit: int = 50,
+    offset: int = 0,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: tools analyses suggested that the catalog didn't have, and what
+    happened to each (added, already in the catalog, rejected, not found,
+    failed), with the reason. status: all | one of those."""
+    from decision_engine.tool_discovery import discovery_activity
+    return {"success": True, "data": discovery_activity(
+        db, status=status, limit=max(1, min(limit, 200)), offset=max(0, offset))}
+
+
+@router.post("/tools/discover")
+async def run_tool_discovery_now(
+    limit: int = 10,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: look up pending and failed tool names now instead of waiting
+    for the hourly job. Each name costs 1-2 LLM calls."""
+    from decision_engine.tool_discovery import process_pending
+    return {"success": True, "data": await process_pending(db, limit=max(1, min(limit, 25)))}
+
+
 @router.get("/clarify/activity")
 async def get_clarity_teacher_activity(
     runs: int = 20,
@@ -509,6 +571,9 @@ async def analyze_business_goal(
                 user_query=business_goal,
                 bottleneck_title=_bottleneck_title,
             )
+        # Tools the analysis suggested that the catalog doesn't have: look
+        # them up and add them (decision_engine/tool_discovery.py).
+        background_tasks.add_task(discover_tools_for_analysis, result["data"].get("analysis_id"), result["data"])
 
         confirm_checkup(db, checkup, result["data"].get("analysis_id"))
         return {"success": True, "message": "Analysis completed successfully", "data": result["data"]}
@@ -786,6 +851,9 @@ async def analyze_business_goal_stream(
                     user_query=business_goal,
                     bottleneck_title=_bottleneck_title,
                 )
+            # Tools the analysis suggested that the catalog doesn't have
+            # (decision_engine/tool_discovery.py).
+            background_tasks.add_task(discover_tools_for_analysis, result["data"].get("analysis_id"), result["data"])
             await delete_cached(f"analyses:user:{user_id}:limit:*")
             confirm_checkup(db, checkup, result["data"].get("analysis_id"))
             await queue.put({"type": "result", "data": result["data"]})

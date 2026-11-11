@@ -69,6 +69,8 @@ class User(Base):
     # comes with it (6 calendar months from partner_since).
     partner_since = Column(DateTime(timezone=True), nullable=True)
     partner_premium_until = Column(DateTime(timezone=True), nullable=True)
+    # Premium forever, without paying (subscriptions/lifetime_premium.py).
+    lifetime_premium = Column(Boolean, default=False, server_default="false", nullable=False)
     is_active = Column(Boolean, default=True)
     user_status = Column(String(20), server_default="active", nullable=False)
 
@@ -202,6 +204,10 @@ class AITool(Base):
     who_should_use = Column(Text)  # JSON string of use cases
     compatibility_integration = Column(Text)  # JSON string of integrations
 
+    # Where the row came from: "catalog" (the original list) or "discovered"
+    # (added by decision_engine/tool_discovery.py from an analysis).
+    source = Column(String(40), default="catalog", server_default="catalog", nullable=True)
+
     # Vector embedding for semantic search (pgvector, 384 dims).
     # Populated by scripts/generate_tool_embeddings.py (or on import via cache clear + reload).
     # Used by decision_engine/vector_recommender.py and generate script.
@@ -211,6 +217,30 @@ class AITool(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class ToolDiscovery(Base):
+    """One tool name an analysis suggested that the catalog didn't have, and
+    what decision_engine/tool_discovery.py did about it: added, already in
+    the catalog, rejected, not found, or failed (with the reason in words)."""
+
+    __tablename__ = "tool_discoveries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)                       # as the analysis wrote it
+    name_key = Column(String(255), unique=True, index=True, nullable=False)  # lower case, one row per tool
+    status = Column(String(30), nullable=False, default="pending", index=True)
+    reason = Column(Text, nullable=True)                             # why it ended in that status
+    times_suggested = Column(Integer, nullable=False, default=1)
+    attempts = Column(Integer, nullable=False, default=0)
+    website = Column(String(500), nullable=True)                     # the official site its columns came from
+    directory = Column(String(40), nullable=True)                    # "wikidata" or "website"
+    directory_url = Column(String(500), nullable=True)               # the directory entry, when there is one
+    tool_id = Column(Integer, ForeignKey("ai_tools.id", ondelete="SET NULL"), nullable=True)
+    first_analysis_id = Column(Integer, nullable=True)
+    last_analysis_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    processed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class ClarityCorpus(Base):
