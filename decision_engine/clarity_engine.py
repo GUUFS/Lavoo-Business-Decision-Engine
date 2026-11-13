@@ -1,22 +1,36 @@
 """
-The micromodel: decides whether to ask the user clarifying questions,
-without calling an LLM.
+The micromodel: decides whether to ask a founder clarifying questions
+before their checkup, without calling an LLM.
 
-For each prompt it:
-  1. Thinks about the prompt itself (clarity_reasoner.py).
-  2. Finds the most similar "trusted" past example. Trusted means the LLM
-     wrote it, or a real user answered its questions. Its own unchecked
-     guesses are never copied, so mistakes don't spread.
-  3. Decides using how similar that example is:
-       0.85 or more:  copy the example
-       0.55 to 0.85:  use its own thinking, but borrow the example's wording
-       below 0.55:    use its own thinking only
-     An example is only copied or borrowed from when it's the same kind of
-     prompt (creator vs business, same problem type), and a borrowed
-     question is only used when it fits this prompt at least as well as the
-     micromodel's own question (_precedent_fits, _fits_prompt_better).
-  4. Saves the decision. Later, the teacher job (clarity_teacher.py) has the
-     LLM check the weakest decisions, so the micromodel keeps improving.
+HOW IT GETS SMARTER WITH EVERY CHECKUP
+--------------------------------------
+  1. A founder types a prompt. The micromodel looks for the most similar
+     TRUSTED example it has seen before (see "trusted" below).
+       - Very similar (0.85+):  it copies that example's decision.
+       - Fairly similar (0.55+): it thinks for itself, but borrows the
+         example's wording for its questions.
+       - Nothing similar:        it thinks for itself only.
+  2. The decision is saved (clarity_corpus, source 'live'), with the
+     diagnosis it leads to (link_analysis).
+  3. The checkup then teaches it in one of two ways:
+       a) The founder ANSWERS the questions -> this checkup becomes a
+          trusted example straight away.
+       b) The founder SKIPS, or the micromodel was unsure -> within 3
+          hours the LLM teacher (clarity_teacher.py) answers the same
+          prompt, and the LLM's answer becomes a trusted example.
+          It also checks 3 random checkups it WAS sure about, to catch
+          confident mistakes.
+  4. The next founder with a similar prompt gets the learned answer (step 1).
+So every checkup either is an example or produces one.
+
+TRUSTED = an LLM answer a person hasn't marked "wrong"
+          (micromodel_person_check.py), or a checkup a founder answered.
+          A founder's answer counts for more than a slightly closer LLM
+          answer (USER_PREFERENCE_MARGIN). Its own unchecked guesses are
+          never copied, so its mistakes don't spread.
+
+HOW WE KNOW IT IS GETTING SMARTER: the weekly exam (micromodel_exam.py)
+uses decide(), which makes the decision without saving it.
 """
 import json
 import logging
@@ -38,7 +52,13 @@ MAX_QUESTIONS = 3
 # with the micromodel's own question (cosine similarity of their embeddings).
 RELEVANCE_MARGIN = 0.02
 
-_TRUSTED_FILTER = "(source IN ('llm_seed', 'llm_teacher') OR (source = 'live' AND outcome = 'answered'))"
+# Trusted rows: LLM answers a person hasn't marked 'wrong', and checkups a
+# founder answered. clarity_teacher.py and training_data.py use the same rule.
+_TRUSTED_FILTER = ("((source IN ('llm_seed', 'llm_teacher') AND COALESCE(person_verdict, '') <> 'wrong') "
+                   "OR (source = 'live' AND outcome = 'answered'))")
+# A user-answered example wins over a closer LLM example when it is at most
+# this much less similar: real signals are weighted above the LLM's.
+USER_PREFERENCE_MARGIN = 0.03
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -57,7 +77,11 @@ def _generate_embedding(text_in: str) -> list[float]:
         return _st_model.encode(text_in).tolist()
 
 
-def _find_trusted_neighbors(db: Session, embedding: list[float], k: int = 5) -> list[dict]:
+def _find_trusted_neighbors(db: Session, embedding: list[float], k: int = 5,
+                            exclude_text: Optional[str] = None) -> list[dict]:
+    """The k most similar trusted examples, closest first. exclude_text
+    leaves out examples with exactly that prompt (the weekly exam uses it, so an
+    exam question can't just copy the LLM's answer to the very same prompt)."""
     # Same safe string-formatting pattern as vector_recommender.py: the
     # embedding is always a list of floats from model.encode(), never raw
     # user text, so direct interpolation (required — pgvector's type can't
@@ -70,11 +94,33 @@ def _find_trusted_neighbors(db: Session, embedding: list[float], k: int = 5) -> 
             1 - (embedding <=> '{embedding_str}'::vector) AS similarity_score
         FROM clarity_corpus
         WHERE embedding IS NOT NULL AND {_TRUSTED_FILTER}
+          AND (CAST(:exclude AS TEXT) IS NULL OR lower(submission_text) <> lower(CAST(:exclude AS TEXT)))
         ORDER BY embedding <=> '{embedding_str}'::vector
         LIMIT :k
     """)
-    rows = db.execute(sql_query, {"k": k}).mappings().all()
+    rows = db.execute(sql_query, {"k": k, "exclude": exclude_text}).mappings().all()
     return [dict(r) for r in rows]
+
+
+def _pick_neighbor(neighbors: list[dict]) -> tuple[Optional[dict], float, str]:
+    """The example to learn from: the closest one, unless a user-answered
+    example is within USER_PREFERENCE_MARGIN of it (a real user's answer is
+    worth more than the LLM's guess). Returns (example, similarity, note)."""
+    # 1. Nothing found.
+    if not neighbors:
+        return None, 0.0, ""
+    best = neighbors[0]
+    best_sim = float(best["similarity_score"])
+    # 2. Already a user example, or no close user example: keep the closest.
+    if best["source"] == "live":
+        return best, best_sim, ""
+    for n in neighbors[1:]:
+        sim = float(n["similarity_score"])
+        if n["source"] == "live" and best_sim - sim <= USER_PREFERENCE_MARGIN:
+            # 3. A user's answered example almost as close: prefer it.
+            return n, sim, (f"A user-answered example ({sim:.2f}) is used instead of a slightly closer "
+                            f"LLM example ({best_sim:.2f}): real answers count for more.")
+    return best, best_sim, ""
 
 
 def user_history(db: Session, user_id: Optional[int]) -> dict:
@@ -250,23 +296,23 @@ def _log_live_decision(
     return row.id
 
 
-def get_clarifying_questions(
-    submission_text: str, db: Session, user_id: Optional[int] = None
-) -> dict[str, Any]:
-    """Main entry point. Returns:
-    needs_clarification: should we ask questions?
-    questions:           the questions to show
-    corpus_id:           sent back with the analysis so we can save the answers
-    reasoning:           the micromodel's notes on why it decided this"""
+def decide(submission_text: str, db: Session, user_id: Optional[int] = None,
+           exclude_same_prompt: bool = False) -> dict[str, Any]:
+    """The micromodel's decision for a prompt, WITHOUT saving it. Returns
+    needs_clarification, questions, decision_path, confidence, similarity,
+    neighbor, reasoning, history and embedding. exclude_same_prompt: don't
+    copy an example with this exact prompt (for the weekly exam)."""
     # 1. Think about the prompt, using what we know about this user.
     history = user_history(db, user_id)
     reasoning = reason(submission_text, history=history)
 
-    # 2. Find the most similar trusted example.
+    # 2. Find the trusted example to learn from (users' answers preferred).
     embedding = _generate_embedding(submission_text)
-    neighbors = _find_trusted_neighbors(db, embedding, k=5)
-    neighbor = neighbors[0] if neighbors else None
-    similarity = float(neighbor["similarity_score"]) if neighbor else 0.0
+    neighbors = _find_trusted_neighbors(db, embedding, k=5,
+                                        exclude_text=submission_text if exclude_same_prompt else None)
+    neighbor, similarity, preference_note = _pick_neighbor(neighbors)
+    if preference_note:
+        reasoning["trace"].append(preference_note)
 
     # 3. Decide whether to ask, and what.
     decision_path, needs_clarification, questions = _decide(submission_text, reasoning, neighbor, similarity, embedding)
@@ -274,12 +320,31 @@ def get_clarifying_questions(
     if not questions:
         needs_clarification = False
 
-    # How sure we are about this decision. The teacher job checks the
-    # least sure ones first.
+    # 4. How sure it is. The teacher job checks the least sure ones first.
     if decision_path == "neighbor":
         confidence = round(similarity, 3)
     else:
         confidence = round(reasoning["confidence"] * 0.7 + similarity * 0.3, 3)
+    return {"needs_clarification": needs_clarification, "questions": questions, "decision_path": decision_path,
+            "confidence": confidence, "similarity": similarity, "neighbor": neighbor, "reasoning": reasoning,
+            "history": history, "embedding": embedding}
+
+
+def get_clarifying_questions(
+    submission_text: str, db: Session, user_id: Optional[int] = None
+) -> dict[str, Any]:
+    """Main entry point. Returns:
+    needs_clarification: should we ask questions?
+    questions:           the questions to show
+    corpus_id:           sent back with the analysis so we can save the answers
+                         (and link the diagnosis), even when nothing is asked
+    reasoning:           the micromodel's notes on why it decided this"""
+    # 1-3. The decision (see decide()).
+    d = decide(submission_text, db, user_id=user_id)
+    reasoning, neighbor, similarity, history, embedding = (d["reasoning"], d["neighbor"], d["similarity"],
+                                                          d["history"], d["embedding"])
+    decision_path, needs_clarification, questions, confidence = (d["decision_path"], d["needs_clarification"],
+                                                                d["questions"], d["confidence"])
 
     # 4. Save the decision and why it was made, so we can learn from it later.
     stored_reasoning = {
@@ -315,7 +380,9 @@ def get_clarifying_questions(
 
 def update_outcome(db: Session, corpus_id: int, clarifications, user_id: Optional[int]) -> None:
     """Saves the user's answers. If every answer is empty, it counts as a
-    skip. Only the user's own row can be updated."""
+    skip. Only the user's own row can be updated, and only a row that asked
+    questions (the app now sends corpus_id for every checkup, to link the
+    diagnosis; a checkup with no questions has nothing to answer or skip)."""
     if not corpus_id or not user_id:
         return
     # 1. Collect each question and its answer, tidied up.
@@ -334,8 +401,27 @@ def update_outcome(db: Session, corpus_id: int, clarifications, user_id: Optiona
     db.execute(
         text("""
             UPDATE clarity_corpus SET outcome = :outcome, answers = CAST(:answers AS JSON)
-            WHERE id = :id AND source = 'live' AND user_id = :uid
+            WHERE id = :id AND source = 'live' AND user_id = :uid AND needs_clarification
         """),
         {"outcome": outcome, "answers": json.dumps(pairs) if pairs else None, "id": corpus_id, "uid": user_id},
     )
     db.commit()
+
+
+def link_analysis(db: Session, corpus_id: Optional[int], analysis_id: Optional[int], user_id: Optional[int]) -> None:
+    """Records which diagnosis this checkup decision led to, so asking can be
+    judged by the outcome (micromodel_outcomes.did_asking_help). Only the
+    user's own live row; never breaks the analysis."""
+    # 1. Nothing to link.
+    if not corpus_id or not analysis_id or not user_id:
+        return
+    # 2. Link it; a failure is logged and ignored.
+    try:
+        db.execute(text("""
+            UPDATE clarity_corpus SET analysis_id = :aid
+            WHERE id = :id AND source = 'live' AND user_id = :uid
+        """), {"aid": analysis_id, "id": corpus_id, "uid": user_id})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"[clarity_engine] couldn't link corpus {corpus_id} to analysis {analysis_id}: {e}")

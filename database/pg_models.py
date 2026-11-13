@@ -293,6 +293,15 @@ class ClarityCorpus(Base):
     # When the LLM checked this decision, and whether it agreed.
     teacher_reviewed_at = Column(DateTime(timezone=True), nullable=True)
     teacher_agreed = Column(Boolean, nullable=True)
+    # Which diagnosis (business_analyses row) this checkup produced. Lets us
+    # see whether asking questions led to better advice.
+    analysis_id = Column(Integer, ForeignKey("business_analyses.id", ondelete="SET NULL"), nullable=True)
+    # A person's verdict on an LLM answer: None (not looked at yet), 'good',
+    # or 'wrong'. A 'wrong' answer is never copied or trained on again.
+    person_verdict = Column(String(20), nullable=True)
+    person_note = Column(Text, nullable=True)
+    person_checked_at = Column(DateTime(timezone=True), nullable=True)
+    person_checked_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class ClarityTeacherRun(Base):
@@ -341,6 +350,46 @@ class ClarityTeacherCall(Base):
     question_match = Column(Float, nullable=True)
     agreed = Column(Boolean, nullable=True)
     duration_ms = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    # Why the LLM checked this decision: 'unsure' (the micromodel wasn't
+    # sure) or 'random' (it was sure; picked at random to catch confident
+    # mistakes).
+    why_checked = Column(String(20), nullable=False, default="unsure", server_default="unsure")
+
+
+class MicromodelExamQuestion(Base):
+    """One question in the micromodel's weekly exam: a founder's prompt and
+    the right answer, written by an admin (should it ask questions, and
+    which ones). See decision_engine/micromodel_exam.py."""
+    __tablename__ = "micromodel_exam_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    prompt = Column(Text, nullable=False)
+    should_ask = Column(Boolean, nullable=False)
+    # The questions it should ask (wording can differ; meaning is compared).
+    expected_questions = Column(JSON, nullable=False, default=list)
+    note = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # A removed question stays (old results mention it) but isn't asked again.
+    active = Column(Boolean, nullable=False, default=True, server_default="true")
+
+
+class MicromodelExamResult(Base):
+    """One sitting of the exam: how many questions the micromodel got right.
+    marking: for each question, what it answered and whether that was right."""
+    __tablename__ = "micromodel_exam_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # 'weekly' (the automatic job) or 'manual' (the admin's "Run exam now").
+    trigger = Column(String(20), nullable=False, default="weekly")
+    taken_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    total = Column(Integer, nullable=False, default=0)
+    # Right about WHETHER to ask.
+    right_decision = Column(Integer, nullable=False, default=0)
+    # Right about whether to ask AND asked the right questions.
+    fully_right = Column(Integer, nullable=False, default=0)
+    marking = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
 
 
@@ -1029,6 +1078,84 @@ class Commission(Base):
     user = relationship("User", foreign_keys=[user_id])
     referred_user = relationship("User", foreign_keys=[referred_user_id])
     subscription = relationship("Subscriptions", foreign_keys=[subscription_id])
+
+
+class AdminRefund(Base):
+    """A refund an admin made from the admin Refunds page
+    (subscriptions/admin_refunds.py): what was refunded, why, by whom, and
+    what was updated in our records."""
+    __tablename__ = "admin_refunds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    stripe_charge_id = Column(String(255), nullable=False, index=True)
+    stripe_payment_intent_id = Column(String(255), nullable=True)
+    stripe_refund_id = Column(String(255), nullable=True)
+    amount = Column(Numeric(precision=10, scale=2), nullable=False)
+    currency = Column(String(10), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Our payment record that was marked refunded (None if none was found).
+    subscription_record_id = Column(Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True)
+    # The Stripe subscription that was cancelled so it never charges again.
+    stripe_subscription_cancelled = Column(String(255), nullable=True)
+    reason = Column(String(40), nullable=False)
+    note = Column(Text, nullable=True)
+    # Plain-words list of what was done, shown on the admin page.
+    steps = Column(JSON, nullable=True)
+    refunded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminSentEmail(Base):
+    """An email an admin sent to a user from the admin "Email a user" page
+    (api/routes/admin/user_emails.py)."""
+    __tablename__ = "admin_sent_emails"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    to_email = Column(String(255), nullable=False)
+    subject = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    # 'sent' (Resend or SMTP) or 'logged' (no email service set up, only logged).
+    status = Column(String(20), nullable=False)
+    sent_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CommissionPayoutAttempt(Base):
+    """What the payout system did when it tried to pay a commission.
+
+    One row per KIND of outcome: if the same thing happens again (for
+    example "waiting for money" on every 10-minute retry), the row's
+    `tries` and `last_tried_at` go up instead of adding a new row. A new
+    row is added only when the outcome changes, so the rows read as a
+    short history: waiting for money -> sent.
+
+    Written by subscriptions/payout_tracker.py; shown on the admin
+    Payout Tracker page and in the Revenue page's health check.
+    """
+    __tablename__ = "commission_payout_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    commission_id = Column(Integer, ForeignKey("commissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 'flutterwave' or 'stripe' (the route the money goes out through), or None when there is no route.
+    route = Column(String(20), nullable=True)
+    # True when the money is converted to another currency to be paid (e.g. GBP earned, NGN sent).
+    cross_border = Column(Boolean, nullable=False, default=False, server_default="false")
+    from_currency = Column(String(10), nullable=True)
+    to_currency = Column(String(10), nullable=True)
+    amount = Column(Numeric(precision=12, scale=2), nullable=True)            # the commission, in from_currency
+    converted_amount = Column(Numeric(precision=14, scale=2), nullable=True)  # what is sent, in to_currency
+    fx_rate = Column(Numeric(precision=18, scale=6), nullable=True)
+    # The spendable balance seen on the route's wallet when it checked (in to_currency).
+    balance_available = Column(Numeric(precision=14, scale=2), nullable=True)
+    # sent | waiting_for_money | no_payout_account | account_not_ready | rate_unavailable
+    # | too_small | needs_review | could_not_check | failed
+    outcome = Column(String(30), nullable=False)
+    reason = Column(Text, nullable=False)  # the plain-words explanation shown to the admin
+    payout_id = Column(Integer, ForeignKey("payouts.id", ondelete="SET NULL"), nullable=True)
+    tries = Column(Integer, nullable=False, default=1, server_default="1")
+    first_tried_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_tried_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 '''Payouts Table'''

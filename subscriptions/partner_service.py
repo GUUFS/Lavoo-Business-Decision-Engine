@@ -152,7 +152,9 @@ def grant_partner(db: Session, user: User, now: datetime | None = None) -> dict:
     """Make the user a partner. A new partner's join day is today and their
     free Premium runs 6 calendar months from it; making an existing partner
     a partner again changes nothing (their 6 months don't restart).
-    Returns {"stripe_paused": n}: how many Stripe subscriptions were paused."""
+    Returns {"stripe_paused": n, "is_new": bool}: how many Stripe
+    subscriptions were paused, and whether they just became a partner (the
+    caller emails new partners only)."""
     now = now or datetime.now(timezone.utc)
     # 1. A new partner: today is their join day; Premium for 6 months from it.
     is_new = not user.is_partner or user.partner_since is None
@@ -168,7 +170,7 @@ def grant_partner(db: Session, user: User, now: datetime | None = None) -> dict:
     #    an existing partner's subscriptions were paused when they joined).
     stripe_paused = pause_stripe_billing(user) if is_new and partner_premium_active(user, now) else 0
     logger.info("[partner] user %s is a partner; free Premium until %s", user.id, user.partner_premium_until)
-    return {"stripe_paused": stripe_paused}
+    return {"stripe_paused": stripe_paused, "is_new": is_new}
 
 
 def revoke_partner(db: Session, user: User) -> dict:

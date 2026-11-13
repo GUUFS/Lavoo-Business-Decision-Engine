@@ -428,41 +428,17 @@ class PayoutService:
             stuck_failed,
         )
 
-        # 4. Pending commissions with a real payout account that have
-        # NEVER been attempted at all (payout_id still null) — should only
-        # ever be momentary, between creation and the first attempt.
-        #
-        # Capped at 30 days old (settle_pending_flutterwave_commissions /
-        # settle_pending_stripe_commissions's own lookback_days default in
-        # commission_service.py): a commission older than that was never
-        # going to be picked up by the settle jobs in the first place — it's
-        # a known, separate "needs manual handling" case, not a sign those
-        # jobs are down. Without this cap, two of Clinton's own commissions
-        # (#52, #55 — both outside that 30-day window) permanently tripped
-        # this into "broken" even though the settle jobs were working fine
-        # the whole time; every FUTURE commission outside the window would
-        # do the same, alarming on something this check isn't meant to
-        # catch instead of the real thing it's for: a commission that's new
-        # enough to still be in-window but hasn't been touched yet.
-        never_attempted_cutoff = now - timedelta(hours=1)
-        settle_job_lookback_cutoff = now - timedelta(days=30)
-        never_attempted = (
-            db.query(Commission)
-            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
-            .filter(
-                Commission.status == "pending",
-                Commission.payout_id.is_(None),
-                Commission.created_at < never_attempted_cutoff,
-                Commission.created_at >= settle_job_lookback_cutoff,
-            )
-            .count()
-        )
-        add(
-            "Commissions never attempted", "critical" if never_attempted else "ok",
-            f"{never_attempted} commission(s) with a usable payout account have sat over an hour with no payout attempt at all" if never_attempted
-            else "No commission with a usable account has gone unattempted",
-            never_attempted,
-        )
+        # 4. Commissions that should have been paid by now, each with its
+        # REAL reason (subscriptions/payout_tracker.py), split three ways:
+        #   - waiting for money (warning: retried every 10 minutes, sends itself)
+        #   - needs action (critical: nothing happens until a person acts)
+        #   - never tried (critical: the payout jobs may be down)
+        # Before this, all three showed as "never attempted" and the page said
+        # "broken" even when the system was only waiting for the wallet to be
+        # topped up. The 30-day window matches the retry jobs' own lookback.
+        from subscriptions.payout_tracker import unpaid_commission_checks
+        for name, status, detail, count in unpaid_commission_checks(db, now, lookback_days=30):
+            add(name, status, detail, count)
 
         # 5 & 6. Cross-check against the providers THEMSELVES, not just our
         # own tables. Every check above this point only ever looks at data

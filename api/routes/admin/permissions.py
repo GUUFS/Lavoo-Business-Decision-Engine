@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
@@ -206,6 +206,7 @@ async def set_user_staff(
 async def set_user_partner(
     user_id: int,
     request: SetPartnerRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ):
@@ -215,7 +216,7 @@ async def set_user_partner(
     for 6 calendar months from the day they become a partner (see
     subscriptions/partner_service.py); any Stripe subscription they pay for
     is paused for those 6 months. Removing it ends both straight away and
-    resumes that Stripe billing.
+    resumes that Stripe billing. A new partner gets a welcome email.
     Cannot change your own partner status or another admin's.
     """
     from subscriptions.partner_service import grant_partner, revoke_partner
@@ -248,6 +249,11 @@ async def set_user_partner(
         message = f"{user.name} is now a Partner: 50% builder bonus, Premium free until {until}"
         if result["stripe_paused"]:
             message += f". Stripe billing paused until then ({result['stripe_paused']} subscription(s))"
+        # 1b. A new partner is told by email (after the response, so the page doesn't wait).
+        if result.get("is_new") and user.email:
+            from emailing.email_service import email_service
+            background_tasks.add_task(email_service.send_partner_welcome, user.email, user.name, until)
+            message += ". A welcome email is on its way to them"
     # 2. Revoke: both end now, and paused Stripe billing resumes.
     else:
         result = revoke_partner(db, user)

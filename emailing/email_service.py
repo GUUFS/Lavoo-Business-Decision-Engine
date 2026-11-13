@@ -975,6 +975,70 @@ class EmailService:
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
+    def _simple_layout(self, title: str, body_html: str, button_text: str | None = None,
+                       button_link: str | None = None) -> str:
+        """The plain Lavoo email layout: a purple header, the body, an
+        optional button and the footer. body_html must already be safe HTML."""
+        # 1. The optional button.
+        button = (f'<p style="text-align: center;"><a href="{button_link}" style="display: inline-block; '
+                  f'padding: 12px 30px; background: #8b5cf6; color: white; text-decoration: none; '
+                  f'border-radius: 5px; margin: 20px 0;">{button_text}</a></p>') if button_text and button_link else ""
+        # 2. The page.
+        return f"""
+        <!DOCTYPE html>
+        <html><head><meta charset="UTF-8"></head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0;">
+          <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; padding: 30px;
+                        text-align: center; border-radius: 10px 10px 0 0;">
+              <h1 style="margin: 0;">{title}</h1>
+            </div>
+            <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+              {body_html}
+              {button}
+            </div>
+            <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
+              <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+            </div>
+          </div>
+        </body></html>
+        """
+
+    def send_partner_welcome(self, user_email: str, name: str, premium_until: str | None):
+        """Sent when an admin makes someone a Partner (api/routes/admin/permissions.py)."""
+        import html as _html
+        # 1. What being a partner gives them.
+        safe_name = _html.escape(name or "there")
+        until = f" until <strong>{_html.escape(premium_until)}</strong>" if premium_until else ""
+        body = f"""
+            <h2>Welcome aboard, {safe_name}!</h2>
+            <p>You are now a <strong>Lavoo Partner</strong>. Here is what that gives you:</p>
+            <ul>
+              <li><strong>Premium, free</strong>{until}. Nothing to pay, and you won't be charged during that time.</li>
+              <li><strong>A 50% Builder Bonus</strong> on every payment made by the people you refer.</li>
+            </ul>
+            <p>Share your referral link from your dashboard to start earning.</p>
+        """
+        # 2. Send it.
+        text = (f"Welcome aboard, {name or 'there'}! You are now a Lavoo Partner: Premium free"
+                f"{' until ' + premium_until if premium_until else ''}, and a 50% Builder Bonus on your referrals' payments.")
+        return self._send_email(user_email, name, "You're now a Lavoo Partner",
+                                self._simple_layout("You're a Lavoo Partner", body, "Open your dashboard",
+                                                    f"{self.frontend_url}/dashboard/referrals"), text)
+
+    def send_admin_message(self, user_email: str, name: str, subject: str, message: str):
+        """An admin's own message to a user (admin "Email a user" page). The
+        text is escaped, so whatever the admin types can't break the email;
+        line breaks are kept. Replies go to the support address."""
+        import html as _html
+        # 1. The admin's words, made safe, with line breaks kept.
+        safe_message = _html.escape(message).replace("\n", "<br>")
+        body = f"<p>Hi {_html.escape(name or 'there')},</p><p>{safe_message}</p><p>The Lavoo team</p>"
+        # 2. Send it.
+        text = f"Hi {name or 'there'},\n\n{message}\n\nThe Lavoo team"
+        return self._send_email(user_email, name, subject, self._simple_layout(_html.escape(subject), body),
+                                text, reply_to=self.support_email)
+
     def send_referral_notification(self, user_email: str, name: str, referred_user_name: str):
         """Send referral notification"""
         subject = f"{referred_user_name} Joined Using Your Referral!"
