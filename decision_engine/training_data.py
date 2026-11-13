@@ -41,12 +41,12 @@ CHECKUPS_SYSTEM = (
 TARGETS = {"questions": 1000, "checkups": 2000}
 
 # Trusted question examples the LLM teacher didn't overrule, newest first,
-# one per distinct prompt.
+# one per distinct prompt. LLM answers a person marked 'wrong' are left out.
 _QUESTIONS_SQL = """
     SELECT DISTINCT ON (lower(trim(submission_text)))
            submission_text, needs_clarification, questions
     FROM clarity_corpus
-    WHERE (source IN ('llm_seed', 'llm_teacher')
+    WHERE ((source IN ('llm_seed', 'llm_teacher') AND COALESCE(person_verdict, '') <> 'wrong')
            OR (source = 'live' AND outcome = 'answered' AND teacher_agreed IS NOT FALSE))
       AND length(trim(submission_text)) > 0
     ORDER BY lower(trim(submission_text)),

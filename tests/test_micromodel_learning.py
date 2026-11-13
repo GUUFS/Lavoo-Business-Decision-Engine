@@ -63,14 +63,15 @@ def _working_loop(db):
 def test_a_connected_loop_says_it_is_learning_and_from_where(db):
     _working_loop(db)
     data = learning_progress(db)
-    assert data["status"] == "learning"
+    # No exam yet: the headline says there's no real measure, not "learning".
+    assert data["status"] == "idle" and "No exam result yet" in data["headline"]
     assert data["trusted"]["total"] == 3                       # seed + teacher + answered
     assert data["trusted"]["new_from_users"] == 1 and data["trusted"]["new_from_llm"] == 1
-    assert "1 from users' answers, 1 from the LLM" in data["headline"]
     assert data["users"]["answered"] == 1 and data["users"]["skipped"] == 1
     assert data["usage"]["copied"] == 1
     assert data["llm"]["agreement_pct"] == 50.0
-    assert all(c["ok"] is not False for c in data["checks"])
+    # Every link works; only a person checking the LLM's answers is still to do.
+    assert [c["key"] for c in data["checks"] if c["ok"] is False] == ["person_checked"]
     assert data["growth"][-1]["total"] == 3
 
 

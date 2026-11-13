@@ -14,8 +14,14 @@ Next time a similar prompt comes in, the micromodel copies the LLM's answer.
     measured with the local embedding model, no extra LLM call).
 So the micromodel asking the wrong question counts as a disagreement.
 
+Each run also checks a few RANDOM decisions it WAS sure about (RANDOM_CHECKS_PER_RUN).
+Only checking the unsure ones would never catch a decision that is
+confidently wrong, and the agreement on the random ones is a fair estimate
+of how often the micromodel is right overall.
+
 clarity_stats shows how often they agree. That number going up means the
-micromodel is getting smarter.
+micromodel is getting smarter. The LLM's answers are not taken on trust
+for ever: a person checks some each week (micromodel_person_check.py).
 """
 import logging
 import time
@@ -25,6 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database.pg_models import ClarityCorpus, ClarityTeacherCall, ClarityTeacherRun
+from decision_engine.clarity_engine import _TRUSTED_FILTER as _TRUSTED_SQL
 from decision_engine.clarity_reasoner import classify_question
 
 logger = logging.getLogger(__name__)
@@ -45,16 +52,18 @@ last_job_error: str | None = None
 MIN_FIRST_WAIT_SECONDS = 60
 # Wait until the user has had time to answer or skip.
 MIN_AGE_MINUTES = 15
-# Rows the micromodel copies from (same rule as clarity_engine._TRUSTED_FILTER).
-_TRUSTED_SQL = "(source IN ('llm_seed', 'llm_teacher') OR (source = 'live' AND outcome = 'answered'))"
+# Random confident decisions added to every run, to catch confident mistakes.
+RANDOM_CHECKS_PER_RUN = 3
 
 
-def _candidates(db: Session, limit: int) -> list[dict]:
+def _candidates(db: Session, limit: int, random_checks: int = RANDOM_CHECKS_PER_RUN) -> list[dict]:
     """Pick up to `limit` live micromodel decisions for the LLM to re-check:
     unchecked, at least MIN_AGE_MINUTES old, and weak (the user skipped the
     questions, no similar trusted example was found, or confidence was
     below LOW_CONFIDENCE), or blended (question wording borrowed from another
-    example). Duplicate prompts are dropped so each is checked once."""
+    example). Then up to `random_checks` random ones it WAS sure about, so a
+    confident mistake can be caught. Each gets why_checked = 'unsure' or
+    'random'. Duplicate prompts are dropped so each is checked once."""
     # 1. Unchecked live decisions that are old enough and look weak.
     #    Order: skipped questions first, then no similar example, then least sure.
     rows = db.execute(text(f"""
@@ -78,9 +87,30 @@ def _candidates(db: Session, limit: int) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        out.append(dict(r))
+        out.append({**dict(r), "why_checked": "unsure"})
         if len(out) >= limit:
             break
+    # 3. A few random decisions it WAS sure about, to catch confident mistakes.
+    if random_checks > 0:
+        confident = db.execute(text(f"""
+            SELECT id, submission_text, needs_clarification, questions, outcome, decision_path, confidence
+            FROM clarity_corpus
+            WHERE source = 'live' AND teacher_reviewed_at IS NULL
+              AND created_at < now() - interval '{MIN_AGE_MINUTES} minutes'
+              AND NOT {_WEAK_SQL}
+            ORDER BY random()
+            LIMIT :n
+        """), {"low": LOW_CONFIDENCE, "n": random_checks * 3}).mappings().all()
+        added = 0
+        for r in confident:
+            key = " ".join(r["submission_text"].lower().split())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({**dict(r), "why_checked": "random"})
+            added += 1
+            if added >= random_checks:
+                break
     return out
 
 
@@ -101,7 +131,8 @@ def seconds_until_next_run(db: Session, now: datetime | None = None) -> float:
 
 
 # SQL: is this unchecked live decision too weak to trust without the LLM?
-# Mirrors the WHERE clause in _candidates.
+# Mirrors the WHERE clause in _candidates (and its random confident sample
+# is NOT this).
 # NULL-safe (an unanswered row has outcome NULL), so NOT (...) works too.
 _WEAK_SQL = ("(COALESCE(outcome, '') = 'skipped' OR COALESCE(decision_path, '') IN ('reasoner', 'blend') "
              "OR COALESCE(confidence, 0) < :low)")
@@ -125,12 +156,13 @@ def why_nothing_to_check(db: Session) -> str:
         return ("Nothing to check, so the LLM wasn't called: every checkup prompt has already been checked "
                 "(no new prompts since the last run).")
     # 3. Unchecked, but none of them qualify yet: say which rule held each back.
+    #    (Only RANDOM_CHECKS_PER_RUN of the sure ones are checked each run.)
     parts = []
     if row["too_new"]:
         parts.append(f"{row['too_new']} under {MIN_AGE_MINUTES} minutes old (the user may still be answering)")
     if row["confident"]:
         parts.append(f"{row['confident']} copied a trusted example with confidence of at least {LOW_CONFIDENCE}, "
-                     "so they don't need the LLM")
+                     "so they don't need the LLM (only a random few of these are checked each run)")
     return (f"Nothing to check, so the LLM wasn't called: {row['unchecked']} unchecked prompt(s), "
             + "; ".join(parts) + ".")
 
@@ -159,6 +191,9 @@ def _run_note(db: Session, run: ClarityTeacherRun, counts: dict) -> str:
     note = (f"Checked {counts['reviewed']} of {counts['candidates']}: {counts['llm_calls']} LLM call(s), "
             f"{max(reused, 0)} reused earlier answer(s), {counts['agreed']} agreed with the micromodel, "
             f"{counts['new_precedents']} new trusted example(s).")
+    if counts.get("random_checked"):
+        note += (f" Of these, {counts['random_checked']} were random confident decisions "
+                 f"({counts['random_agreed']} agreed).")
     if counts["errors"]:
         note += f" {counts['errors']} check(s) failed and will be retried next run."
     return note
@@ -190,16 +225,18 @@ async def run_teacher_batch(db: Session, limit: int = 20, trigger: str = "schedu
     run = ClarityTeacherRun(trigger=trigger, started_at=datetime.now(UTC))
     db.add(run)
     db.commit()
-    counts = {"candidates": 0, "reviewed": 0, "agreed": 0, "llm_calls": 0, "new_precedents": 0, "errors": 0}
+    counts = {"candidates": 0, "reviewed": 0, "agreed": 0, "llm_calls": 0, "new_precedents": 0, "errors": 0,
+              "random_checked": 0, "random_agreed": 0}
     try:
         await _review_candidates(db, limit, run.id, counts)
     except Exception as e:
         db.rollback()
         run.error = str(e)[:2000]
         logger.error(f"[clarity-teacher] run {run.id} failed: {e}", exc_info=True)
-    # Save the counts and a plain-words note on what happened (or why not).
-    for key, value in counts.items():
-        setattr(run, key, value)
+    # Save the counts (the run's own columns) and a plain-words note on what
+    # happened (or why not). The random-sample counts go in the note.
+    for key in ("candidates", "reviewed", "agreed", "llm_calls", "new_precedents", "errors"):
+        setattr(run, key, counts[key])
     try:
         run.note = _run_note(db, run, counts)
     except Exception as e:
@@ -240,6 +277,7 @@ def _log_call(db: Session, run_id: int, c: dict, **fields) -> None:
         micromodel_questions=_question_texts(c.get("questions")),
         micromodel_confidence=c.get("confidence"),
         decision_path=c.get("decision_path"),
+        why_checked=c.get("why_checked") or "unsure",
         **fields,
     ))
 
@@ -331,6 +369,9 @@ async def _review_candidates(db: Session, limit: int, run_id: int, counts: dict)
             db.commit()
             counts["reviewed"] += 1
             counts["agreed"] += int(agreed)
+            if c.get("why_checked") == "random":
+                counts["random_checked"] += 1
+                counts["random_agreed"] += int(agreed)
             logger.info(
                 f"[clarity-teacher] {prompt[:60]!r} micromodel_asked={c['needs_clarification']} "
                 f"llm_asked={verdict['needs_clarification']} question_match={match} agreed={agreed}"
@@ -370,6 +411,7 @@ def teacher_activity(db: Session, runs: int = 20, calls: int = 50) -> dict:
     else:
         scheduler = None
     return {
+        "last_run_at": iso(run_rows[0].started_at) if run_rows else None,
         "next_run_at": iso(next_scheduled_run_at),
         "run_every_hours": RUN_EVERY_SECONDS // 3600,
         "scheduler_problem": scheduler,
@@ -391,6 +433,7 @@ def teacher_activity(db: Session, runs: int = 20, calls: int = 50) -> dict:
                 "micromodel_questions": c.micromodel_questions or [], "question_match": c.question_match,
                 "decision_path": c.decision_path, "llm_asked": c.llm_asked, "llm_questions": c.llm_questions or [],
                 "agreed": c.agreed, "duration_ms": c.duration_ms, "error": c.error,
+                "why_checked": c.why_checked or "unsure",
             }
             for c in call_rows
         ],
@@ -437,189 +480,308 @@ def clarity_stats(db: Session, days: int = 30) -> dict:
     }
 
 
+def ago(seconds: float | None) -> str:
+    """'49 min ago' / '15 h ago' / '3 d ago': the same wording and rounding
+    as the admin app's relativeTime(), so the page uses one time format."""
+    # 1. Never happened.
+    if seconds is None:
+        return "never"
+    # 2. Minutes, then hours (up to 2 days), then days.
+    mins = round(abs(seconds) / 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min ago"
+    if mins < 60 * 48:
+        return f"{round(mins / 60)} h ago"
+    return f"{round(mins / 1440)} d ago"
+
+
 def _check(key: str, label: str, ok: bool | None, detail: str) -> dict:
     """One link in the learning loop for the admin page. ok: True working,
     False broken, None nothing to judge yet (e.g. no prompts this week)."""
     return {"key": key, "label": label, "ok": ok, "detail": detail}
 
 
-def learning_progress(db: Session, days: int = 7, weeks: int = 8) -> dict:
-    """For the admin Micromodel page: is the micromodel learning from users
-    and from the LLM, and is every link of that loop connected?
+def _pct(part: int, whole: int) -> float | None:
+    """part as a percentage of whole, or None when whole is 0."""
+    return round(100 * part / whole, 1) if whole else None
 
-    The loop: the micromodel asks questions -> users answer or skip them ->
-    answered decisions become trusted examples; the teacher job has the LLM
-    re-check weak decisions -> the LLM's answers become trusted examples;
-    new prompts then copy or borrow from those examples instead of the
-    micromodel guessing. Returns the numbers for each part (this period vs
-    the one before), the weekly growth of trusted examples, and a check for
-    each link (working / broken / nothing to judge yet)."""
-    # 1. This period and the one before it, for "up from N" comparisons.
-    params = {"days": days}
-    period = "created_at > now() - make_interval(days => :days)"
-    previous = ("created_at <= now() - make_interval(days => :days) "
-                "AND created_at > now() - make_interval(days => :days * 2)")
 
-    # 2. Trusted examples: what the micromodel copies from. LLM seed rows,
-    #    LLM teacher rows, and live decisions a user answered.
-    trusted = db.execute(text(f"""
+# SQL time windows: the last `days` days, and the `days` before that.
+_THIS_PERIOD = "created_at > now() - make_interval(days => :days)"
+_PERIOD_BEFORE = ("created_at <= now() - make_interval(days => :days) "
+                  "AND created_at > now() - make_interval(days => :days * 2)")
+
+
+def _example_numbers(db: Session, days: int, weeks: int) -> dict:
+    """The trusted examples it copies from: how many, from where, how many
+    are new, and how many were added each week (with the running total)."""
+    # 1. Counts by where the example came from.
+    row = db.execute(text(f"""
         SELECT
-          count(*) FILTER (WHERE source = 'llm_seed') AS llm_seed,
-          count(*) FILTER (WHERE source = 'llm_teacher') AS llm_teacher,
-          count(*) FILTER (WHERE source = 'live' AND outcome = 'answered') AS user_answered,
-          count(*) FILTER (WHERE {period} AND source = 'llm_teacher') AS new_llm,
-          count(*) FILTER (WHERE {period} AND source = 'live' AND outcome = 'answered') AS new_user,
-          count(*) FILTER (WHERE {previous} AND (source = 'llm_teacher' OR (source = 'live' AND outcome = 'answered'))) AS new_before,
-          count(*) FILTER (WHERE {_TRUSTED_SQL} AND embedding IS NULL) AS missing_embedding
+          count(*) FILTER (WHERE source = 'llm_seed')                                         AS llm_seed,
+          count(*) FILTER (WHERE source = 'llm_teacher')                                      AS llm_teacher,
+          count(*) FILTER (WHERE source = 'live' AND outcome = 'answered')                    AS user_answered,
+          count(*) FILTER (WHERE {_THIS_PERIOD} AND source = 'llm_teacher')                   AS new_llm,
+          count(*) FILTER (WHERE {_THIS_PERIOD} AND source = 'live' AND outcome = 'answered') AS new_user,
+          count(*) FILTER (WHERE {_PERIOD_BEFORE}
+                           AND (source = 'llm_teacher' OR (source = 'live' AND outcome = 'answered'))) AS new_before,
+          count(*) FILTER (WHERE {_TRUSTED_SQL} AND embedding IS NULL)                         AS missing_embedding
         FROM clarity_corpus
-    """), params).mappings().one()
-    total_trusted = trusted["llm_seed"] + trusted["llm_teacher"] + trusted["user_answered"]
+    """), {"days": days}).mappings().one()
+    total = row["llm_seed"] + row["llm_teacher"] + row["user_answered"]
 
-    # 3. Feedback from users: questions shown, answered, skipped, and shown
-    #    over an hour ago with nothing recorded (the answer never came back).
-    users = db.execute(text(f"""
-        SELECT
-          count(*) AS decisions,
-          count(*) FILTER (WHERE needs_clarification) AS asked,
-          count(*) FILTER (WHERE outcome = 'answered') AS answered,
-          count(*) FILTER (WHERE outcome = 'skipped') AS skipped,
-          count(*) FILTER (WHERE needs_clarification AND outcome IS NULL
-                           AND created_at < now() - interval '1 hour') AS no_outcome,
-          count(*) FILTER (WHERE decision_path = 'neighbor') AS copied,
-          count(*) FILTER (WHERE decision_path = 'blend') AS borrowed,
-          count(*) FILTER (WHERE decision_path = 'reasoner') AS own,
-          max(created_at) FILTER (WHERE outcome = 'answered') AS last_answered_at
-        FROM clarity_corpus WHERE source = 'live' AND {period}
-    """), params).mappings().one()
-    users_before = db.execute(text(f"""
-        SELECT count(*) AS decisions,
-               count(*) FILTER (WHERE decision_path IN ('neighbor', 'blend')) AS learned
-        FROM clarity_corpus WHERE source = 'live' AND {previous}
-    """), params).mappings().one()
-
-    # 4. Feedback from the LLM: teacher checks this period and the one
-    #    before (agreement going up = the micromodel getting smarter).
-    def teacher_numbers(where: str) -> dict:
-        return dict(db.execute(text(f"""
-            SELECT count(*) AS checks,
-                   count(*) FILTER (WHERE agreed) AS agreed,
-                   count(*) FILTER (WHERE error IS NOT NULL) AS errors,
-                   count(*) FILTER (WHERE called_llm) AS llm_calls
-            FROM clarity_teacher_calls WHERE {where}
-        """), params).mappings().one())
-    teacher_now, teacher_before = teacher_numbers(period), teacher_numbers(previous)
-    last_run = db.query(ClarityTeacherRun).order_by(ClarityTeacherRun.started_at.desc()).first()
-
-    # 5. Weekly growth: trusted examples added each week, and the running total.
+    # 2. Added per week, with the running total after each week.
     weekly = db.execute(text("""
         SELECT date_trunc('week', created_at) AS week,
-               count(*) FILTER (WHERE source = 'llm_teacher') AS from_llm,
-               count(*) FILTER (WHERE source = 'live' AND outcome = 'answered') AS from_users
+               count(*) FILTER (WHERE source = 'llm_teacher')                      AS from_llm,
+               count(*) FILTER (WHERE source = 'live' AND outcome = 'answered')    AS from_users
         FROM clarity_corpus
         WHERE created_at > date_trunc('week', now()) - make_interval(weeks => :weeks - 1)
         GROUP BY 1 ORDER BY 1
     """), {"weeks": weeks}).mappings().all()
-    added_in_window = sum(r["from_llm"] + r["from_users"] for r in weekly)
-    running = total_trusted - added_in_window
+    running = total - sum(r["from_llm"] + r["from_users"] for r in weekly)
     growth = []
     for r in weekly:
         running += r["from_llm"] + r["from_users"]
         growth.append({"week": r["week"].date().isoformat(), "from_llm": r["from_llm"],
                        "from_users": r["from_users"], "total": running})
+    return {**dict(row), "total": total, "growth": growth}
 
-    # 6. Percentages (None when there's nothing to divide by).
-    def pct(a, b):
-        return round(100 * a / b, 1) if b else None
-    learned_now = users["copied"] + users["borrowed"]
 
-    # 7. Check each link of the loop.
+def _founder_numbers(db: Session, days: int) -> dict:
+    """What founders did with its checkups: asked, answered, skipped, no
+    reply, and how each decision was made (copied / borrowed / its own)."""
+    # 1. This period.
+    now = db.execute(text(f"""
+        SELECT
+          count(*)                                                     AS decisions,
+          count(*) FILTER (WHERE needs_clarification)                  AS asked,
+          count(*) FILTER (WHERE outcome = 'answered')                 AS answered,
+          count(*) FILTER (WHERE outcome = 'skipped')                  AS skipped,
+          count(*) FILTER (WHERE needs_clarification AND outcome IS NULL
+                           AND created_at < now() - interval '1 hour') AS no_outcome,
+          count(*) FILTER (WHERE decision_path = 'neighbor')           AS copied,
+          count(*) FILTER (WHERE decision_path = 'blend')              AS borrowed,
+          count(*) FILTER (WHERE decision_path = 'reasoner')           AS own,
+          max(created_at) FILTER (WHERE outcome = 'answered')          AS last_answered_at
+        FROM clarity_corpus WHERE source = 'live' AND {_THIS_PERIOD}
+    """), {"days": days}).mappings().one()
+    # 2. The period before, for "up from" comparisons.
+    before = db.execute(text(f"""
+        SELECT count(*)                                                      AS decisions,
+               count(*) FILTER (WHERE decision_path IN ('neighbor', 'blend')) AS learned
+        FROM clarity_corpus WHERE source = 'live' AND {_PERIOD_BEFORE}
+    """), {"days": days}).mappings().one()
+    return {**dict(now), "decisions_before": before["decisions"], "learned_before": before["learned"]}
+
+
+def _llm_numbers(db: Session, days: int, weeks: int) -> dict:
+    """How often the LLM agrees with the micromodel: this period, the
+    period before, and week by week (unsure and random checks apart)."""
+    # 1. Totals for a time window.
+    def totals(window: str) -> dict:
+        return dict(db.execute(text(f"""
+            SELECT count(*)                                                       AS checks,
+                   count(*) FILTER (WHERE agreed)                                 AS agreed,
+                   count(*) FILTER (WHERE error IS NOT NULL)                      AS errors,
+                   count(*) FILTER (WHERE called_llm)                             AS llm_calls,
+                   count(*) FILTER (WHERE why_checked = 'random' AND error IS NULL) AS random_checks,
+                   count(*) FILTER (WHERE why_checked = 'random' AND agreed)      AS random_agreed
+            FROM clarity_teacher_calls WHERE {window}
+        """), {"days": days}).mappings().one())
+    now, before = totals(_THIS_PERIOD), totals(_PERIOD_BEFORE)
+
+    # 2. Week by week: the trend that shows whether it is getting smarter.
+    weekly = db.execute(text("""
+        SELECT date_trunc('week', created_at)                                    AS week,
+               count(*) FILTER (WHERE error IS NULL)                             AS checks,
+               count(*) FILTER (WHERE agreed)                                    AS agreed,
+               count(*) FILTER (WHERE why_checked = 'random' AND error IS NULL)  AS random_checks,
+               count(*) FILTER (WHERE why_checked = 'random' AND agreed)         AS random_agreed
+        FROM clarity_teacher_calls
+        WHERE created_at > date_trunc('week', now()) - make_interval(weeks => :weeks - 1)
+        GROUP BY 1 ORDER BY 1
+    """), {"weeks": weeks}).mappings().all()
+
+    # 3. When the teacher last ran.
+    last_run = db.query(ClarityTeacherRun).order_by(ClarityTeacherRun.started_at.desc()).first()
+    return {"now": now, "before": before, "last_run": last_run,
+            "weeks": [{**dict(r), "week": r["week"].date().isoformat()} for r in weekly]}
+
+
+def _loop_checks(days: int, examples: dict, founders: dict, llm: dict, exam: dict, person: dict) -> list[dict]:
+    """Is every link of the learning loop working? One check per link."""
     checks = []
-    # 7a. Questions are being asked at all.
+    learned_now = founders["copied"] + founders["borrowed"]
+    recorded = founders["answered"] + founders["skipped"]
+    teacher = llm["now"]
+
+    # 1. Questions are being asked at all.
     checks.append(_check(
         "asking", "The micromodel is asking users questions",
-        None if not users["decisions"] else users["asked"] > 0,
-        f"{users['asked']} of {users['decisions']} checkups got questions in the last {days} days"
-        if users["decisions"] else f"No checkups in the last {days} days",
+        None if not founders["decisions"] else founders["asked"] > 0,
+        f"{founders['asked']} of {founders['decisions']} checkups got questions in the last {days} days"
+        if founders["decisions"] else f"No checkups in the last {days} days",
     ))
-    # 7b. Users' answers come back with the checkup (the corpus_id link
-    #     from the app to /analyze). Answers can be abandoned, so it's only
-    #     broken when questions were shown and NONE came back.
-    recorded = users["answered"] + users["skipped"]
+    # 2. Founders' answers come back with the checkup. Only broken when
+    #    questions were shown and NONE came back (some are abandoned).
     checks.append(_check(
         "answers_saved", "Users' answers and skips are saved",
-        None if not users["asked"] else recorded > 0,
-        f"{recorded} recorded ({users['answered']} answered, {users['skipped']} skipped), "
-        f"{users['no_outcome']} shown with nothing back" if users["asked"] else "No questions shown yet",
+        None if not founders["asked"] else recorded > 0,
+        f"{recorded} recorded ({founders['answered']} answered, {founders['skipped']} skipped), "
+        f"{founders['no_outcome']} shown with nothing back" if founders["asked"] else "No questions shown yet",
     ))
-    # 7c. Answered decisions are searchable as trusted examples.
+    # 3. Trusted examples can be found by new prompts (they have a search vector).
     checks.append(_check(
         "examples_searchable", "Trusted examples can be found by new prompts",
-        trusted["missing_embedding"] == 0,
-        f"{total_trusted} trusted examples" + (f", {trusted['missing_embedding']} without a search vector"
-                                               if trusted["missing_embedding"] else ", all searchable"),
+        examples["missing_embedding"] == 0,
+        f"{examples['total']} trusted examples" + (f", {examples['missing_embedding']} without a search vector"
+                                                   if examples["missing_embedding"] else ", all searchable"),
     ))
-    # 7d. The teacher job runs on schedule (within 1.5x its interval).
-    overdue_after = RUN_EVERY_SECONDS * 1.5
+    # 4. The LLM teacher runs on time (late = more than 1.5x its interval).
+    last_run = llm["last_run"]
     last_age = (datetime.now(UTC) - last_run.started_at).total_seconds() if last_run and last_run.started_at else None
     checks.append(_check(
         "teacher_running", f"The LLM teacher runs every {RUN_EVERY_SECONDS // 3600} hours",
-        bool(last_run) and last_age is not None and last_age <= overdue_after,
-        f"Last run {round(last_age / 3600, 1)} hours ago" if last_age is not None else "It has never run",
+        last_age is not None and last_age <= RUN_EVERY_SECONDS * 1.5,
+        f"Last run {ago(last_age)}" if last_age is not None else "It has never run",
     ))
-    # 7e. The teacher's LLM checks succeed (not all failing).
+    # 5. The LLM's checks succeed (not all failing).
     checks.append(_check(
         "teacher_ok", "The LLM's checks succeed",
-        None if not teacher_now["checks"] else teacher_now["errors"] < teacher_now["checks"],
-        f"{teacher_now['checks'] - teacher_now['errors']} of {teacher_now['checks']} checks succeeded in the last {days} days"
-        if teacher_now["checks"] else f"No checks in the last {days} days",
+        None if not teacher["checks"] else teacher["errors"] < teacher["checks"],
+        f"{teacher['checks'] - teacher['errors']} of {teacher['checks']} checks succeeded in the last {days} days"
+        if teacher["checks"] else f"No checks in the last {days} days",
     ))
-    # 7f. New prompts actually use what was learned.
+    # 6. New prompts use what it learned.
     checks.append(_check(
         "examples_used", "New prompts use what it learned",
-        None if not users["decisions"] or not total_trusted else learned_now > 0,
-        f"{learned_now} of {users['decisions']} checkups copied or borrowed from a trusted example"
-        if users["decisions"] else f"No checkups in the last {days} days",
+        None if not founders["decisions"] or not examples["total"] else learned_now > 0,
+        f"{learned_now} of {founders['decisions']} checkups copied or borrowed from a trusted example"
+        if founders["decisions"] else f"No checkups in the last {days} days",
     ))
+    # 7. The weekly exam is being taken (late = more than 8 days).
+    latest = exam["latest"]
+    exam_age = ((datetime.now(UTC) - datetime.fromisoformat(latest["taken_at"])).total_seconds()
+                if latest and latest["taken_at"] else None)
+    checks.append(_check(
+        "exam_taken", "It sits the weekly exam",
+        None if not exam["question_count"] else (exam_age is not None and exam_age <= 8 * 86400),
+        f"{exam['question_count']} exam questions, last taken {ago(exam_age)}" if exam["question_count"]
+        else "No exam yet: write 20 to 30 questions on this page",
+    ))
+    # 8. A person checked some of the LLM's answers recently.
+    checks.append(_check(
+        "person_checked", "A person checks the LLM's answers",
+        None if not person["new_llm_answers"] and not person["never_checked"] else person["checked_recently"] > 0,
+        f"{person['checked_recently']} checked in the last {days} days ({person['wrong_recently']} wrong), "
+        f"{person['never_checked']} never checked",
+    ))
+    return checks
 
-    # 8. One-line verdict for the top of the page.
-    broken = [c for c in checks if c["ok"] is False]
+
+def _headline(checks: list[dict], exam: dict) -> tuple[str, str]:
+    """The one-line verdict at the top of the page: (status, sentence).
+    It is the exam result compared with last time, not the number of
+    examples. A broken link comes first. The person-check is a weekly
+    task, not a broken pipe, so it doesn't take the headline."""
+    # 1. Something in the loop is broken.
+    broken = [c for c in checks if c["ok"] is False and c["key"] != "person_checked"]
     if broken:
-        status, headline = "attention", f"Not fully connected: {broken[0]['label'].lower()} isn't working."
-    elif trusted["new_llm"] + trusted["new_user"] > 0:
-        status = "learning"
-        headline = (f"Learning: {trusted['new_llm'] + trusted['new_user']} new trusted examples in the last {days} days "
-                    f"({trusted['new_user']} from users' answers, {trusted['new_llm']} from the LLM).")
-    else:
-        status, headline = "idle", f"Connected, but nothing new was learned in the last {days} days."
+        return "attention", f"Not fully connected: {broken[0]['label'].lower()} isn't working."
+    # 2. No exam result yet.
+    latest, previous = exam["latest"], exam["previous"]
+    if not latest:
+        return "idle", ("No exam result yet, so there's no real measure of whether it is getting smarter. "
+                        "Write 20 to 30 exam questions below.")
+    # 3. First result: nothing to compare with.
+    sentence = f"Exam: {latest['fully_right']} of {latest['total']} right"
+    if not previous or not previous["total"]:
+        return "idle", sentence + " (first result; next week's shows the trend)."
+    # 4. Compare with the result before: better, worse or the same.
+    now_share = latest["fully_right"] / latest["total"] if latest["total"] else 0
+    before_share = previous["fully_right"] / previous["total"]
+    sentence += f" (last time {previous['fully_right']} of {previous['total']})."
+    if now_share > before_share:
+        return "learning", sentence
+    return ("attention" if now_share < before_share else "idle"), sentence
 
+
+def learning_progress(db: Session, days: int = 7, weeks: int = 8) -> dict:
+    """Everything on the admin Learning tab, in one answer: is the
+    micromodel getting smarter, and is every link of its learning loop
+    working? Built from the small functions above:
+      - _example_numbers:  the examples it copies from, and their growth
+      - _founder_numbers:  what founders did with its questions
+      - _llm_numbers:      how often the LLM agrees with it
+      - exam_summary:      the weekly exam (micromodel_exam.py)
+      - person_check_summary: a person checking the LLM (micromodel_person_check.py)
+      - did_asking_help:   outcomes by decision (micromodel_outcomes.py)
+      - _loop_checks:      one working/broken check per link
+      - _headline:         the one-line verdict (the exam result)"""
+    from decision_engine.micromodel_exam import exam_summary
+    from decision_engine.micromodel_outcomes import did_asking_help
+    from decision_engine.micromodel_person_check import person_check_summary
+
+    # 1. Gather the numbers.
+    examples = _example_numbers(db, days, weeks)
+    founders = _founder_numbers(db, days)
+    llm = _llm_numbers(db, days, weeks)
+    exam = exam_summary(db)
+    person = person_check_summary(db, days=days)
+    checks = _loop_checks(days, examples, founders, llm, exam, person)
+    status, headline = _headline(checks, exam)
+
+    # 2. Shape them for the page.
+    teacher, teacher_before = llm["now"], llm["before"]
+    checked = teacher["checks"] - teacher["errors"]
+    checked_before = teacher_before["checks"] - teacher_before["errors"]
+    learned_now = founders["copied"] + founders["borrowed"]
+    last_run = llm["last_run"]
     return {
         "status": status,
         "headline": headline,
         "days": days,
-        "trusted": {
-            "total": total_trusted, "llm_seed": trusted["llm_seed"], "llm_teacher": trusted["llm_teacher"],
-            "user_answered": trusted["user_answered"], "new": trusted["new_llm"] + trusted["new_user"],
-            "new_from_llm": trusted["new_llm"], "new_from_users": trusted["new_user"], "new_before": trusted["new_before"],
-        },
-        "users": {
-            "decisions": users["decisions"], "asked": users["asked"], "answered": users["answered"],
-            "skipped": users["skipped"], "no_outcome": users["no_outcome"],
-            "answer_rate_pct": pct(users["answered"], recorded),
-            "last_answered_at": users["last_answered_at"].isoformat() if users["last_answered_at"] else None,
+        # Below this many checkups a week, the page shows counts ("5 of 9"), not percentages.
+        "small_sample_below": 100,
+        "exam": exam,
+        "person_check": person,
+        "did_asking_help": did_asking_help(db, days=28),
+        "asking": {
+            "asked": founders["asked"], "decisions": founders["decisions"],
+            # Asking 80%+ of the time means "whether to ask" isn't really being decided.
+            "asks_almost_always": founders["decisions"] >= 5 and founders["asked"] >= 0.8 * founders["decisions"],
         },
         "llm": {
-            "checks": teacher_now["checks"], "agreed": teacher_now["agreed"], "errors": teacher_now["errors"],
-            "llm_calls": teacher_now["llm_calls"],
-            "agreement_pct": pct(teacher_now["agreed"], teacher_now["checks"] - teacher_now["errors"]),
-            "agreement_before_pct": pct(teacher_before["agreed"], teacher_before["checks"] - teacher_before["errors"]),
+            "checks": teacher["checks"], "agreed": teacher["agreed"], "errors": teacher["errors"],
+            "llm_calls": teacher["llm_calls"], "checked": checked, "checked_before": checked_before,
+            "agreed_before": teacher_before["agreed"],
+            "agreement_pct": _pct(teacher["agreed"], checked),
+            "agreement_before_pct": _pct(teacher_before["agreed"], checked_before),
+            "random_checks": teacher["random_checks"], "random_agreed": teacher["random_agreed"],
             "last_run_at": last_run.started_at.isoformat() if last_run and last_run.started_at else None,
         },
-        "usage": {
-            "copied": users["copied"], "borrowed": users["borrowed"], "own": users["own"],
-            "learned_pct": pct(learned_now, users["decisions"]),
-            "learned_before_pct": pct(users_before["learned"], users_before["decisions"]),
+        "agreement_weeks": llm["weeks"],
+        "trusted": {
+            "total": examples["total"], "llm_seed": examples["llm_seed"], "llm_teacher": examples["llm_teacher"],
+            "user_answered": examples["user_answered"], "new": examples["new_llm"] + examples["new_user"],
+            "new_from_llm": examples["new_llm"], "new_from_users": examples["new_user"],
+            "new_before": examples["new_before"],
         },
-        "growth": growth,
+        "users": {
+            "decisions": founders["decisions"], "asked": founders["asked"], "answered": founders["answered"],
+            "skipped": founders["skipped"], "no_outcome": founders["no_outcome"],
+            "answer_rate_pct": _pct(founders["answered"], founders["answered"] + founders["skipped"]),
+            "last_answered_at": founders["last_answered_at"].isoformat() if founders["last_answered_at"] else None,
+        },
+        "usage": {
+            "copied": founders["copied"], "borrowed": founders["borrowed"], "own": founders["own"],
+            "learned_pct": _pct(learned_now, founders["decisions"]),
+            "learned_before_pct": _pct(founders["learned_before"], founders["decisions_before"]),
+        },
+        "growth": examples["growth"],
         "checks": checks,
     }
 

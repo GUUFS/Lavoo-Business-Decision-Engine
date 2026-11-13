@@ -147,7 +147,7 @@ def test_new_partner_stripe_billing_is_paused_until_free_premium_ends(db, monkey
     ])
     with patch.object(stripe.Subscription, "list", side_effect=fake.list), \
          patch.object(stripe.Subscription, "modify", side_effect=fake.modify):
-        assert grant_partner(db, user, now=JOINED) == {"stripe_paused": 1}
+        assert grant_partner(db, user, now=JOINED) == {"stripe_paused": 1, "is_new": True}
     sub_id, changes = fake.modified[0]
     assert sub_id == "sub_paying" and len(fake.modified) == 1          # cancelled ones are left alone
     assert changes["pause_collection"] == {
@@ -159,7 +159,7 @@ def test_regranting_an_existing_partner_does_not_pause_again(db, monkeypatch):
     with patch.object(stripe.Subscription, "list", side_effect=fake.list), \
          patch.object(stripe.Subscription, "modify", side_effect=fake.modify):
         grant_partner(db, user, now=JOINED)
-        assert grant_partner(db, user, now=JOINED + timedelta(days=10)) == {"stripe_paused": 0}
+        assert grant_partner(db, user, now=JOINED + timedelta(days=10)) == {"stripe_paused": 0, "is_new": False}
     assert len(fake.modified) == 1
 
 
@@ -183,7 +183,7 @@ def test_removing_partner_resumes_only_the_billing_we_paused(db, monkeypatch):
 def test_a_stripe_error_does_not_stop_someone_becoming_a_partner(db, monkeypatch):
     user, _ = _stripe_customer(db, monkeypatch, [])
     with patch.object(stripe.Subscription, "list", side_effect=stripe.error.APIConnectionError("down")):
-        assert grant_partner(db, user, now=JOINED) == {"stripe_paused": 0}
+        assert grant_partner(db, user, now=JOINED) == {"stripe_paused": 0, "is_new": True}
     assert user.is_partner is True
 
 

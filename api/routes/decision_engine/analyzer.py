@@ -340,6 +340,97 @@ async def get_clarity_learning(
     return {"success": True, "data": learning_progress(db, days=max(1, min(days, 90)))}
 
 
+class ExamQuestionRequest(BaseModel):
+    """One exam question an admin writes: a prompt and the right answer."""
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    should_ask: bool
+    expected_questions: List[str] = []
+    note: Optional[str] = None
+
+
+class VerdictRequest(BaseModel):
+    """A person's verdict on one LLM answer."""
+    verdict: str = Field(..., pattern="^(good|wrong)$")
+    note: Optional[str] = None
+
+
+@router.get("/clarify/exam")
+async def get_micromodel_exam(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: the weekly exam: its questions, recent results and the latest
+    mistakes (decision_engine/micromodel_exam.py)."""
+    from decision_engine.micromodel_exam import exam_summary
+    return {"success": True, "data": exam_summary(db)}
+
+
+@router.post("/clarify/exam")
+async def add_micromodel_exam_question(
+    body: ExamQuestionRequest,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: add an exam question."""
+    from decision_engine.micromodel_exam import add_exam_question
+    # 1. Save it; a bad one gets a 400 with the reason.
+    try:
+        question = add_exam_question(db, body.prompt, body.should_ask, body.expected_questions,
+                                     body.note, created_by=get_user_id(admin))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": {"id": question.id}}
+
+
+@router.delete("/clarify/exam/{question_id}")
+async def remove_micromodel_exam_question(
+    question_id: int,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: take a question out of future exams."""
+    from decision_engine.micromodel_exam import remove_exam_question
+    if not remove_exam_question(db, question_id):
+        raise HTTPException(status_code=404, detail="Exam question not found")
+    return {"success": True}
+
+
+@router.post("/clarify/exam/run")
+async def run_micromodel_exam_now(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: run the exam now (no LLM calls; only the micromodel answers)."""
+    from decision_engine.micromodel_exam import run_exam
+    return {"success": True, "data": run_exam(db, trigger="manual")}
+
+
+@router.get("/clarify/llm-answers-to-check")
+async def get_llm_answers_to_check(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: this week's LLM answers for a person to mark good or wrong
+    (decision_engine/micromodel_person_check.py)."""
+    from decision_engine.micromodel_person_check import answers_to_check_this_week, person_check_summary
+    return {"success": True, "data": {"answers": answers_to_check_this_week(db), "summary": person_check_summary(db)}}
+
+
+@router.post("/clarify/llm-answers-to-check/{answer_id}")
+async def save_llm_answer_verdict(
+    answer_id: int,
+    body: VerdictRequest,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: mark one LLM answer good or wrong. Wrong answers are never
+    copied by the micromodel or used as training data again."""
+    from decision_engine.micromodel_person_check import save_verdict
+    if not save_verdict(db, answer_id, body.verdict, get_user_id(admin), body.note):
+        raise HTTPException(status_code=404, detail="LLM answer not found")
+    return {"success": True}
+
+
 @router.get("/clarify/history")
 async def get_clarity_history(
     view: str = "all",
@@ -576,6 +667,9 @@ async def analyze_business_goal(
         background_tasks.add_task(discover_tools_for_analysis, result["data"].get("analysis_id"), result["data"])
 
         confirm_checkup(db, checkup, result["data"].get("analysis_id"))
+        # The micromodel's decision for this checkup -> the diagnosis it led to.
+        from decision_engine.clarity_engine import link_analysis
+        link_analysis(db, clarity_corpus_id, result["data"].get("analysis_id"), user_id)
         return {"success": True, "message": "Analysis completed successfully", "data": result["data"]}
 
     except HTTPException as e:
@@ -856,6 +950,9 @@ async def analyze_business_goal_stream(
             background_tasks.add_task(discover_tools_for_analysis, result["data"].get("analysis_id"), result["data"])
             await delete_cached(f"analyses:user:{user_id}:limit:*")
             confirm_checkup(db, checkup, result["data"].get("analysis_id"))
+            # The micromodel's decision for this checkup -> the diagnosis it led to.
+            from decision_engine.clarity_engine import link_analysis
+            link_analysis(db, clarity_corpus_id, result["data"].get("analysis_id"), user_id)
             await queue.put({"type": "result", "data": result["data"]})
         except asyncio.CancelledError:
             # The user left before the analysis finished: don't charge them.

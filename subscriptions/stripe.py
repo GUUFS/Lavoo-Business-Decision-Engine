@@ -319,10 +319,12 @@ def _find_subscription_for_stripe_charge(db, payment_intent_id, invoice_id):
     since a webhook handler failing a lookup must never 500 back to Stripe
     (Stripe would just retry the same unresolvable event forever).
     """
-    if payment_intent_id:
-        found = db.query(Subscriptions).filter(Subscriptions.transaction_id == payment_intent_id).first()
-        if found:
-            return found
+    # 0. The current lookup (this Stripe API version no longer puts the
+    #    invoice on a charge; it is found through InvoicePayment instead).
+    from subscriptions.admin_refunds import find_our_payment_record
+    found = find_our_payment_record(db, payment_intent_id)
+    if found:
+        return found
 
     if invoice_id:
         try:
@@ -1693,7 +1695,9 @@ async def stripe_webhook(
                 db.commit()
 
         elif event.type == "charge.refunded":
-            charge = event.data.object
+            # A plain dict: Stripe objects in this library version have no .get()
+            # (calling it used to crash this branch, so refunds never reached our records).
+            charge = event.data.object.to_dict()
             # Only a FULL refund revokes access/claws back — a partial
             # refund (support goodwill, proration) isn't "this subscription
             # didn't happen," so leave those alone rather than guess.
@@ -1709,7 +1713,7 @@ async def stripe_webhook(
                     logger.warning(f"[CHARGEBACK] charge.refunded for charge={charge.get('id')} — no matching Subscriptions row found")
 
         elif event.type == "charge.dispute.created":
-            dispute = event.data.object
+            dispute = event.data.object.to_dict()  # plain dict (see charge.refunded above)
             sub_record = _find_subscription_for_stripe_charge(
                 db, dispute.get("payment_intent"), None
             )

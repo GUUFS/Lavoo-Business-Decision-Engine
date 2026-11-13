@@ -854,6 +854,29 @@ async def run_clarity_teacher_job():
             logger.error("[clarity-teacher-job] error: %s", exc)
 
 
+async def run_micromodel_exam_job():
+    """
+    The micromodel's weekly exam (decision_engine/micromodel_exam.py): it
+    answers the exam questions an admin wrote, and the result shows whether
+    it is getting smarter. Looks every 6 hours whether a week has passed,
+    so a restart doesn't skip a week. No LLM calls.
+    """
+    from decision_engine.micromodel_exam import exam_is_due, run_exam
+    from database.pg_connections import SessionLocal
+    # 1. Let the server start first (the embedding model loads).
+    await asyncio.sleep(600)
+    while True:
+        # 2. Take the exam if there are questions and a week has passed.
+        try:
+            with SessionLocal() as db:
+                if exam_is_due(db):
+                    logger.info("[exam-job] %s", run_exam(db, trigger="weekly"))
+        except Exception as exc:
+            logger.error("[exam-job] error: %s", exc)
+        # 3. Look again in 6 hours.
+        await asyncio.sleep(6 * 3600)
+
+
 async def run_tool_discovery_job():
     """
     Runs every hour. Looks up tool names analyses suggested that the
@@ -1749,6 +1772,7 @@ async def startup_event():
     asyncio.create_task(run_scheduled_voo_bot_job())
     asyncio.create_task(run_clarity_teacher_job())
     asyncio.create_task(run_tool_discovery_job())
+    asyncio.create_task(run_micromodel_exam_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_balance_monitor_job())
@@ -1906,6 +1930,11 @@ app.include_router(permissions.router, prefix="/api")
 app.include_router(admin_fraud.router, prefix="/api")
 app.include_router(staff_referrals.router, prefix="/api")
 app.include_router(admin_contact.router, prefix="/api")
+from api.routes.admin import refunds as admin_refunds_routes, user_emails as admin_user_emails_routes
+app.include_router(admin_refunds_routes.router, prefix="/api")  # /api/control/refunds (admin Refunds page)
+app.include_router(admin_user_emails_routes.router, prefix="/api")  # /api/control/user-emails (admin "Email a user")
+from api.routes.admin import payout_tracker as admin_payout_tracker_routes
+app.include_router(admin_payout_tracker_routes.router, prefix="/api")  # /api/control/payout-tracker (admin Payout Tracker)
 app.include_router(signals.router, prefix="/api")
 
 app.include_router(dashboard.router, prefix="/api")

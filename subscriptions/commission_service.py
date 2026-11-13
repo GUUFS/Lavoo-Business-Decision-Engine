@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from database.pg_models import Commission, Referral, CommissionSummary, User, NotificationType, Subscriptions
 from api.services.notification_service import NotificationService
 from emailing.email_service import email_service
+from subscriptions import payout_tracker
 import os
 import logging
 
@@ -485,6 +486,8 @@ class CommissionService:
             payout_id = None
             if not already_settled:
                 payout_id = CommissionService._attempt_immediate_payout(commission, db)
+                # Record what the first try did (Payout Tracker), saved with the commission.
+                payout_tracker.save(db, commission.id, commit=False)
                 if payout_id:
                     commission.status = 'auto_settled'
                     commission.paid_at = now
@@ -709,6 +712,12 @@ class CommissionService:
                         f"[BUILDER BONUS] Could not fetch {commission_currency}->NGN rate for "
                         f"commission {commission.id} — leaving pending for manual payout"
                     )
+                    payout_tracker.note(
+                        commission, "rate_unavailable",
+                        f"Cross-border payout: couldn't get today's {commission_currency} → NGN rate from "
+                        f"Flutterwave. Retried every 10 minutes.",
+                        route="flutterwave", to_currency="NGN",
+                    )
                     return None
                 payout_amount = (commission_amount * fx_rate).quantize(Decimal("0.01"))
                 logger.info(
@@ -738,6 +747,17 @@ class CommissionService:
                     + ". It will be paid automatically once funded."
                 )
                 logger.warning(f"[BUILDER BONUS] flutterwave payout waiting for balance | {msg}")
+                payout_tracker.note(
+                    commission, "waiting_for_money",
+                    (f"Needs {payout_tracker.money(payout_amount, 'NGN')}"
+                     + (f" ({payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.2f})" if fx_rate else "")
+                     + ". The Flutterwave NGN wallet has "
+                     + (payout_tracker.money(available_amount, 'NGN') if available_amount is not None
+                        else "an unknown balance (Flutterwave didn't answer)")
+                     + " available, so nothing was sent to Flutterwave yet. Add money to the Flutterwave NGN wallet."),
+                    route="flutterwave", to_currency="NGN", converted_amount=payout_amount,
+                    fx_rate=fx_rate, balance_available=available_amount,
+                )
                 if notify_admin:
                     CommissionService._alert_admin(f"⚠️ Referral payout waiting for Flutterwave balance — commission #{commission.id}", msg)
                 return None
@@ -809,10 +829,24 @@ class CommissionService:
                 f"(from {commission_amount} {commission_currency}"
                 + (f" @ rate {fx_rate}" if fx_rate else "") + ")"
             )
+            payout_tracker.note(
+                commission, "sent",
+                f"Sent {payout_tracker.money(payout_amount, 'NGN')} to {payout_account.bank_name} "
+                f"****{payout_account.account_number[-4:]} through Flutterwave"
+                + (f" (converted from {payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.2f})" if fx_rate else "")
+                + ".",
+                route="flutterwave", to_currency="NGN", converted_amount=payout_amount, fx_rate=fx_rate,
+                balance_available=available_amount, payout_id=payout.id,
+            )
             return payout.id
 
         except Exception as e:
             logger.error(f"[BUILDER BONUS] Immediate payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            payout_tracker.note(
+                commission, "failed",
+                f"Flutterwave transfer failed: {e}. Retried every 10 minutes.",
+                route="flutterwave", to_currency="NGN",
+            )
             # Commit here, not just flush: the caller (settle_pending_commission)
             # rolls back on a None return, which would otherwise undo the
             # failed Payout row and commission.payout_id link this attempt
@@ -915,6 +949,11 @@ class CommissionService:
                     f"referrer={commission.user_id} has neither a Flutterwave bank account nor a "
                     f"verified Stripe Connect account — leaving pending for manual payout"
                 )
+                payout_tracker.note(
+                    commission, "no_payout_account",
+                    "The referrer has no Flutterwave bank account and no verified Stripe account, so there is "
+                    "nowhere to send it. They need to finish their payout details on the Earnings page.",
+                )
                 return None
 
             # LOCK: only one process may pay this commission at a time.
@@ -941,6 +980,12 @@ class CommissionService:
                     f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} connected account "
                     f"{stripe_account.stripe_account_id} cannot receive transfers yet — leaving pending"
                 )
+                payout_tracker.note(
+                    commission, "account_not_ready",
+                    "The referrer's Stripe account can't receive transfers yet (Stripe still needs details "
+                    "from them). It is retried once Stripe turns transfers on.",
+                    route="stripe",
+                )
                 return None
             target_currency = (account.get("default_currency") or "gbp").upper()
 
@@ -956,6 +1001,12 @@ class CommissionService:
                         f"[BUILDER BONUS] Could not fetch {commission_currency}->{target_currency} rate for "
                         f"commission {commission.id} — leaving pending"
                     )
+                    payout_tracker.note(
+                        commission, "rate_unavailable",
+                        f"Cross-border payout: couldn't get today's {commission_currency} → {target_currency} rate. "
+                        f"Retried every 10 minutes.",
+                        route="stripe", to_currency=target_currency,
+                    )
                     return None
                 payout_amount = (commission_amount * fx_rate).quantize(Decimal("0.01"))
             logger.info(
@@ -967,6 +1018,10 @@ class CommissionService:
             amount_minor = int(payout_amount * 100)
             if amount_minor < 1:
                 logger.warning(f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} converts to less than 0.01 {target_currency}")
+                payout_tracker.note(
+                    commission, "too_small", f"It converts to less than 0.01 {target_currency}, which Stripe can't send.",
+                    route="stripe", to_currency=target_currency, converted_amount=payout_amount, fx_rate=fx_rate,
+                )
                 return None
 
             # Ask Stripe if this commission was already paid, before sending.
@@ -990,6 +1045,12 @@ class CommissionService:
             except Exception as lookup_err:
                 # If we can't check, we can't be sure it wasn't paid, so don't send.
                 logger.warning(f"[BUILDER BONUS] could not check Stripe for an existing transfer for commission {commission.id}: {lookup_err} — leaving pending")
+                payout_tracker.note(
+                    commission, "could_not_check",
+                    f"Couldn't ask Stripe whether it was already paid ({lookup_err}), so nothing was sent, to avoid "
+                    f"paying twice. Retried every 10 minutes.",
+                    route="stripe", to_currency=target_currency,
+                )
                 return None
 
             if reversed_transfer and not prior_transfer:
@@ -999,6 +1060,12 @@ class CommissionService:
                     f"[BUILDER BONUS] commission {commission.id} was already sent (transfer "
                     f"{reversed_transfer.get('id')}) and Stripe reversed it — not sending again. "
                     f"Review it and pay manually if it is still owed."
+                )
+                payout_tracker.note(
+                    commission, "needs_review",
+                    f"It was sent once (Stripe transfer {reversed_transfer.get('id')}) and then reversed in Stripe, so "
+                    f"it is not sent again automatically. Decide by hand whether it is still owed.",
+                    route="stripe", to_currency=target_currency,
                 )
                 return None
 
@@ -1011,6 +1078,16 @@ class CommissionService:
                     f"then be paid automatically."
                 )
                 logger.warning(f"[BUILDER BONUS] stripe payout waiting for balance | {msg}")
+                payout_tracker.note(
+                    commission, "waiting_for_money",
+                    f"Needs {payout_tracker.money(payout_amount, target_currency)}"
+                    + (f" ({payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.4f})" if fx_rate else "")
+                    + f". Stripe's available {target_currency} balance is {payout_tracker.money(available / 100, target_currency)}"
+                    + " (money still 'Incoming' can't be sent), so nothing was sent yet. It sends once the "
+                    + "incoming money becomes available, or top up Stripe (Balances > Add to balance).",
+                    route="stripe", to_currency=target_currency, converted_amount=payout_amount,
+                    fx_rate=fx_rate, balance_available=Decimal(available) / 100,
+                )
                 if notify_admin:
                     CommissionService._alert_admin(f"⚠️ Referral payout waiting for Stripe balance — commission #{commission.id}", msg)
                 return None
@@ -1070,10 +1147,22 @@ class CommissionService:
                 logger.warning(f"[BUILDER BONUS] payout notification failed (payout itself succeeded): {notif_err}")
 
             logger.info(f"[BUILDER BONUS] stripe payout complete | commission={commission.id} payout={payout.id}")
+            payout_tracker.note(
+                commission, "sent",
+                f"Sent {payout_tracker.money(payout.amount, payout.currency)} to the referrer's Stripe account"
+                + (f" (converted from {payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.4f})" if fx_rate else "")
+                + ".",
+                route="stripe", to_currency=payout.currency, converted_amount=payout.amount, fx_rate=fx_rate,
+                payout_id=payout.id,
+            )
             return payout.id
 
         except Exception as e:
             logger.error(f"[BUILDER BONUS] Stripe payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            payout_tracker.note(
+                commission, "failed", f"Stripe transfer failed: {e}. Retried every 10 minutes.",
+                route="stripe",
+            )
             # Commit here, not just flush: the caller (settle_pending_commission)
             # rolls back on a None return, which would otherwise undo the
             # failed Payout row and commission.payout_id link this attempt
@@ -1112,12 +1201,16 @@ class CommissionService:
         """
         from database.pg_models import Payout
         from subscriptions.payout_service import PayoutService
+        # Read the id now: after a rollback the commission object has to reload it.
+        commission_id = commission.id
         try:
             payout_id = CommissionService._attempt_immediate_payout(
                 commission, db, notify_admin=notify_admin, balance_override=balance_override,
             )
             if not payout_id:
                 db.rollback()
+                # Record why nothing was sent (Payout Tracker), after the rollback so it is kept.
+                payout_tracker.save(db, commission_id)
                 return None
             commission.status = 'auto_settled'
             commission.paid_at = datetime.now(timezone.utc)
@@ -1125,10 +1218,13 @@ class CommissionService:
             db.flush()  # session has autoflush off; the summary update reads by payout_id
             PayoutService._update_summary_on_payout(db.get(Payout, payout_id), db)
             db.commit()
+            # Record that it was sent (Payout Tracker).
+            payout_tracker.save(db, commission_id)
             return payout_id
         except Exception as e:
             db.rollback()
-            logger.error(f"[BUILDER BONUS] settle_pending_commission failed for {commission.id}: {e}", exc_info=True)
+            logger.error(f"[BUILDER BONUS] settle_pending_commission failed for {commission_id}: {e}", exc_info=True)
+            payout_tracker.save(db, commission_id)
             return None
 
     @staticmethod
