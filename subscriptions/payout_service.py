@@ -341,6 +341,43 @@ class PayoutService:
     _last_integrity_alert: "datetime | None" = None
 
     @staticmethod
+    def stripe_invoice_is_recorded(db: Session, invoice) -> bool:
+        """True if a paid Stripe invoice has a matching Subscriptions row.
+
+        Our rows store whichever Stripe id the webhook had: the payment
+        intent, the charge, the invoice, or (for a first payment) the Stripe
+        subscription id. Steps:
+          1. Try the invoice id.
+          2. Ask Stripe for the payment intent that paid the invoice
+             (InvoicePayment) and try that, and its charge.
+          3. A FIRST invoice (billing_reason subscription_create) may be stored
+             under the subscription id. A renewal is NOT matched that way,
+             because the subscription id belongs to the first payment's row
+             and would hide a missing renewal.
+        """
+        from database.pg_models import Subscriptions
+        from subscriptions.admin_refunds import subscription_id_of_invoice
+
+        # 1. The invoice as a plain dict, and its id.
+        inv = invoice.to_dict() if hasattr(invoice, "to_dict") else dict(invoice)
+        ids = [inv.get("id")]
+        # 2. The payment intent (and charge) that paid it.
+        try:
+            payments = stripe.InvoicePayment.list(invoice=inv.get("id"), limit=5,
+                                                  api_key=os.getenv("STRIPE_SECRET_KEY"))
+            for row in (payments.to_dict() if hasattr(payments, "to_dict") else payments).get("data") or []:
+                payment = row.get("payment") or {}
+                ids += [payment.get("payment_intent"), payment.get("charge")]
+        except Exception as e:
+            logger.warning(f"[integrity-check] couldn't read payments of invoice {inv.get('id')}: {e}")
+        # 3. First invoice only: the subscription id.
+        if inv.get("billing_reason") == "subscription_create":
+            ids.append(subscription_id_of_invoice(inv))
+        ids = [i if isinstance(i, str) else (i or {}).get("id") for i in ids]
+        ids = [i for i in ids if i]
+        return bool(ids) and db.query(Subscriptions).filter(Subscriptions.transaction_id.in_(ids)).first() is not None
+
+    @staticmethod
     def check_payout_system_integrity(db: Session) -> Dict[str, Any]:
         """
         A single live answer to "is the payout system actually working right
@@ -474,11 +511,11 @@ class PayoutService:
                 if paid_at and datetime.fromtimestamp(paid_at, tz=timezone.utc) > age_cutoff:
                     continue
                 checked_stripe += 1
-                payment_intent_id = getattr(inv, 'payment_intent', None)
-                charge_id = getattr(inv, 'charge', None)
-                candidates = [c for c in (payment_intent_id, charge_id, inv.id) if c]
-                found = db.query(Subscriptions).filter(Subscriptions.transaction_id.in_(candidates)).first()
-                if not found:
+                # Since Stripe API 2025+ an invoice no longer has payment_intent or
+                # charge fields, so the old lookup could only try the invoice id and
+                # flagged real, recorded payments as missing. stripe_invoice_is_recorded
+                # asks Stripe for the invoice's payment and tries every id we store.
+                if not PayoutService.stripe_invoice_is_recorded(db, inv):
                     missing_stripe.append(inv.id)
             add(
                 "Stripe transactions recorded in our database",

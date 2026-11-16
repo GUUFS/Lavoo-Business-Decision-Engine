@@ -42,7 +42,13 @@ def _dashboard_totals(db):
     return asyncio.run(get_dashboard_stats(current_user=None, db=db))["total_revenue_by_currency"]
 
 
-def test_dashboard_total_revenue_matches_revenue_page(db):
+def test_dashboard_total_revenue_matches_revenue_page(db, monkeypatch):
+    # Stripe payments count once their money is available (stripe_revenue.py);
+    # here every payment counts at once, so the totals are payments - bonuses.
+    import subscriptions.stripe_revenue as stripe_revenue
+    from api.routes.admin import revenue
+    monkeypatch.setattr(revenue, "stripe_payment_status", lambda: None)
+    monkeypatch.setattr(stripe_revenue, "UNMATCHED_AFTER_DAYS", 0)
     before = _dashboard_totals(db)
     referrer, payer_usd, payer_ngn = _user(db, 1), _user(db, 2), _user(db, 3)
 

@@ -22,12 +22,17 @@ starts it in the background; an hourly job in api/main.py retries leftovers):
      and record the outcome. Within an hour the recommender's catalog
      refresh (recommender_db.get_recommender) picks it up, so the next
      analysis can recommend it like any other tool.
+  6. Write the tool's website link into every saved analysis that suggested
+     it (link_into_analyses), so reopening that analysis shows the proper
+     link instead of a bare name. The admin "Tools found" tab lists which
+     analyses got the link.
 Every name ends in one status with a reason in words: added,
 already_in_catalog, rejected (not a business software product),
 not_found (no official website could be confirmed) or failed (the exact
 error; retried by the hourly job up to MAX_ATTEMPTS times).
 """
 import asyncio
+import copy
 import ipaddress
 import json
 import logging
@@ -38,11 +43,11 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from sqlalchemy import func
+from sqlalchemy import Text, cast, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from database.pg_models import AITool, ToolDiscovery
+from database.pg_models import AITool, BusinessAnalysis, ToolDiscovery
 
 logger = logging.getLogger(__name__)
 
@@ -511,6 +516,78 @@ async def discover_one(db: Session, row: ToolDiscovery, analyzer, client: httpx.
         logger.warning("[tool-discovery] %s failed: %s", row.name, e)
 
 
+# =========================================================================
+# 6. Put the link into the analyses that suggested the tool
+# =========================================================================
+
+# The saved analysis fields that can name tools (business_analyses JSON columns).
+_ANALYSIS_TOOL_FIELDS = ("primary_bottleneck", "secondary_constraints", "action_plans",
+                         "recommended_tool_stacks", "execution_roadmap", "single_tool_recommendation")
+MAX_ANALYSES_TO_LINK = 500   # most recent analyses checked per tool
+
+
+def _add_link(node, name_key: str, website: str) -> bool:
+    """Set website/url on every entry for this tool that has no link yet.
+    Changes `node` in place; True if anything changed."""
+    changed = False
+    # 1. A dict: is it this tool's entry? Then look inside it too.
+    if isinstance(node, dict):
+        name = node.get("tool_name")
+        if isinstance(name, str) and normalize_name(name) == name_key and not (node.get("website") or node.get("url")):
+            node["website"] = website
+            node["url"] = website
+            changed = True
+        for value in node.values():
+            changed = _add_link(value, name_key, website) or changed
+    # 2. A list: look inside each item.
+    elif isinstance(node, list):
+        for item in node:
+            changed = _add_link(item, name_key, website) or changed
+    return changed
+
+
+def link_into_analyses(db: Session, row: ToolDiscovery) -> list[int]:
+    """Write the tool's website into every saved analysis that names it
+    without a link. Records the analysis ids on row.linked_analyses and
+    returns the ones changed now. Never raises: the tool is already added."""
+    try:
+        # 1. Only when a website was confirmed (added, or found in the catalog).
+        website = row.website
+        if not website and row.tool_id:
+            tool = db.get(AITool, row.tool_id)
+            website = tool.url if tool else None
+        if row.status not in ("added", "already_in_catalog") or not website:
+            return []
+        # 2. Recent analyses whose saved text mentions the name (exact match is checked in step 3).
+        like = f"%{row.name}%"
+        candidates = (db.query(BusinessAnalysis)
+                      .filter(or_(*[cast(getattr(BusinessAnalysis, f), Text).ilike(like) for f in _ANALYSIS_TOOL_FIELDS]))
+                      .order_by(BusinessAnalysis.id.desc()).limit(MAX_ANALYSES_TO_LINK).all())
+        # 3. Add the link where this tool has none; save a fresh copy so the change is stored.
+        linked_now = []
+        for analysis in candidates:
+            changed = False
+            for field in _ANALYSIS_TOOL_FIELDS:
+                value = copy.deepcopy(getattr(analysis, field))
+                if value is not None and _add_link(value, row.name_key, website):
+                    setattr(analysis, field, value)
+                    changed = True
+            if changed:
+                linked_now.append(analysis.id)
+        # 4. Remember which analyses have the link (shown on the admin Tools found tab).
+        # Saved even when empty, so the hourly job doesn't re-check it.
+        row.linked_analyses = sorted(set(row.linked_analyses or []) | set(linked_now))
+        if linked_now:
+            reason = (row.reason or "").rstrip()
+            row.reason = f"{reason} Link added to analysis {', '.join(f'#{i}' for i in linked_now)}."[:2000]
+        db.commit()
+        return linked_now
+    except Exception as e:
+        db.rollback()
+        logger.warning("[tool-discovery] couldn't link %s into analyses: %s", row.name, e)
+        return []
+
+
 async def process(db: Session, rows: list[ToolDiscovery]) -> dict:
     """Look up each row; returns how many ended in each status."""
     from decision_engine.agentic_analyzer import create_analyzer
@@ -526,6 +603,8 @@ async def process(db: Session, rows: list[ToolDiscovery]) -> dict:
         for row in rows:
             await discover_one(db, row, analyzer, client)
             counts[row.status] = counts.get(row.status, 0) + 1
+            # 3. Found a website: write the link into the analyses that suggested it.
+            link_into_analyses(db, row)
     return counts
 
 
@@ -561,7 +640,12 @@ async def process_pending(db: Session, limit: int = 10) -> dict:
     )
     # 2. Look them up.
     counts = await process(db, rows)
-    return {"looked_up": len(rows), **counts}
+    # 3. Tools found before links were written into analyses: link them now.
+    unlinked = (db.query(ToolDiscovery)
+                .filter(ToolDiscovery.status.in_(("added", "already_in_catalog")), ToolDiscovery.linked_analyses.is_(None))
+                .limit(limit).all())
+    linked = sum(1 for row in unlinked if link_into_analyses(db, row))
+    return {"looked_up": len(rows), **counts, "linked_into_analyses": linked}
 
 
 # =========================================================================
@@ -590,6 +674,7 @@ def discovery_activity(db: Session, status: str = "all", limit: int = 50, offset
             "times_suggested": r.times_suggested, "attempts": r.attempts,
             "website": r.website, "directory": r.directory, "directory_url": r.directory_url,
             "tool_id": r.tool_id, "first_analysis_id": r.first_analysis_id, "last_analysis_id": r.last_analysis_id,
+            "linked_analyses": r.linked_analyses or [],
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "processed_at": r.processed_at.isoformat() if r.processed_at else None,
         } for r in rows],

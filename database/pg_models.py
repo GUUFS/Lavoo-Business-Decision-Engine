@@ -239,6 +239,8 @@ class ToolDiscovery(Base):
     tool_id = Column(Integer, ForeignKey("ai_tools.id", ondelete="SET NULL"), nullable=True)
     first_analysis_id = Column(Integer, nullable=True)
     last_analysis_id = Column(Integer, nullable=True)
+    # Analyses whose saved result got this tool's website link written in (tool_discovery.link_into_analyses).
+    linked_analyses = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     processed_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -1156,6 +1158,27 @@ class CommissionPayoutAttempt(Base):
     tries = Column(Integer, nullable=False, default=1, server_default="1")
     first_tried_at = Column(DateTime(timezone=True), server_default=func.now())
     last_tried_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminActivity(Base):
+    """A stamp for every change an admin made from the admin end: who, what,
+    when, and whether it worked (api/services/admin_activity.py). Request
+    bodies are never stored. Shown on the admin Activity page."""
+    __tablename__ = "admin_activity"
+
+    id = Column(Integer, primary_key=True, index=True)
+    admin_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Name and email at the time, kept even if the admin account changes later.
+    admin_name = Column(String(255), nullable=True)
+    admin_email = Column(String(255), nullable=True)
+    method = Column(String(10), nullable=False)
+    path = Column(String(500), nullable=False)
+    query = Column(String(500), nullable=True)
+    action = Column(String(300), nullable=False)  # plain words, e.g. "Refunded Stripe payment ch_1"
+    status_code = Column(Integer, nullable=False)
+    succeeded = Column(Boolean, nullable=False, default=True)
+    ip_address = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 '''Payouts Table'''

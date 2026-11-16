@@ -420,6 +420,16 @@ class Providers:
                   side_effect=lambda amount, currency, payment_type="card": (Decimal(str(amount)) * Decimal("0.014")).quantize(CENT)),
             patch("requests.get", side_effect=self.requests_get),
             patch("requests.post", side_effect=self.requests_post),
+            # Admin revenue counts a Stripe payment once its money is available
+            # (subscriptions/stripe_revenue.py). The simulation has no Stripe
+            # balance transactions, so every Stripe payment counts as available
+            # at once (its dates are simulated, so the age rule can't be used):
+            # the "payments minus bonuses" check then holds exactly.
+            patch("api.routes.admin.revenue.stripe_payment_status", return_value=None),
+            patch("api.routes.admin.revenue.when_counted",
+                  side_effect=lambda row, status_map, now: {"counted": True, "month_of": now,
+                                                            "amount": Decimal(str(row.amount)),
+                                                            "currency": row.currency, "matched": False}),
             patch.object(EmailService, "_send_email", side_effect=lambda *a, **k: self.emails.append(str(k.get("subject") or a[2:3])) or True),
             patch.object(CommissionService, "_alert_admin", side_effect=lambda subject, body: self.alerts.append(subject)),
             patch.object(NotificationService, "create_notification", side_effect=count_notification),

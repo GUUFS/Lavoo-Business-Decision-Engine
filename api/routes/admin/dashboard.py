@@ -2,6 +2,7 @@
 Admin dashboard API: the headline numbers on the admin home page
 (GET /api/admin/dashboard/stats).
 """
+import asyncio
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -35,7 +36,8 @@ async def get_dashboard_stats(
         #    currency), from the same function, so the two always match.
         try:
             from api.routes.admin.revenue import compute_revenue_stats
-            revenue = compute_revenue_stats(db)
+            # In a worker thread: it may call Stripe (cached for 5 minutes).
+            revenue = await asyncio.to_thread(compute_revenue_stats, db)
             total_revenue_by_currency = {
                 ccy: revenue["by_currency"][ccy]["total_subscription_revenue"]
                 for ccy in revenue["currencies"]

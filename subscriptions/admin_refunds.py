@@ -244,20 +244,23 @@ def payment_details(db: Session, charge_id: str) -> dict:
                        "end_date": record.end_date.isoformat() if record.end_date else None} if record else None,
         "commissions": [{"id": c.id, "referrer_id": c.user_id, "amount": float(c.amount), "currency": c.currency,
                          "status": c.status} for c in commissions],
-        "refunds": [_refund_view(r) for r in refunds],
+        "refunds": [_refund_view(r, db) for r in refunds],
     }
 
 
-def _refund_view(r: AdminRefund) -> dict:
-    """One recorded refund for the page."""
+def _refund_view(r: AdminRefund, db: Session | None = None) -> dict:
+    """One recorded refund for the page, with the stamp of the admin who made it."""
+    from api.services.admin_activity import stamp
+
     return {"id": r.id, "charge_id": r.stripe_charge_id, "amount": float(r.amount), "currency": r.currency,
             "reason": r.reason, "note": r.note, "steps": r.steps or [], "user_id": r.user_id,
-            "refunded_by": r.refunded_by, "created_at": r.created_at.isoformat() if r.created_at else None}
+            "refunded_by": r.refunded_by, "created_at": r.created_at.isoformat() if r.created_at else None,
+            "stamp": stamp(db, r.refunded_by, r.created_at) if db is not None else None}
 
 
 def refund_history(db: Session, limit: int = 50) -> list[dict]:
     """Refunds admins made, newest first."""
-    return [_refund_view(r) for r in db.query(AdminRefund).order_by(AdminRefund.created_at.desc()).limit(limit).all()]
+    return [_refund_view(r, db) for r in db.query(AdminRefund).order_by(AdminRefund.created_at.desc()).limit(limit).all()]
 
 
 # =========================================================================
