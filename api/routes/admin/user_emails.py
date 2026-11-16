@@ -12,6 +12,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from api.routes.dependencies import admin_required
+from api.services.admin_activity import stamp
 from database.pg_connections import get_db
 from database.pg_models import AdminSentEmail, User
 
@@ -25,10 +26,11 @@ class SendEmailRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000)
 
 
-def _email_view(e: AdminSentEmail) -> dict:
-    """One sent email for the page."""
+def _email_view(e: AdminSentEmail, db: Session) -> dict:
+    """One sent email for the page, with the stamp of the admin who sent it."""
     return {"id": e.id, "user_id": e.user_id, "to_email": e.to_email, "subject": e.subject, "message": e.message,
-            "status": e.status, "sent_by": e.sent_by, "created_at": e.created_at.isoformat() if e.created_at else None}
+            "status": e.status, "sent_by": e.sent_by, "created_at": e.created_at.isoformat() if e.created_at else None,
+            "stamp": stamp(db, e.sent_by, e.created_at)}
 
 
 @router.get("/users")
@@ -65,13 +67,13 @@ def send_email(body: SendEmailRequest, admin=Depends(admin_required), db: Sessio
     db.commit()
     # 4. "logged" means no email service is configured: say so plainly.
     if status == "logged":
-        return {"success": True, "data": _email_view(record),
+        return {"success": True, "data": _email_view(record, db),
                 "warning": "No email service is set up on this server, so the email was only logged, not delivered."}
-    return {"success": True, "data": _email_view(record)}
+    return {"success": True, "data": _email_view(record, db)}
 
 
 @router.get("")
 def sent_emails(limit: int = 50, admin=Depends(admin_required), db: Session = Depends(get_db)):
     """Emails admins sent, newest first."""
     rows = db.query(AdminSentEmail).order_by(AdminSentEmail.created_at.desc()).limit(max(1, min(limit, 200))).all()
-    return {"success": True, "data": [_email_view(e) for e in rows]}
+    return {"success": True, "data": [_email_view(e, db) for e in rows]}

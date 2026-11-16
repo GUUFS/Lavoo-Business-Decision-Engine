@@ -111,6 +111,38 @@ async def log_requests(request: Request, call_next):
     return response
 
 
+# Admin activity stamps: who changed what from the admin end, and when
+# (api/services/admin_activity.py). Saved after the response, off the
+# request path, so it never slows an admin action down.
+_admin_activity_tasks: set = set()
+
+
+@app.middleware("http")
+async def record_admin_actions(request: Request, call_next):
+    """Stamp every change an admin makes from the admin end (who, what, when)."""
+    # 1. Handle the request as normal.
+    response = await call_next(request)
+    # 2. A change from the admin end: record it in the background.
+    try:
+        from api.services import admin_activity
+        came_from = request.headers.get("origin") or request.headers.get("referer")
+        if admin_activity.should_record(request.method, request.url.path, came_from):
+            # Behind Railway's proxy the visitor's IP is the first X-Forwarded-For entry.
+            forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            ip = forwarded or (request.client.host if request.client else None)
+            task = asyncio.create_task(asyncio.to_thread(
+                admin_activity.record, request.headers.get("authorization"),
+                request.cookies.get("access_token_cookie"), request.method, request.url.path,
+                request.url.query, response.status_code, ip,
+            ))
+            # Keep a reference until it finishes (asyncio only holds weak ones).
+            _admin_activity_tasks.add(task)
+            task.add_done_callback(_admin_activity_tasks.discard)
+    except Exception as e:
+        logger.warning(f"[admin-activity] couldn't queue the stamp: {e}")
+    return response
+
+
 _origins_base = [
     "http://localhost:3000",
     "http://localhost:3001",
@@ -1935,6 +1967,9 @@ app.include_router(admin_refunds_routes.router, prefix="/api")  # /api/control/r
 app.include_router(admin_user_emails_routes.router, prefix="/api")  # /api/control/user-emails (admin "Email a user")
 from api.routes.admin import payout_tracker as admin_payout_tracker_routes
 app.include_router(admin_payout_tracker_routes.router, prefix="/api")  # /api/control/payout-tracker (admin Payout Tracker)
+from api.routes.admin import account as admin_account_routes, activity as admin_activity_routes
+app.include_router(admin_account_routes.router, prefix="/api")  # /api/control/account (admin changes own password)
+app.include_router(admin_activity_routes.router, prefix="/api")  # /api/control/activity (who did what, and when)
 app.include_router(signals.router, prefix="/api")
 
 app.include_router(dashboard.router, prefix="/api")
