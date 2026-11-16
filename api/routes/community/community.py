@@ -1564,7 +1564,31 @@ _AUTHOR_GRADIENTS = [
 _TOPIC_SLUGS = {
     'what-worked', 'tool-recommendations', 'collaboration-offers',
     'questions', 'shared-wins', 'resources', 'reflections', 'poll',
+    'general',
 }
+
+
+def _ensure_general_channel(db: Session) -> CommunityChannel:
+    """Ensure a General channel exists in community_channels table."""
+    ch = db.query(CommunityChannel).filter_by(slug="general").first()
+    if not ch:
+        ch = CommunityChannel(
+            name="General",
+            slug="general",
+            description="General discussions, founder introductions, and open thoughts.",
+            category="General",
+            member_count=0,
+            post_count=0,
+            is_public=True
+        )
+        db.add(ch)
+        try:
+            db.commit()
+            db.refresh(ch)
+        except Exception:
+            db.rollback()
+            ch = db.query(CommunityChannel).filter_by(slug="general").first()
+    return ch
 
 
 def _slugify(text: str) -> str:
@@ -1851,6 +1875,7 @@ class UpdateDiscussionRequest(BaseModel):
     analysis_id: Optional[int] = None
     step_id: Optional[str] = None
     task_id: Optional[str] = None
+    tagged_user_ids: Optional[List[int]] = None
 
 
 class VotePollRequest(BaseModel):
@@ -1944,6 +1969,7 @@ async def get_channels(
     db: Session = Depends(get_db)
 ):
     try:
+        _ensure_general_channel(db)
         valid_slugs = list(_TOPIC_SLUGS)
         q = db.query(CommunityChannel).filter(CommunityChannel.slug.in_(valid_slugs))
         if category and category.lower() != "all":
@@ -2871,13 +2897,18 @@ async def create_discussion(
             detail="Your post contains language that isn't allowed in the Lavoo Build Room. Please review your content and try again."
         )
 
-    ch = db.query(CommunityChannel).filter_by(id=body.channel_id).first()
-    if not ch:
-        raise HTTPException(status_code=404, detail="Channel not found")
+    ch = None
+    if body.channel_id:
+        ch = db.query(CommunityChannel).filter_by(id=body.channel_id).first()
 
     _all_valid_types = {'discussion', 'reflection'} | _TOPIC_SLUGS
     raw_type = (body.type or 'discussion').strip().lower()
     post_type = raw_type if raw_type in _all_valid_types else 'discussion'
+
+    if post_type == 'general' or not ch:
+        general_ch = _ensure_general_channel(db)
+        if post_type == 'general' or not ch:
+            ch = general_ch
 
     tagged_ids = body.tagged_user_ids or []
     if not tagged_ids:
@@ -2922,8 +2953,9 @@ async def create_discussion(
     voo_init_status = "scheduled" if should_schedule_voo else "untracked"
     voo_init_scheduled_for = (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)) if should_schedule_voo else None
 
+    target_channel_id = ch.id if ch else body.channel_id
     d = CommunityDiscussion(
-        channel_id=body.channel_id, user_id=current_user.id,
+        channel_id=target_channel_id, user_id=current_user.id,
         title=body.title.strip(), content=body.content.strip(),
         tags=body.tags or [], post_type=post_type,
         tagged_user_ids=tagged_ids, visibility=visibility_val,
@@ -2932,8 +2964,9 @@ async def create_discussion(
         voo_scheduled_for=voo_init_scheduled_for
     )
     db.add(d)
-    ch.post_count = (ch.post_count or 0) + 1
-    current_user.total_chops = (current_user.total_chops or 0) + 10
+    if ch:
+        ch.post_count = (ch.post_count or 0) + 1
+    current_user.total_chops = (current_user.total_chops or 0) + 5
     db.commit()
     db.refresh(d)
     await delete_cached("community:discussions:*")
@@ -2947,7 +2980,7 @@ async def create_discussion(
                 try:
                     _notify_community(
                         db, tagged_id, "user_tagged", "You were tagged in a Build Room post!",
-                        f"{current_user.name} tagged you in: \"{d.title[:60]}\"",
+                        f'{current_user.name} tagged you in: "{d.title[:60]}"',
                         f"/dashboard/community?discussionId={d.id}",
                     )
                 except Exception:
@@ -2960,7 +2993,12 @@ async def create_discussion(
     if creator_is_paid and not is_question:
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
-    return {"success": True, "data": _discussion_dict(d, set(), current_user=current_user)}
+    return {
+        "success": True,
+        "data": _discussion_dict(d, set(), current_user=current_user),
+        "total_chops": current_user.total_chops or 0,
+        "chops_awarded": 5
+    }
 
 
 @router.post("/discussions/{discussion_id}/poll/vote")
@@ -3421,13 +3459,36 @@ async def update_discussion(
         d.tags = body.tags
     if body.visibility in ("public", "tagged_only"):
         d.visibility = body.visibility
+    if body.tagged_user_ids is not None:
+        old_tagged = set(d.tagged_user_ids or [])
+        d.tagged_user_ids = body.tagged_user_ids
+        newly_tagged = set(body.tagged_user_ids) - old_tagged
+        for tagged_id in newly_tagged:
+            if tagged_id != current_user.id:
+                try:
+                    _notify_community(
+                        db, tagged_id, "user_tagged", "You were tagged in a Build Room post!",
+                        f'{current_user.name} tagged you in: "{d.title[:60]}"',
+                        f"/dashboard/community?discussionId={d.id}",
+                    )
+                except Exception:
+                    pass
+
     if body.type is not None:
         _all_valid_types = {'discussion', 'reflection'} | _TOPIC_SLUGS
         raw_type = body.type.strip().lower()
         if raw_type in _all_valid_types:
             d.post_type = raw_type
+            if raw_type == 'general':
+                general_ch = _ensure_general_channel(db)
+                if general_ch and d.channel_id != general_ch.id:
+                    old_ch = db.query(CommunityChannel).filter_by(id=d.channel_id).first()
+                    if old_ch and old_ch.post_count > 0:
+                        old_ch.post_count -= 1
+                    general_ch.post_count = (general_ch.post_count or 0) + 1
+                    d.channel_id = general_ch.id
 
-    if body.channel_id is not None and body.channel_id != d.channel_id:
+    if body.channel_id is not None and body.channel_id != d.channel_id and body.type != 'general':
         new_ch = db.query(CommunityChannel).filter_by(id=body.channel_id).first()
         if new_ch:
             old_ch = db.query(CommunityChannel).filter_by(id=d.channel_id).first()
