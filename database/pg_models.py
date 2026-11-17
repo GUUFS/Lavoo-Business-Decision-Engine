@@ -430,7 +430,8 @@ class BusinessAnalysis(Base):
     __tablename__ = "business_analyses"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Empty only for an ad checkup run before signup (GuestCheckup), until the visitor signs up and claims it.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Original user input
     business_goal = Column(Text, nullable=False)  # Original user query
@@ -1178,6 +1179,31 @@ class AdminActivity(Base):
     status_code = Column(Integer, nullable=False)
     succeeded = Column(Boolean, nullable=False, default=True)
     ip_address = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class GuestCheckup(Base):
+    """A checkup run from the ad landing page (lavoo.io/checkup) before the
+    visitor has an account (decision_engine/guest_checkup.py).
+
+    The analysis is saved with no owner. The visitor sees only "What to fix
+    first"; signing up claims it with the secret `token`, which makes them
+    its owner. Unclaimed ones are deleted after KEEP_UNCLAIMED_DAYS."""
+    __tablename__ = "guest_checkups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(64), unique=True, index=True, nullable=False)  # the secret claim code
+    visitor_id = Column(String(64), index=True, nullable=True)           # random id the browser keeps
+    ip_hash = Column(String(64), index=True, nullable=True)              # hashed, never the raw IP
+    business_goal = Column(Text, nullable=False)
+    # started | completed | failed | claimed
+    status = Column(String(20), nullable=False, default="started")
+    error = Column(Text, nullable=True)
+    analysis_id = Column(Integer, ForeignKey("business_analyses.id", ondelete="SET NULL"), nullable=True)
+    utm_source = Column(String(100), nullable=True)                      # e.g. facebook
+    utm_campaign = Column(String(150), nullable=True)
+    claimed_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
