@@ -1,13 +1,13 @@
 """
-Weekly checkup limits for the Decision Engine.
+Checkup limits for the Decision Engine.
 
-  - Pro:     1 checkup per week
-  - Premium: 2 checkups per week
+  - Pro:     1 checkup per WEEK   (resets Monday 00:00 UTC)
+  - Premium: 10 checkups per MONTH (resets on the 1st, 00:00 UTC)
 
 The limit is the same on every billing period (monthly, quarterly, yearly).
-A "week" is a calendar week, Monday 00:00 to Sunday 23:59 UTC: every
-user's checkups reset together at midnight UTC on Monday (01:00 in Lagos,
-00:00 in London in winter). Admins have no limit.
+A week is Monday 00:00 to Sunday 23:59 UTC; a month is a calendar month.
+Everyone on the same plan resets at the same moment (midnight UTC is 01:00
+in Lagos, 00:00 in London in winter). Admins and Staff have no limit.
 
 Every checkup that starts is recorded in checkup_usage (CheckupUsage):
   1. reserve_checkup()   - before the analysis runs: refuses with HTTP 429
@@ -28,7 +28,8 @@ from sqlalchemy.orm import Session
 
 from database.pg_models import CheckupUsage, Subscriptions, User
 
-CHECKUPS_PER_WEEK = {"pro": 1, "premium": 2}
+# Each plan: (how many checkups, per "week" or "month").
+CHECKUP_LIMITS = {"pro": (1, "week"), "premium": (10, "month")}
 # Payment statuses that mean "this subscription payment went through"
 # (Stripe and Flutterwave each use their own words).
 PAID_STATUSES = ("completed", "active", "paid", "successful", "succeeded")
@@ -65,7 +66,7 @@ def user_plan_tier(db: Session, user: User) -> str:
             except Exception:
                 tier = None
     tier = (tier or getattr(user, "preferred_plan_tier", None) or "pro").lower()
-    return tier if tier in CHECKUPS_PER_WEEK else "pro"
+    return tier if tier in CHECKUP_LIMITS else "pro"
 
 
 def week_start(now: datetime) -> datetime:
@@ -75,25 +76,38 @@ def week_start(now: datetime) -> datetime:
     return monday.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> dict:
-    """How many checkups the user has left this week.
+def period_bounds(period: str, now: datetime) -> tuple[datetime, datetime]:
+    """(start, next start) of the week or calendar month `now` falls in, UTC."""
+    # 1. A week: Monday to next Monday.
+    if period == "week":
+        start = week_start(now)
+        return start, start + timedelta(days=7)
+    # 2. A month: the 1st to the 1st of next month.
+    now = now.astimezone(UTC)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    following = start.replace(year=start.year + 1, month=1) if start.month == 12 else start.replace(month=start.month + 1)
+    return start, following
 
-    Returns {tier, limit, used, remaining, next_available_at, unlimited}.
-    next_available_at is when the week resets (next Monday 00:00 UTC, ISO
-    time) if they have none left, otherwise None. Admins and Staff (the
-    Lavoo team, who test the decision engine) get unlimited=True."""
+
+def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> dict:
+    """How many checkups the user has left this week (Pro) or month (Premium).
+
+    Returns {tier, limit, period, used, remaining, next_available_at, unlimited}.
+    period is "week" or "month". next_available_at is when the period resets
+    (ISO time, UTC) if they have none left, otherwise None. Admins and Staff
+    (the Lavoo team, who test the decision engine) get unlimited=True."""
     now = now or datetime.now(UTC)
     # 1. Admins and Staff: no weekly limit.
     if getattr(user, "is_admin", False) or getattr(user, "is_staff", False):
         tier = "admin" if getattr(user, "is_admin", False) else "staff"
-        return {"tier": tier, "limit": None, "used": 0, "remaining": None,
+        return {"tier": tier, "limit": None, "period": None, "used": 0, "remaining": None,
                 "next_available_at": None, "unlimited": True}
 
-    # 2. Everyone else: their plan's weekly limit (Pro 1, Premium 2).
+    # 2. Everyone else: their plan's limit (Pro 1 a week, Premium 10 a month).
     tier = user_plan_tier(db, user)
-    limit = CHECKUPS_PER_WEEK[tier]
-    # 3. Checkups started since Monday 00:00 UTC this week.
-    start = week_start(now)
+    limit, period = CHECKUP_LIMITS[tier]
+    # 3. Checkups started since this week or month began.
+    start, next_start = period_bounds(period, now)
     used = (
         db.query(CheckupUsage)
         .filter(
@@ -104,26 +118,29 @@ def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> d
         .count()
     )
     remaining = max(0, limit - used)
-    # 4. When none are left, they all come back at the start of next week.
-    next_available = start + timedelta(days=7) if remaining == 0 else None
+    # 4. When none are left, they all come back when the next week or month starts.
+    next_available = next_start if remaining == 0 else None
     return {
-        "tier": tier, "limit": limit, "used": used, "remaining": remaining,
+        "tier": tier, "limit": limit, "period": period, "used": used, "remaining": remaining,
         "next_available_at": next_available.isoformat() if next_available else None,
         "unlimited": False,
     }
 
 
 def _limit_message(allowance: dict) -> str:
-    """The text shown to a user who has used this week's checkups."""
+    """The text shown to a user who has used this period's checkups."""
     plan = allowance["tier"].capitalize()
     count = allowance["limit"]
     plural = "checkup" if count == 1 else "checkups"
+    period = "a week (Monday to Sunday)" if allowance["period"] == "week" else "a month"
     when = ""
     if allowance["next_available_at"]:
         when_dt = datetime.fromisoformat(allowance["next_available_at"])
         when = f" Your checkups reset on {when_dt.strftime('%a %d %b at %H:%M')} UTC."
-    upgrade = " Upgrade to Premium for 2 checkups a week." if allowance["tier"] == "pro" else ""
-    return (f"{plan} includes {count} {plural} a week (Monday to Sunday), and you've used "
+    premium_count, premium_period = CHECKUP_LIMITS["premium"]
+    upgrade = (f" Upgrade to Premium for {premium_count} checkups a {premium_period}."
+               if allowance["tier"] == "pro" else "")
+    return (f"{plan} includes {count} {plural} {period}, and you've used "
             f"{'it' if count == 1 else 'them'}.{when}{upgrade}")
 
 

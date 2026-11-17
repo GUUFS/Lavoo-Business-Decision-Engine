@@ -175,7 +175,7 @@ origins = list(dict.fromkeys([o.rstrip("/") for o in _origins_base if o.strip()]
 # the connection mid-response — surfacing client-side as net::ERR_HTTP2_PROTOCOL_ERROR
 # right after a 200, even though both stream endpoints already emit app-level
 # heartbeats specifically to avoid that.
-_GZIP_EXCLUDED_PATHS = {"/api/mvp-features/stream", "/api/business/analyze/stream"}
+_GZIP_EXCLUDED_PATHS = {"/api/mvp-features/stream", "/api/business/analyze/stream", "/api/public/checkup/stream"}
 
 
 class _StreamingSafeGZipMiddleware:
@@ -907,6 +907,28 @@ async def run_micromodel_exam_job():
             logger.error("[exam-job] error: %s", exc)
         # 3. Look again in 6 hours.
         await asyncio.sleep(6 * 3600)
+
+
+async def run_guest_checkup_cleanup_job():
+    """
+    Daily: delete ad checkups (decision_engine/guest_checkup.py) that nobody
+    claimed by signing up within 7 days, with their ownerless analyses.
+    """
+    from decision_engine.guest_checkup import delete_unclaimed
+    from database.pg_connections import SessionLocal
+    # 1. Let the server start first.
+    await asyncio.sleep(900)
+    while True:
+        # 2. Delete the old unclaimed ones.
+        try:
+            with SessionLocal() as db:
+                deleted = delete_unclaimed(db)
+                if deleted:
+                    logger.info("[guest-checkup-cleanup] deleted %s unclaimed checkup(s)", deleted)
+        except Exception as exc:
+            logger.error("[guest-checkup-cleanup] error: %s", exc)
+        # 3. Again tomorrow.
+        await asyncio.sleep(24 * 3600)
 
 
 async def run_tool_discovery_job():
@@ -1805,6 +1827,7 @@ async def startup_event():
     asyncio.create_task(run_clarity_teacher_job())
     asyncio.create_task(run_tool_discovery_job())
     asyncio.create_task(run_micromodel_exam_job())
+    asyncio.create_task(run_guest_checkup_cleanup_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_balance_monitor_job())
@@ -1970,6 +1993,8 @@ app.include_router(admin_payout_tracker_routes.router, prefix="/api")  # /api/co
 from api.routes.admin import account as admin_account_routes, activity as admin_activity_routes
 app.include_router(admin_account_routes.router, prefix="/api")  # /api/control/account (admin changes own password)
 app.include_router(admin_activity_routes.router, prefix="/api")  # /api/control/activity (who did what, and when)
+from api.routes import public_checkup as public_checkup_routes
+app.include_router(public_checkup_routes.router)  # /api/public/checkup (ad checkup before signup, lavoo.io/checkup)
 app.include_router(signals.router, prefix="/api")
 
 app.include_router(dashboard.router, prefix="/api")

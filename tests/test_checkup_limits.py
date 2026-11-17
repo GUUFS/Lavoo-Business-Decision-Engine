@@ -67,14 +67,14 @@ def test_pro_gets_one_checkup_a_week_on_every_billing_period(db, period):
 
 
 @pytest.mark.parametrize("period", ["monthly", "quarterly", "yearly"])
-def test_premium_gets_two_checkups_a_week_on_every_billing_period(db, period):
+def test_premium_gets_ten_checkups_a_month_on_every_billing_period(db, period):
     user = make_subscriber(db, "premium", period)
-    reserve_checkup(db, user)
-    reserve_checkup(db, user)
+    for _ in range(10):
+        reserve_checkup(db, user)
     with pytest.raises(HTTPException) as refused:
         reserve_checkup(db, user)
     assert refused.value.status_code == 429
-    assert "Premium includes 2 checkups a week" in refused.value.detail["message"]
+    assert "Premium includes 10 checkups a month" in refused.value.detail["message"]
 
 
 def used_checkup_at(db, user, when):
@@ -105,14 +105,17 @@ def test_checkups_reset_at_monday_midnight_utc(db):
     assert checkup_allowance(db, user, now=NEXT_MONDAY)["remaining"] == 1   # reset
 
 
-def test_premium_two_checkups_reset_together_on_monday(db):
+def test_premium_has_ten_checkups_a_month_reset_on_the_first(db):
     user = make_subscriber(db, "premium")
-    used_checkup_at(db, user, datetime(2026, 11, 9, 8, 0, tzinfo=UTC))
-    used_checkup_at(db, user, datetime(2026, 11, 10, 8, 0, tzinfo=UTC))
-    allowance = checkup_allowance(db, user, now=WEDNESDAY)
-    assert (allowance["used"], allowance["remaining"]) == (2, 0)
-    assert datetime.fromisoformat(allowance["next_available_at"]) == NEXT_MONDAY
-    assert checkup_allowance(db, user, now=NEXT_MONDAY)["remaining"] == 2
+    # 1. Ten checkups spread over November (not limited per week).
+    for day in range(1, 11):
+        used_checkup_at(db, user, datetime(2026, 11, day, 8, 0, tzinfo=UTC))
+    allowance = checkup_allowance(db, user, now=datetime(2026, 11, 20, tzinfo=UTC))
+    assert (allowance["limit"], allowance["period"]) == (10, "month")
+    assert (allowance["used"], allowance["remaining"]) == (10, 0)
+    # 2. They all come back on 1 December, 00:00 UTC.
+    assert datetime.fromisoformat(allowance["next_available_at"]) == datetime(2026, 12, 1, tzinfo=UTC)
+    assert checkup_allowance(db, user, now=datetime(2026, 12, 1, tzinfo=UTC))["remaining"] == 10
 
 
 def test_released_checkup_is_given_back(db):
