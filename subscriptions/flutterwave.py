@@ -15,6 +15,8 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.orm import Session
 from database.pg_connections import get_db
 from database.pg_models import User, Subscriptions
+from subscriptions.plan_prices import FOUNDING, MATCH_TOLERANCE, STANDARD, get_all_plan_prices, get_plan_price, normalise_tier
+from subscriptions import founding
 from api.routes.auth.login import get_current_user
 
 #import the email system
@@ -45,21 +47,13 @@ PLAN_DURATION: dict[str, int] = {
     "yearly":    365,
 }
 
-# Amount-based fallback matching (for legacy or non-NGN transactions)
-Subscription_plans = {
-    "monthly_usd":   {"amount": Decimal("29.95"),  "currency": "USD", "plan": "monthly",   "duration_of_days": 30},
-    "quarterly_usd": {"amount": Decimal("88.68"),  "currency": "USD", "plan": "quarterly", "duration_of_days": 90},
-    "yearly_usd":    {"amount": Decimal("310.38"), "currency": "USD", "plan": "yearly",    "duration_of_days": 365},
-    "monthly_gbp":   {"amount": Decimal("23.66"),  "currency": "GBP", "plan": "monthly",   "duration_of_days": 30},
-    "quarterly_gbp": {"amount": Decimal("63.18"),  "currency": "GBP", "plan": "quarterly", "duration_of_days": 90},
-    "yearly_gbp":    {"amount": Decimal("248.47"), "currency": "GBP", "plan": "yearly",    "duration_of_days": 365},
-}
 
 
 class PaymentVerifyRequest(BaseModel):
     transaction_id: str
     user_email: str
     plan_type: str | None = None  # monthly | quarterly | yearly — explicit plan from frontend
+    plan_tier: str | None = None  # pro | premium (missing counts as pro)
 
 class BankVerifyRequest(BaseModel):
     account_number: str
@@ -206,15 +200,23 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                 current_plan = None
                 plan_duration_days = None
 
+                plan_tier = normalise_tier(verify_data.plan_tier)
                 if verify_data.plan_type and verify_data.plan_type in PLAN_DURATION:
                     current_plan = verify_data.plan_type
                     plan_duration_days = PLAN_DURATION[current_plan]
                 else:
-                    for _, plan_details in Subscription_plans.items():
-                        if (plan_details["currency"] == currency
-                                and plan_details["amount"] == verified_amount):
-                            current_plan = plan_details["plan"]
-                            plan_duration_days = plan_details["duration_of_days"]
+                    # No plan sent: find the price (from Stripe) that matches
+                    # the amount paid.
+                    for price_set in get_all_plan_prices().values():
+                        for tier_name, by_currency in price_set.items():
+                            for period, price in (by_currency.get((currency or "").upper()) or {}).items():
+                                if price and abs(verified_amount - Decimal(str(price))) <= MATCH_TOLERANCE:
+                                    current_plan, plan_tier = period, tier_name
+                                    plan_duration_days = PLAN_DURATION[period]
+                                    break
+                            if current_plan:
+                                break
+                        if current_plan:
                             break
 
                 if not current_plan:
@@ -226,6 +228,71 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                             f"{verified_amount} {currency}. Please include plan_type."
                         )
                     )
+
+                # Check the amount paid covers the plan's price in Stripe.
+                # The browser chooses the amount Flutterwave charges, so
+                # without this someone could pay less and still get the plan.
+                from subscriptions.commission_service import CommissionService
+                # Founding or standard: what this user should be paying now
+                # (subscriptions/founding.py). The amount is checked against
+                # the base amount (before Flutterwave's fee gross-up).
+                price_type = founding.price_type_for(db, user, current_plan)
+                founding_price = get_plan_price(plan_tier, current_plan, currency or "", FOUNDING)
+                standard_price = get_plan_price(plan_tier, current_plan, currency or "", STANDARD)
+                if (
+                    price_type == STANDARD
+                    and standard_price is not None
+                    and recorded_amount + MATCH_TOLERANCE < standard_price
+                    and founding_price is not None
+                    and recorded_amount + MATCH_TOLERANCE >= founding_price
+                    and founding.price_type_for(db, user, current_plan, grace=True) == FOUNDING
+                ):
+                    # They started paying at the founding price just before
+                    # founding prices ended: honour it.
+                    price_type = FOUNDING
+                elif (
+                    price_type == FOUNDING
+                    and standard_price is not None
+                    and recorded_amount + MATCH_TOLERANCE >= standard_price
+                ):
+                    # Paid the standard price (e.g. an old page): record it as
+                    # standard, not as a founding payment.
+                    price_type = STANDARD
+                expected_price = founding_price if price_type == FOUNDING else standard_price
+                if expected_price is None:
+                    # Price not set up in Stripe: we can't check, so let the
+                    # payment through but tell the admin to fix the setup.
+                    logger.error(
+                        "[FLW verify] no Stripe price for %s/%s/%s; amount not checked (tx_ref=%s)",
+                        plan_tier, current_plan, currency, tx_ref,
+                    )
+                    CommissionService._alert_admin(
+                        f"⚠️ Flutterwave payment not price-checked ({plan_tier} {current_plan} {currency})",
+                        f"Payment {tx_ref} for {user_email} paid {verified_amount} {currency}, but no Stripe "
+                        f"price is set for {plan_tier}/{current_plan}/{currency}. Add it so payments are checked.",
+                    )
+                elif verified_amount + MATCH_TOLERANCE < expected_price:
+                    # Paid less than the plan costs: don't give the plan.
+                    db.rollback()
+                    logger.error(
+                        "[FLW verify] underpaid: paid %s %s, %s/%s costs %s (tx_ref=%s user=%s)",
+                        verified_amount, currency, plan_tier, current_plan, expected_price, tx_ref, user_email,
+                    )
+                    CommissionService._alert_admin(
+                        f"⚠️ Underpaid Flutterwave payment ({tx_ref})",
+                        f"{user_email} paid {verified_amount} {currency} for {plan_tier} {current_plan}, "
+                        f"which costs {expected_price}. The plan was not given.",
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "The amount paid doesn't match the price of this plan. "
+                            "Please contact support and we'll sort it out."
+                        ),
+                    )
+                else:
+                    # Save the real plan price, not the amount the browser sent.
+                    recorded_amount = expected_price
                 
                 # Check for duplicate transaction
                 existing_sub = db.query(Subscriptions).filter(
@@ -286,6 +353,12 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                 
                 db.add(new_subscription)
                 db.flush()
+                # Save the plan and price set (commission and chops read the
+                # plan), and mark founding members.
+                founding.record_payment(
+                    db, user, new_subscription, plan_tier,
+                    price_type if expected_price is not None else None,
+                )
 
                 # Award 20 chops to the referrer if this subscriber was referred
                 from database.pg_models import Referral as ReferralModel
@@ -1020,6 +1093,17 @@ async def get_flutterwave_split_info(
 
     user_id = extract_user_id(current_user)
     split_config = get_split_config_for_referred_user(user_id, db)
+    # get_split_config_for_referred_user may have just created the referrer's
+    # missing Flutterwave subaccount (self-heal) and only flushed it. Save it
+    # now: without this commit the new subaccount id was thrown away when the
+    # request ended, so every checkout tried to create it again, Flutterwave
+    # refused the duplicate, and the id had to be looked up again (2 extra
+    # Flutterwave calls per checkout).
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[FLW split-info] could not save self-healed subaccount: %s", e)
     if not split_config:
         return {"status": "success", "data": {"subaccount_id": None, "main_account_charge_percentage": None}}
     return {"status": "success", "data": split_config}

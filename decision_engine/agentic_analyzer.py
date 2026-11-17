@@ -33,6 +33,7 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from database.pg_models import AITool
+from decision_engine.text_cleanup import strip_dashes_deep, strip_step_label
 from decision_engine.recommender_db import (
     _safe_parse_text_list,
     compile_catalog_name_pattern,
@@ -87,12 +88,14 @@ def _repair_json(text: str) -> str:
 
 
 def _safe_json_loads(text: str) -> Any:
-    """json.loads with automatic repair on truncated output."""
+    """json.loads with automatic repair on truncated output. Also removes
+    dashes from the text (see text_cleanup.py)."""
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
         repaired = _repair_json(text)
-        return json.loads(repaired)
+        parsed = json.loads(repaired)
+    return strip_dashes_deep(parsed)
 
 
 class AgenticAnalyzer:
@@ -203,7 +206,7 @@ class AgenticAnalyzer:
     # MAIN PIPELINE
     # =========================================================================
 
-    async def analyze(self, user_query: str, user_id: int, progress_callback=None) -> Dict[str, Any]:
+    async def analyze(self, user_query: str, user_id: int, progress_callback=None, founder_context: str = "") -> Dict[str, Any]:
         """
         Main analysis pipeline — orchestrates all agents.
 
@@ -211,6 +214,8 @@ class AgenticAnalyzer:
             user_query: User's business challenge/goal
             user_id: Current user ID
             progress_callback: Optional async callable(pct: int, msg: str) for SSE progress events
+            founder_context: extra notes for the LLM (see founder_context.py).
+                Not saved with the analysis.
 
         Returns:
             Complete analysis dict matching the frontend result page format
@@ -237,23 +242,27 @@ class AgenticAnalyzer:
                     f"UNSAFE_QUERY::{safety_result['reason']}::{safety_result['suggestions']}"
                 )
 
+            # The LLM stages get the prompt plus the extra notes. The safety
+            # check and the saved analysis use the user's prompt only.
+            stage_query = f"{user_query}\n\n{founder_context}" if founder_context else user_query
+
             logger.info("Stage 1: Identifying primary bottleneck...")
             await _emit(10, "Identifying your primary bottleneck...")
-            primary_result = await self._stage1_primary_bottleneck(user_query)
+            primary_result = await self._stage1_primary_bottleneck(stage_query)
             recommendation_mode = primary_result.get("recommendation_mode", "automation_stack")
             await _emit(25, f"Found: {primary_result.get('primary_bottleneck', {}).get('title', 'bottleneck identified')}")
 
             logger.info("Stage 2: Finding secondary constraints...")
             await _emit(30, "Mapping secondary constraints...")
             secondary_result = await self._stage2_secondary_constraints(
-                user_query, primary_result
+                stage_query, primary_result
             )
             await _emit(45, "Constraints mapped")
 
             logger.info("Stage 3: Generating ranked action plans...")
             await _emit(50, "Building ranked action plans...")
             action_plans_result = await self._stage3_action_plans(
-                user_query, primary_result, secondary_result
+                stage_query, primary_result, secondary_result
             )
             await _emit(65, "Action plans ready")
 
@@ -261,6 +270,8 @@ class AgenticAnalyzer:
             logger.info("Stages 3B + 4: running automation stacks and roadmap in parallel...")
             await _emit(70, "Selecting tool stacks and generating roadmap...")
             automation_stack_result, roadmap_result = await asyncio.gather(
+                # Tool search uses the user's own words only, so the extra
+                # notes don't change which tools are found.
                 self._stage3_automation_stacks(
                     user_query=user_query,
                     action_plans_result=action_plans_result,
@@ -268,7 +279,7 @@ class AgenticAnalyzer:
                     secondary_result=secondary_result,
                     recommendation_mode=recommendation_mode,
                 ),
-                self._stage4_roadmap_and_motivation(user_query, action_plans_result),
+                self._stage4_roadmap_and_motivation(stage_query, action_plans_result),
             )
             await _emit(92, "Roadmap complete")
 
@@ -404,9 +415,39 @@ USER'S BUSINESS CHALLENGE: "{user_query}"
 
 TASK: Would a real answer change what you'd recommend? If yes, write up to 3 short questions that fill EXACTLY those gaps — nothing generic, nothing the query already answers, nothing you could reasonably assume.
 
-Ask only when it matters. Most specific, detailed prompts need ZERO questions — return an empty list rather than manufacture one. Ask when something load-bearing is genuinely unknown: a number that changes the whole plan (current conversion rate, price point, team size, runway), a fork in approach the query doesn't resolve (B2B or B2C, which channel, in-house or outsourced), or a constraint that changes feasibility (budget, timeline, technical skill on hand).
+Default to asking unless the query already tells you BOTH (1) what the business actually sells/does and (2) at least one concrete number, constraint, or already-tried action. Missing either one is normally enough on its own to ask — don't talk yourself into "I could still give useful general advice here" as a reason to skip; general advice is exactly what this step exists to avoid. Most specific, detailed prompts need ZERO questions — return an empty list rather than manufacture one — but "detailed" means it actually contains those specifics, not that it's emotionally vivid or clearly describes a real problem.
 
 Never ask what the query already states or clearly implies. Never ask throwaway questions ("what's your industry?") when the query already names it. Never ask more than 3. Each question must be answerable in one short sentence or a number — not an essay prompt.
+
+CALIBRATION — three examples showing where the bar actually sits:
+
+Example A (short and vague, diagnostic — SHOULD ask): "Sales dropped and I don't know why"
+This names a symptom with no industry, no channel, no timeframe, and no sense of what's already been tried — a real answer to any of those would completely change the recommendation. Don't let "short" read as "nothing to ask"; a one-line prompt is usually a sign more is missing, not less.
+{{
+    "needs_clarification": true,
+    "questions": [
+        {{"id": "q1", "question": "What does your business sell, and through what channel (in-person, online store, marketplace)?"}},
+        {{"id": "q2", "question": "When did sales start dropping, and did anything change around that time (price, ads, season, competitors)?"}}
+    ]
+}}
+
+Example B (long but already answers the load-bearing gaps — should NOT ask): "My Shopify store sells handmade candles, gets about 2,000 visits a month, converts at 0.8%, and I've already tried dropping prices 20% with no change in conversion."
+Product, channel, traffic, conversion rate, and what's already been tried are all stated — nothing load-bearing is missing.
+{{"needs_clarification": false, "questions": []}}
+
+Example C (short, not diagnostic, a DECISION between unnamed options — SHOULD ask): "I have too many ideas and don't know which one to focus on first"
+You cannot rank ideas you haven't been told — this isn't a symptom needing a root cause, it's a decision that structurally cannot be made without knowing the options and what's available to pursue them. A query that asks you to choose, prioritize, or decide between things is ALWAYS missing something load-bearing unless it already names the actual options.
+{{
+    "needs_clarification": true,
+    "questions": [
+        {{"id": "q1", "question": "What are the specific ideas you're choosing between?"}},
+        {{"id": "q2", "question": "How much time or budget do you realistically have to pursue one right now?"}}
+    ]
+}}
+
+A prompt being short, or sounding like a real, specific complaint, is not by itself a reason to skip asking — judge strictly by whether it actually states what the business sells/does AND a concrete number/constraint/already-tried action, per the default rule above. "What the business sells/does" is satisfied by a channel + metric combo (e.g. "my online store", "my store") even with no named product category — don't ask just to learn the product name if the query already gives you a channel and real numbers to work with.
+
+If the query already names its own candidate causes ("I don't know whether it's the product, the price, or the website") alongside real numbers, that fork is the analysis's job to adjudicate, not a reason to hand it back as a question — only ask if answering would change something the analysis genuinely cannot work out itself from what's given.
 
 Return JSON only, no markdown:
 {{
@@ -446,7 +487,9 @@ Return JSON only, no markdown:
             # here never blocks a user from getting their analysis — same
             # fail-open posture as _check_query_safety above.
             logger.warning(f"Clarifying-question generation failed (skipping): {e}")
-            return {"needs_clarification": False, "questions": []}
+            # "error" marks a failed call, so it isn't mistaken for
+            # "no questions needed".
+            return {"needs_clarification": False, "questions": [], "error": str(e)}
 
     # =========================================================================
     # STAGE 1: PRIMARY BOTTLENECK AGENT
@@ -715,7 +758,7 @@ YOUR TASK:
 2. Select the tool(s) whose documented features directly automate or accelerate a named step above.
 3. Select UP TO 2 tools ONLY if the steps clearly need two different capabilities (e.g. step 1 needs analytics, step 3 needs email automation). Otherwise select 1.
 4. Return an empty array if no tool genuinely addresses a specific step.
-5. CRITICAL — "what_it_helps": name the exact step number(s) and describe what the tool does for that step in one concrete sentence. This text will appear on a card next to THIS specific action plan — it must be unique to these steps, not a generic description of the tool.
+5. CRITICAL — "what_it_helps": describe what the tool does for the step(s) it serves in one concrete sentence. Do NOT start with or include a step label such as "Step 3:" (the card already shows it under its step). This text will appear on a card next to THIS specific action plan — it must be unique to these steps, not a generic description of the tool.
 6. Return the tool's website URL from the candidate list exactly as shown.
 
 OUTPUT FORMAT (JSON only, no markdown, no leading dashes in any text value):
@@ -724,7 +767,7 @@ OUTPUT FORMAT (JSON only, no markdown, no leading dashes in any text value):
         {{
             "tool_name": "Exact name from the candidate list",
             "website": "Exact URL from the candidate list, or null",
-            "what_it_helps": "Step N: one concrete sentence describing what the tool does for that specific step"
+            "what_it_helps": "One concrete sentence describing what the tool does for that specific step, with no step label"
         }}
     ]
 }}"""
@@ -759,6 +802,8 @@ OUTPUT FORMAT (JSON only, no markdown, no leading dashes in any text value):
                 if canonical and canonical.strip().lower() not in used_normalised:
                     # Overwrite with the canonical DB name so storage is consistent
                     tk["tool_name"] = canonical
+                    # No "Step 3:" label in the card text (it sits under its step).
+                    tk["what_it_helps"] = strip_step_label(tk.get("what_it_helps") or "")
                     validated.append(tk)
                     if len(validated) == 2:
                         break
@@ -1231,8 +1276,8 @@ STEP 1 — FEATURE-LEVEL MATCH, PER STEP
 For each numbered step, identify tools in the catalog whose Key Features / Integrates With entries directly perform the capability that specific step names. Not "this tool is in the same category" — a listed feature or integration must literally execute the required function for THAT step. If a candidate has no Key Features/Integrates With line at all, treat its description alone as insufficient to clear task_relevance >= {bars['task_relevance']}.
 
 STEP 2 — SPECIFICITY OF DESCRIPTIONS
-"what_it_helps" must name the EXACT step number and describe what the tool does for THAT step in one concrete sentence, naming the specific Key Feature or integration from the catalog block that makes it a match. This text appears on the plan card under that step — it must be unique to that step, not a generic product description.
-Good: "Step 2: Its automated re-engagement sequences feature sends a personalised follow-up based on each contact's last action, so you never manually write or send one again."
+"what_it_helps" must describe what the tool does for THAT step in one concrete sentence, naming the specific Key Feature or integration from the catalog block that makes it a match. Do NOT start with a step label such as "Step 2:": "step_index" already says which step, and the text is shown under that step (and inside a numbered workflow, where a label reads as the wrong number). It must be unique to that step, not a generic product description.
+Good: "Its automated re-engagement sequences feature sends a personalised follow-up based on each contact's last action, so you never manually write or send one again."
 Bad: "A powerful automation platform that can help with re-engagement."
 
 STEP 3 — CANDIDATES, RANKED
@@ -1253,7 +1298,7 @@ OUTPUT FORMAT (JSON only, no markdown):
         {{
           "tool_name": "Exact name from the catalog",
           "website": "Exact URL from the catalog or null",
-          "what_it_helps": "Step 2: one concrete sentence in second person naming the documented feature used — unique to this step.",
+          "what_it_helps": "One concrete sentence in second person naming the documented feature used, unique to this step, with no step label.",
           "scores": {{"task_relevance": 0, "workflow_integration": 0, "expected_impact": 0, "ease_of_implementation": 0, "cost_efficiency": 0}}
         }}
       ]
@@ -1393,7 +1438,8 @@ step_index is 1-based, counting within THIS plan's own step list. Omit any step 
                 )
                 return None
 
-            what_it_helps = (candidate.get("what_it_helps") or "").strip()
+            # The step's tool text, without any "Step 3:" label the model added anyway.
+            what_it_helps = strip_step_label((candidate.get("what_it_helps") or "").strip())
             if not what_it_helps:
                 # Distinct from is_step_cited (which only controls the gate):
                 # a user-named tool resolved to a real DB record still has a
@@ -2186,7 +2232,7 @@ OUTPUT FORMAT (JSON only, no markdown):
             logger.warning("Roadmap response was missing motivational_quote — using fallback")
             result["motivational_quote"] = (
                 "The weight you feel right now is real, but it's also proof you're finally "
-                "looking at the actual problem instead of its symptoms — that's the hardest part, and you're already past it."
+                "looking at the actual problem instead of its symptoms. That's the hardest part, and you're already past it."
             )
 
         logger.info(

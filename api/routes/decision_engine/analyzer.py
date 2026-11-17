@@ -18,13 +18,27 @@ from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 
 from database.pg_connections import get_db
-from database.pg_models import BusinessAnalysis
+from database.pg_models import BusinessAnalysis, User
 from api.routes.auth.login import get_current_user
+from api.routes.dependencies import admin_required, subscriber_required
 from api.cache import get_cached, set_cached, delete_cached
+from decision_engine.text_cleanup import strip_dashes_deep
+from decision_engine.tool_discovery import discover_tools_for_analysis
+from decision_engine.checkup_limits import (
+    checkup_allowance,
+    confirm_checkup,
+    release_checkup,
+    reserve_checkup,
+)
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/business", tags=["Business Analyzer"])
+# Every Decision Engine route is for Pro and Premium subscribers only.
+router = APIRouter(
+    prefix="/api/business",
+    tags=["Business Analyzer"],
+    dependencies=[Depends(subscriber_required)],
+)
 
 
 # =========================================================================
@@ -34,7 +48,7 @@ class AnalyzeRequest(BaseModel):
     """Request model for business analysis."""
     business_goal: str = Field(
         ...,
-        min_length=10,
+        min_length=3,
         max_length=2000,
         description="The business challenge or goal to analyze"
     )
@@ -42,7 +56,9 @@ class AnalyzeRequest(BaseModel):
 
 class ClarifyRequest(BaseModel):
     """Request model for POST /clarify."""
-    business_goal: str = Field(..., min_length=10, max_length=2000)
+    # Kept low on purpose: short, vague prompts should reach the
+    # clarifying questions, not be rejected.
+    business_goal: str = Field(..., min_length=3, max_length=2000)
 
 
 class ClarificationAnswer(BaseModel):
@@ -140,6 +156,15 @@ def _merge_clarifications_into_goal(business_goal: str, clarifications_raw) -> s
     return f"{business_goal}\n\n[Clarifying Questions & Answers]:\n{qa_text}".strip()
 
 
+def _has_answers(clarifications_raw) -> bool:
+    """True when at least one clarifying question got a non-empty answer."""
+    for c in clarifications_raw or []:
+        answer = c.get("answer") if isinstance(c, dict) else getattr(c, "answer", "")
+        if (answer or "").strip():
+            return True
+    return False
+
+
 def parse_json_field(field_value, default=None):
     """Safely parse JSON field from database."""
     if field_value is None:
@@ -168,7 +193,9 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
     execution_roadmap = parse_json_field(analysis.execution_roadmap, [])
     single_tool_recommendation = parse_json_field(analysis.single_tool_recommendation, None)
 
-    return {
+    # Remove dashes from older saved analyses too. The user's own prompt
+    # (business_goal) is left as they typed it.
+    return strip_dashes_deep({
         "analysis_id": analysis.id,
         "business_goal": analysis.business_goal or "",
         # Primary bottleneck
@@ -196,7 +223,7 @@ def format_analysis_for_frontend(analysis: BusinessAnalysis) -> Dict[str, Any]:
         "created_at": analysis.created_at.isoformat() if analysis.created_at else "",
         "ai_model_used": analysis.ai_model_used,
         "ai_confidence_score": analysis.confidence_score or 90
-    }
+    }) | {"business_goal": analysis.business_goal or ""}
 
 
 # =========================================================================
@@ -250,24 +277,275 @@ async def get_clarifying_questions(
 ):
     """
     Called right after the user submits their business challenge, BEFORE
-    /analyze(/stream) runs — asks the LLM whether it's missing anything
+    /analyze(/stream) runs — decides whether it's missing anything
     load-bearing and, if so, returns up to 3 short targeted questions.
     needs_clarification=False (the common case for an already-detailed
     prompt) means the frontend should skip straight to analysis with no
-    added step; this call is intentionally fast and cheap (a single
-    non-reasoning-model call) so it never meaningfully delays that path.
+    added step.
+
+    Zero-LLM: decision_engine/clarity_engine.py matches the submission
+    against a reference corpus by embedding similarity rather than calling
+    an LLM live — see that module's docstring. The LLM's judgment is baked
+    into the corpus offline (bootstrap + periodic teacher job), not spent
+    on every submission.
 
     The frontend collects answers for whatever questions_text are
-    returned, then sends them back as `clarifications` on the actual
-    /analyze(/stream) call — this endpoint does not itself start an
-    analysis or persist anything.
+    returned, then sends them back as `clarifications` (and the returned
+    `corpus_id`) on the actual /analyze(/stream) call, which logs whether
+    they were answered or skipped against this exact decision — this
+    endpoint does not itself start an analysis.
     """
-    get_user_id(current_user)  # validates auth; raises if not resolvable
+    user_id = get_user_id(current_user)  # validates auth; raises if not resolvable
 
-    from decision_engine.agentic_analyzer import create_analyzer
-    analyzer = create_analyzer(db)
-    result = await analyzer.generate_clarifying_questions(request.business_goal)
+    from decision_engine.clarity_engine import get_clarifying_questions
+    result = get_clarifying_questions(request.business_goal, db, user_id=user_id)
     return {"success": True, "data": result}
+
+
+@router.get("/clarify/stats")
+async def get_clarity_stats(
+    days: int = 30,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: weekly numbers on how the micromodel is doing. The key one is
+    how often the LLM agrees with it; that going up means it's improving."""
+    from decision_engine.clarity_teacher import clarity_stats
+    return {"success": True, "data": clarity_stats(db, days=max(1, min(days, 365)))}
+
+
+@router.post("/clarify/teach")
+async def run_clarity_teacher_now(
+    limit: int = 20,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: run the teacher job now instead of waiting 3 hours.
+    Each prompt it checks costs one LLM call."""
+    from decision_engine.clarity_teacher import run_teacher_batch
+    result = await run_teacher_batch(db, limit=max(1, min(limit, 50)), trigger="manual")
+    return {"success": True, "data": result}
+
+
+@router.get("/clarify/learning")
+async def get_clarity_learning(
+    days: int = 7,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: is the micromodel learning? Trusted examples gained from users'
+    answers and from the LLM teacher, how often new prompts use them, and a
+    working/broken check on each link of that loop."""
+    from decision_engine.clarity_teacher import learning_progress
+    return {"success": True, "data": learning_progress(db, days=max(1, min(days, 90)))}
+
+
+class ExamQuestionRequest(BaseModel):
+    """One exam question an admin writes: a prompt and the right answer."""
+    prompt: str = Field(..., min_length=1, max_length=4000)
+    should_ask: bool
+    expected_questions: List[str] = []
+    note: Optional[str] = None
+
+
+class VerdictRequest(BaseModel):
+    """A person's verdict on one LLM answer."""
+    verdict: str = Field(..., pattern="^(good|wrong)$")
+    note: Optional[str] = None
+
+
+@router.get("/clarify/exam")
+async def get_micromodel_exam(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: the weekly exam: its questions, recent results and the latest
+    mistakes (decision_engine/micromodel_exam.py)."""
+    from decision_engine.micromodel_exam import exam_summary
+    return {"success": True, "data": exam_summary(db)}
+
+
+@router.post("/clarify/exam")
+async def add_micromodel_exam_question(
+    body: ExamQuestionRequest,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: add an exam question."""
+    from decision_engine.micromodel_exam import add_exam_question
+    # 1. Save it; a bad one gets a 400 with the reason.
+    try:
+        question = add_exam_question(db, body.prompt, body.should_ask, body.expected_questions,
+                                     body.note, created_by=get_user_id(admin))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "data": {"id": question.id}}
+
+
+@router.delete("/clarify/exam/{question_id}")
+async def remove_micromodel_exam_question(
+    question_id: int,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: take a question out of future exams."""
+    from decision_engine.micromodel_exam import remove_exam_question
+    if not remove_exam_question(db, question_id):
+        raise HTTPException(status_code=404, detail="Exam question not found")
+    return {"success": True}
+
+
+@router.post("/clarify/exam/run")
+async def run_micromodel_exam_now(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: run the exam now (no LLM calls; only the micromodel answers)."""
+    from decision_engine.micromodel_exam import run_exam
+    return {"success": True, "data": run_exam(db, trigger="manual")}
+
+
+@router.get("/clarify/llm-answers-to-check")
+async def get_llm_answers_to_check(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: this week's LLM answers for a person to mark good or wrong
+    (decision_engine/micromodel_person_check.py)."""
+    from decision_engine.micromodel_person_check import answers_to_check_this_week, person_check_summary
+    return {"success": True, "data": {"answers": answers_to_check_this_week(db), "summary": person_check_summary(db)}}
+
+
+@router.post("/clarify/llm-answers-to-check/{answer_id}")
+async def save_llm_answer_verdict(
+    answer_id: int,
+    body: VerdictRequest,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: mark one LLM answer good or wrong. Wrong answers are never
+    copied by the micromodel or used as training data again."""
+    from decision_engine.micromodel_person_check import save_verdict
+    if not save_verdict(db, answer_id, body.verdict, get_user_id(admin), body.note):
+        raise HTTPException(status_code=404, detail="LLM answer not found")
+    return {"success": True}
+
+
+@router.get("/clarify/history")
+async def get_clarity_history(
+    view: str = "all",
+    limit: int = 25,
+    offset: int = 0,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: every prompt the micromodel handled, start to finish: what it
+    asked and why, what the user did, what the LLM asked and whether they
+    agreed (or why it hasn't checked yet), and what was learned from it.
+    view: all | disagreed | agreed | unchecked | answered | skipped | used_learning."""
+    from decision_engine.clarity_teacher import decision_history
+    return {"success": True, "data": decision_history(
+        db, view=view, limit=max(1, min(limit, 100)), offset=max(0, offset))}
+
+
+@router.get("/clarify/training-data")
+async def get_clarity_training_data(
+    dataset: str = "questions",
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: download what Lavoo has learned as a fine-tuning file (JSONL,
+    one chat example per line). dataset=questions: prompt -> the trusted
+    clarifying questions; dataset=checkups: prompt -> the full checkup the
+    LLM wrote. This is the data a Lavoo model of our own is trained on."""
+    from fastapi.responses import Response
+
+    from decision_engine.training_data import export_jsonl
+    # 1. Build the file.
+    body, count = export_jsonl(db, dataset)
+    # 2. Send it as a download, with the example count in a header.
+    return Response(content=body, media_type="application/jsonl", headers={
+        "Content-Disposition": f'attachment; filename="lavoo-{dataset}-training.jsonl"',
+        "X-Example-Count": str(count),
+    })
+
+
+@router.get("/clarify/training-summary")
+async def get_clarity_training_summary(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: how many training examples each dataset has, and how far each
+    is from the size worth fine-tuning on."""
+    from decision_engine.training_data import training_summary
+    return {"success": True, "data": training_summary(db)}
+
+
+@router.get("/tools/discoveries")
+async def get_tool_discoveries(
+    status: str = "all",
+    limit: int = 50,
+    offset: int = 0,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: tools analyses suggested that the catalog didn't have, and what
+    happened to each (added, already in the catalog, rejected, not found,
+    failed), with the reason. status: all | one of those."""
+    from decision_engine.tool_discovery import discovery_activity
+    return {"success": True, "data": discovery_activity(
+        db, status=status, limit=max(1, min(limit, 200)), offset=max(0, offset))}
+
+
+@router.post("/tools/discover")
+async def run_tool_discovery_now(
+    limit: int = 10,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: look up pending and failed tool names now instead of waiting
+    for the hourly job. Each name costs 1-2 LLM calls."""
+    from decision_engine.tool_discovery import process_pending
+    return {"success": True, "data": await process_pending(db, limit=max(1, min(limit, 25)))}
+
+
+@router.get("/clarify/activity")
+async def get_clarity_teacher_activity(
+    runs: int = 20,
+    calls: int = 50,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: when the micromodel's teacher last called the LLM, what each
+    check found (micromodel vs LLM, agreed or not), and when the next run is."""
+    from decision_engine.clarity_teacher import teacher_activity
+    return {"success": True, "data": teacher_activity(db, runs=max(1, min(runs, 100)), calls=max(1, min(calls, 200)))}
+
+
+@router.get("/engine/health")
+async def get_engine_health(
+    live: bool = False,
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: is every part of the Decision Engine working? Database,
+    tools catalog, embedding model, micromodel, teacher job, LLM, file
+    readers, cache and recent checkup failures (decision_engine/health.py).
+    live=true also makes one tiny real LLM call."""
+    from decision_engine.health import run_health_checks
+    return {"success": True, "data": await run_health_checks(db, live=live)}
+
+
+@router.get("/checkups/allowance")
+async def get_checkup_allowance(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """How many checkups the user has left this week (Pro 1, Premium 2;
+    see decision_engine/checkup_limits.py). The app reads this before
+    starting a checkup, so a user who has none left is told straight away."""
+    user = db.get(User, get_user_id(current_user))
+    return {"success": True, "data": checkup_allowance(db, user)}
 
 
 @router.post("/analyze", response_model=dict)
@@ -284,6 +562,9 @@ async def analyze_business_goal(
     from decision_engine.agentic_analyzer import create_analyzer
     from decision_engine.multimodal.handler import MultimodalHandler
 
+    # The weekly checkup this analysis uses (see checkup_limits). Given back
+    # if the analysis fails.
+    checkup = None
     try:
         user_id = get_user_id(current_user)
         logger.info(f"🚀 Starting analysis for user {user_id}")
@@ -292,11 +573,13 @@ async def analyze_business_goal(
         business_goal = ""
         files = []
         clarifications = None
+        clarity_corpus_id = None
 
         if "application/json" in content_type:
             body = await request.json()
             business_goal = body.get("business_goal", "")
             clarifications = body.get("clarifications")
+            clarity_corpus_id = body.get("clarity_corpus_id")
         elif "multipart/form-data" in content_type:
             form_data = await request.form()
             business_goal = form_data.get("business_goal", "")
@@ -307,8 +590,14 @@ async def analyze_business_goal(
                     clarifications = json.loads(raw_clar)
                 except Exception:
                     clarifications = None
+            raw_corpus_id = form_data.get("clarity_corpus_id")
+            clarity_corpus_id = int(raw_corpus_id) if raw_corpus_id else None
         else:
             raise HTTPException(status_code=400, detail="Invalid Content-Type")
+
+        if clarity_corpus_id:
+            from decision_engine.clarity_engine import update_outcome
+            update_outcome(db, clarity_corpus_id, clarifications, user_id)
 
         business_goal = _merge_clarifications_into_goal(business_goal, clarifications)
 
@@ -327,6 +616,9 @@ async def analyze_business_goal(
 
         if not business_goal and not files:
             raise HTTPException(status_code=400, detail="Business goal or a document/image upload is required")
+
+        # Uses one of this week's checkups; HTTP 429 if none are left.
+        checkup = reserve_checkup(db, db.get(User, user_id))
 
         business_goal = business_goal or ""
         if files:
@@ -351,8 +643,11 @@ async def analyze_business_goal(
         if not business_goal:
             raise HTTPException(status_code=400, detail="Could not extract any content from the uploaded files to analyze.")
 
+        from decision_engine.founder_context import build_founder_context
+        founder_context = build_founder_context(db, user_id, _has_answers(clarifications))
+
         analyzer = create_analyzer(db)
-        result = await analyzer.analyze(user_query=business_goal, user_id=user_id)
+        result = await analyzer.analyze(user_query=business_goal, user_id=user_id, founder_context=founder_context)
 
         logger.info(f"✅ Analysis completed: ID {result['data']['analysis_id']}")
         await delete_cached(f"analyses:user:{user_id}:limit:*")
@@ -367,10 +662,22 @@ async def analyze_business_goal(
                 user_query=business_goal,
                 bottleneck_title=_bottleneck_title,
             )
+        # Tools the analysis suggested that the catalog doesn't have: look
+        # them up and add them (decision_engine/tool_discovery.py).
+        background_tasks.add_task(discover_tools_for_analysis, result["data"].get("analysis_id"), result["data"])
 
+        confirm_checkup(db, checkup, result["data"].get("analysis_id"))
+        # The micromodel's decision for this checkup -> the diagnosis it led to.
+        from decision_engine.clarity_engine import link_analysis
+        link_analysis(db, clarity_corpus_id, result["data"].get("analysis_id"), user_id)
         return {"success": True, "message": "Analysis completed successfully", "data": result["data"]}
 
+    except HTTPException as e:
+        # Keep 400/429 responses as they are (previously turned into 500s).
+        release_checkup(db, checkup, error=str(e.detail))
+        raise
     except Exception as e:
+        release_checkup(db, checkup, error=str(e))
         err_str = str(e)
         if err_str.startswith("UNSAFE_QUERY::"):
             parts = err_str.split("::", 2)
@@ -530,12 +837,14 @@ async def analyze_business_goal_stream(
     business_goal = ""
     files = []
     clarifications = None
+    clarity_corpus_id = None
 
     try:
         if "application/json" in content_type:
             body = await request.json()
             business_goal = body.get("business_goal", "")
             clarifications = body.get("clarifications")
+            clarity_corpus_id = body.get("clarity_corpus_id")
         elif "multipart/form-data" in content_type:
             form_data = await request.form()
             business_goal = form_data.get("business_goal", "")
@@ -546,8 +855,14 @@ async def analyze_business_goal_stream(
                     clarifications = json.loads(raw_clar)
                 except Exception:
                     clarifications = None
+            raw_corpus_id = form_data.get("clarity_corpus_id")
+            clarity_corpus_id = int(raw_corpus_id) if raw_corpus_id else None
         else:
             raise HTTPException(status_code=400, detail="Invalid Content-Type")
+
+        if clarity_corpus_id:
+            from decision_engine.clarity_engine import update_outcome
+            update_outcome(db, clarity_corpus_id, clarifications, user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -599,6 +914,10 @@ async def analyze_business_goal_stream(
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
+    # Uses one of this week's checkups; HTTP 429 if none are left. Given
+    # back below if the analysis fails or the user leaves before it ends.
+    checkup = reserve_checkup(db, db.get(User, user_id))
+
     queue: asyncio.Queue = asyncio.Queue()
 
     async def _progress_callback(pct: int, msg: str):
@@ -606,11 +925,15 @@ async def analyze_business_goal_stream(
 
     async def _run_analysis():
         try:
+            from decision_engine.founder_context import build_founder_context
+            founder_context = build_founder_context(db, user_id, _has_answers(clarifications))
+
             analyzer = create_analyzer(db)
             result = await analyzer.analyze(
                 user_query=business_goal,
                 user_id=user_id,
                 progress_callback=_progress_callback,
+                founder_context=founder_context,
             )
             _raw_stacks = result["data"].get("recommended_tool_stacks", [])
             _bottleneck_title = result["data"].get("primary_bottleneck", {}).get("title", "")
@@ -622,10 +945,22 @@ async def analyze_business_goal_stream(
                     user_query=business_goal,
                     bottleneck_title=_bottleneck_title,
                 )
+            # Tools the analysis suggested that the catalog doesn't have
+            # (decision_engine/tool_discovery.py).
+            background_tasks.add_task(discover_tools_for_analysis, result["data"].get("analysis_id"), result["data"])
             await delete_cached(f"analyses:user:{user_id}:limit:*")
+            confirm_checkup(db, checkup, result["data"].get("analysis_id"))
+            # The micromodel's decision for this checkup -> the diagnosis it led to.
+            from decision_engine.clarity_engine import link_analysis
+            link_analysis(db, clarity_corpus_id, result["data"].get("analysis_id"), user_id)
             await queue.put({"type": "result", "data": result["data"]})
+        except asyncio.CancelledError:
+            # The user left before the analysis finished: don't charge them.
+            release_checkup(db, checkup, cancelled=True)
+            raise
         except Exception as exc:
             logger.error(f"SSE analysis failed: {exc}", exc_info=True)
+            release_checkup(db, checkup, error=str(exc))
             err_str = str(exc)
             if err_str.startswith("UNSAFE_QUERY::"):
                 parts = err_str.split("::", 2)

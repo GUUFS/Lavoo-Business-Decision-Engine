@@ -11,6 +11,8 @@ from database.pg_models import User, Subscriptions, Commission, Payout, ApproveC
 from api.routes.auth.login import get_current_user
 from subscriptions.commission_service import CommissionService
 from subscriptions.payout_service import PayoutService
+from subscriptions.stripe_revenue import stripe_payment_status, when_counted
+import asyncio
 import json
 
 router = APIRouter(prefix="/control/revenue", tags=["admin-revenue"])
@@ -36,117 +38,189 @@ def verify_admin(current_user):
         raise HTTPException(status_code=403, detail="Admin access required")
 
 
+def compute_revenue_stats(db: Session) -> dict:
+    """Revenue per currency, as shown on the admin Revenue page. Also used
+    by the admin dashboard's Total Revenue card (api/routes/admin/dashboard.py)
+    so the two always show the same numbers.
+
+    For each currency: this month's revenue and growth, total subscription
+    revenue (successful payments minus every builder bonus earned on them,
+    both in the payment's own currency), bonuses paid out, and money held
+    in this currency's account for a payout sent through another provider.
+    Returns {"by_currency": {...}, "currencies": [...]}.
+    """
+    now = datetime.now(timezone.utc)
+    current_month_start = datetime(now.year, now.month, 1)
+    last_month = now.month - 1 if now.month > 1 else 12
+    last_year = now.year if now.month > 1 else now.year - 1
+    last_month_start = datetime(last_year, last_month, 1)
+
+    def sum_by_currency(amount_col, currency_col, *filters):
+        rows = db.query(
+            currency_col.label('currency'),
+            func.coalesce(func.sum(amount_col), 0).label('total')
+        ).filter(*filters).group_by(currency_col).all()
+        return {(row.currency or 'USD'): float(row.total) for row in rows}
+
+    ok_status = ['active', 'completed', 'successful', 'succeeded']
+    is_stripe = func.lower(Subscriptions.payment_provider) == 'stripe'
+
+    # A. NON-Stripe payments (Flutterwave): counted the moment they are
+    # recorded, as before.
+    monthly_gross_by_ccy = sum_by_currency(
+        Subscriptions.amount, Subscriptions.currency,
+        Subscriptions.status.in_(ok_status), ~is_stripe,
+        Subscriptions.created_at >= current_month_start,
+    )
+    last_month_gross_by_ccy = sum_by_currency(
+        Subscriptions.amount, Subscriptions.currency,
+        Subscriptions.status.in_(ok_status), ~is_stripe,
+        Subscriptions.created_at >= last_month_start,
+        Subscriptions.created_at < current_month_start,
+    )
+    total_subscription_gross_by_ccy = sum_by_currency(
+        Subscriptions.amount, Subscriptions.currency,
+        Subscriptions.status.in_(ok_status), ~is_stripe,
+    )
+    commissions_paid_by_ccy = sum_by_currency(
+        Payout.amount, Payout.currency,
+        Payout.status == 'completed',
+    )
+
+    # Builder bonus EARNED (not just paid) in the same currency the
+    # subscription was charged in — Commission.currency always matches
+    # the originating Subscription's currency (it's a straight
+    # percentage of it), unlike Payout.currency above, which can be a
+    # different, FX-converted currency once the bonus is actually sent
+    # (e.g. a USD commission paid out as NGN). The moment a referred
+    # user's payment creates a commission, that share is owed to the
+    # referrer regardless of whether it's been paid out yet — every
+    # status (pending/approved/processing/paid/auto_settled) is real,
+    # committed money that was never Lavoo's to keep, so all of them
+    # count here, not just 'paid'.
+    # Here: bonuses on NON-Stripe payments (or on no payment), when earned.
+    # Bonuses on Stripe payments are taken off in B below, in the same
+    # month their payment is counted.
+    stripe_payment_ids = db.query(Subscriptions.id).filter(is_stripe)
+    not_on_stripe = or_(Commission.subscription_id.is_(None), ~Commission.subscription_id.in_(stripe_payment_ids))
+    monthly_bonus_by_ccy = sum_by_currency(
+        Commission.amount, Commission.currency, not_on_stripe,
+        Commission.created_at >= current_month_start,
+    )
+    last_month_bonus_by_ccy = sum_by_currency(
+        Commission.amount, Commission.currency, not_on_stripe,
+        Commission.created_at >= last_month_start,
+        Commission.created_at < current_month_start,
+    )
+    total_bonus_by_ccy = sum_by_currency(Commission.amount, Commission.currency, not_on_stripe)
+
+    # B. STRIPE payments: counted only once Stripe makes the money
+    # AVAILABLE, in the month it became available, at what we receive
+    # (after Stripe's fee) — so these figures follow the Stripe available
+    # balance instead of running ahead of it (subscriptions/stripe_revenue.py).
+    # Money still incoming is reported separately (stripe_incoming).
+    stripe_map = stripe_payment_status()
+    month_start_utc = current_month_start.replace(tzinfo=timezone.utc)
+    last_month_start_utc = last_month_start.replace(tzinfo=timezone.utc)
+    incoming_by_ccy: dict = {}
+
+    def add_to(totals: dict, ccy, amount) -> None:
+        """Add an amount to a per-currency total."""
+        totals[ccy or 'USD'] = totals.get(ccy or 'USD', 0.0) + float(amount)
+
+    # 1. Every successful Stripe payment, and the bonuses earned on each.
+    stripe_rows = db.query(Subscriptions).filter(is_stripe, Subscriptions.status.in_(ok_status)).all()
+    bonuses_by_payment: dict = {}
+    if stripe_rows:
+        for bonus in db.query(Commission).filter(Commission.subscription_id.in_([r.id for r in stripe_rows])).all():
+            bonuses_by_payment.setdefault(bonus.subscription_id, []).append(bonus)
+    for row in stripe_rows:
+        # 2. When (and for how much) this payment counts.
+        counted = when_counted(row, stripe_map, now)
+        if not counted["counted"]:
+            add_to(incoming_by_ccy, counted["currency"], counted["amount"])
+            continue
+        bonuses = bonuses_by_payment.get(row.id, [])
+        # 3. All-time totals.
+        add_to(total_subscription_gross_by_ccy, counted["currency"], counted["amount"])
+        for bonus in bonuses:
+            add_to(total_bonus_by_ccy, bonus.currency or counted["currency"], bonus.amount)
+        # 4. This month or last month, by the date the money became available.
+        month_of = counted["month_of"]
+        if month_of and month_of >= month_start_utc:
+            gross, bonus_totals = monthly_gross_by_ccy, monthly_bonus_by_ccy
+        elif month_of and last_month_start_utc <= month_of < month_start_utc:
+            gross, bonus_totals = last_month_gross_by_ccy, last_month_bonus_by_ccy
+        else:
+            continue
+        add_to(gross, counted["currency"], counted["amount"])
+        for bonus in bonuses:
+            add_to(bonus_totals, bonus.currency or counted["currency"], bonus.amount)
+
+    currencies = sorted(
+        set(monthly_gross_by_ccy) | set(total_subscription_gross_by_ccy)
+        | set(commissions_paid_by_ccy) | set(incoming_by_ccy)
+    )
+
+    # Money earned in this currency but actually settled through a
+    # DIFFERENT provider's rail — see PayoutService.get_cross_rail_
+    # settled_total's docstring. It's still sitting in this currency's
+    # own account (never physically sent), which is why the available
+    # balance alone doesn't tally with "what we've paid out": a chunk
+    # of referral_commissions_paid above left a DIFFERENT currency's
+    # balance, not this one's.
+    held_via_other_rail_by_ccy = {
+        ccy: float(PayoutService.get_cross_rail_settled_total(db, ccy))
+        for ccy in (set(currencies) | {"NGN", "USD", "GBP"})
+    }
+    currencies = sorted(set(currencies) | {
+        ccy for ccy, amt in held_via_other_rail_by_ccy.items() if amt > 0
+    })
+
+    by_currency = {}
+    for ccy in currencies:
+        this_month = monthly_gross_by_ccy.get(ccy, 0.0) - monthly_bonus_by_ccy.get(ccy, 0.0)
+        prior_month = last_month_gross_by_ccy.get(ccy, 0.0) - last_month_bonus_by_ccy.get(ccy, 0.0)
+        if prior_month > 0:
+            growth = ((this_month - prior_month) / prior_month) * 100
+        else:
+            growth = 100.0 if this_month > 0 else 0.0
+        by_currency[ccy] = {
+            "monthly_revenue": this_month,
+            "total_subscription_revenue": total_subscription_gross_by_ccy.get(ccy, 0.0) - total_bonus_by_ccy.get(ccy, 0.0),
+            "referral_commissions_paid": commissions_paid_by_ccy.get(ccy, 0.0),
+            "held_via_other_rail": held_via_other_rail_by_ccy.get(ccy, 0.0),
+            "growth_rate": round(growth, 1),
+            # Stripe money charged but not available yet: not in the figures above.
+            "stripe_incoming": round(incoming_by_ccy.get(ccy, 0.0), 2),
+        }
+
+    return {
+        "by_currency": by_currency,
+        "currencies": currencies,
+        # How Stripe payments are counted, for the page's note.
+        "stripe_counting": {"basis": "available", "stripe_reachable": stripe_map is not None},
+    }
+
+
 @router.get("/stats")
 async def get_revenue_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Overall revenue statistics, broken out per currency.
+    Overall revenue statistics, broken out per currency (see
+    compute_revenue_stats for what each number means).
 
     Subscriptions and Payouts are both genuinely multi-currency (NGN/USD/
-    GBP — see api/routes/user/stats.py's own comments on this). The
-    previous version summed every currency into one number labelled
-    "currency": "USD", which silently blended incompatible currencies into
-    a meaningless total (e.g. a NGN payout and a USD subscription added
-    together). This groups by the row's actual currency instead.
+    GBP). Every figure is grouped by the row's actual currency, never
+    blended into one total.
     """
     verify_admin(current_user)
 
     try:
-        now = datetime.now(timezone.utc)
-        current_month_start = datetime(now.year, now.month, 1)
-        last_month = now.month - 1 if now.month > 1 else 12
-        last_year = now.year if now.month > 1 else now.year - 1
-        last_month_start = datetime(last_year, last_month, 1)
-
-        def sum_by_currency(amount_col, currency_col, *filters):
-            rows = db.query(
-                currency_col.label('currency'),
-                func.coalesce(func.sum(amount_col), 0).label('total')
-            ).filter(*filters).group_by(currency_col).all()
-            return {(row.currency or 'USD'): float(row.total) for row in rows}
-
-        monthly_gross_by_ccy = sum_by_currency(
-            Subscriptions.amount, Subscriptions.currency,
-            Subscriptions.status.in_(['active', 'completed', 'successful', 'succeeded']),
-            Subscriptions.created_at >= current_month_start,
-        )
-        last_month_gross_by_ccy = sum_by_currency(
-            Subscriptions.amount, Subscriptions.currency,
-            Subscriptions.status.in_(['active', 'completed', 'successful', 'succeeded']),
-            Subscriptions.created_at >= last_month_start,
-            Subscriptions.created_at < current_month_start,
-        )
-        total_subscription_gross_by_ccy = sum_by_currency(
-            Subscriptions.amount, Subscriptions.currency,
-            Subscriptions.status.in_(['active', 'completed', 'successful', 'succeeded']),
-        )
-        commissions_paid_by_ccy = sum_by_currency(
-            Payout.amount, Payout.currency,
-            Payout.status == 'completed',
-        )
-
-        # Builder bonus EARNED (not just paid) in the same currency the
-        # subscription was charged in — Commission.currency always matches
-        # the originating Subscription's currency (it's a straight
-        # percentage of it), unlike Payout.currency above, which can be a
-        # different, FX-converted currency once the bonus is actually sent
-        # (e.g. a USD commission paid out as NGN). The moment a referred
-        # user's payment creates a commission, that share is owed to the
-        # referrer regardless of whether it's been paid out yet — every
-        # status (pending/approved/processing/paid/auto_settled) is real,
-        # committed money that was never Lavoo's to keep, so all of them
-        # count here, not just 'paid'.
-        monthly_bonus_by_ccy = sum_by_currency(
-            Commission.amount, Commission.currency,
-            Commission.created_at >= current_month_start,
-        )
-        last_month_bonus_by_ccy = sum_by_currency(
-            Commission.amount, Commission.currency,
-            Commission.created_at >= last_month_start,
-            Commission.created_at < current_month_start,
-        )
-        total_bonus_by_ccy = sum_by_currency(Commission.amount, Commission.currency)
-
-        currencies = sorted(
-            set(monthly_gross_by_ccy) | set(total_subscription_gross_by_ccy)
-            | set(commissions_paid_by_ccy)
-        )
-
-        # Money earned in this currency but actually settled through a
-        # DIFFERENT provider's rail — see PayoutService.get_cross_rail_
-        # settled_total's docstring. It's still sitting in this currency's
-        # own account (never physically sent), which is why the available
-        # balance alone doesn't tally with "what we've paid out": a chunk
-        # of referral_commissions_paid above left a DIFFERENT currency's
-        # balance, not this one's.
-        held_via_other_rail_by_ccy = {
-            ccy: float(PayoutService.get_cross_rail_settled_total(db, ccy))
-            for ccy in (set(currencies) | {"NGN", "USD", "GBP"})
-        }
-        currencies = sorted(set(currencies) | {
-            ccy for ccy, amt in held_via_other_rail_by_ccy.items() if amt > 0
-        })
-
-        by_currency = {}
-        for ccy in currencies:
-            this_month = monthly_gross_by_ccy.get(ccy, 0.0) - monthly_bonus_by_ccy.get(ccy, 0.0)
-            prior_month = last_month_gross_by_ccy.get(ccy, 0.0) - last_month_bonus_by_ccy.get(ccy, 0.0)
-            if prior_month > 0:
-                growth = ((this_month - prior_month) / prior_month) * 100
-            else:
-                growth = 100.0 if this_month > 0 else 0.0
-            by_currency[ccy] = {
-                "monthly_revenue": this_month,
-                "total_subscription_revenue": total_subscription_gross_by_ccy.get(ccy, 0.0) - total_bonus_by_ccy.get(ccy, 0.0),
-                "referral_commissions_paid": commissions_paid_by_ccy.get(ccy, 0.0),
-                "held_via_other_rail": held_via_other_rail_by_ccy.get(ccy, 0.0),
-                "growth_rate": round(growth, 1),
-            }
-
-        return {"by_currency": by_currency, "currencies": currencies}
-
+        # In a worker thread: it may call Stripe (cached for 5 minutes).
+        return await asyncio.to_thread(compute_revenue_stats, db)
     except Exception as e:
         print(f"Error in revenue stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -512,8 +586,8 @@ async def approve_user_commissions(
                 raise HTTPException(
                     status_code=503,
                     detail=(
-                        f"Could not fetch a live {commission_currency}->NGN exchange rate right now "
-                        "— try again shortly."
+                        f"Could not fetch a live {commission_currency}->NGN exchange rate right now. "
+                        "Try again shortly."
                     ),
                 )
             original_currency = commission_currency

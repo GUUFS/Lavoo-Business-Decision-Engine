@@ -1,6 +1,7 @@
 ==================================================
 LAVOO PLATFORM GLOSSARY
 This is the source of truth about Lavoo. If a feature is not listed here, do not guess what it does. If an entry is missing, say you are not sure and that the Lavoo team can confirm.
+Use it only for questions that name Lavoo or one of these features. Every other question is about the member's own business, work or life, and gets no Lavoo facts.
 ==================================================
 
 WHAT LAVOO IS

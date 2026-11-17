@@ -134,7 +134,7 @@ def signup(
     except Exception as e:
         db.rollback()
         logger.error(f"[SIGNUP] Failed to save pending signup for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Could not start signup — please try again")
+        raise HTTPException(status_code=500, detail="Could not start signup. Please try again")
 
     logger.info(f"[SIGNUP] Sending verification code to {email}")
     background_tasks.add_task(
@@ -168,17 +168,17 @@ def verify_signup(
 
     pending = db.query(PendingSignup).filter(PendingSignup.email == email).first()
     if not pending:
-        raise HTTPException(status_code=400, detail="No pending signup found for this email — please sign up again")
+        raise HTTPException(status_code=400, detail="No pending signup found for this email. Please sign up again")
 
     if datetime.now(timezone.utc) > pending.code_expires_at.replace(tzinfo=timezone.utc):
         db.delete(pending)
         db.commit()
-        raise HTTPException(status_code=400, detail="Verification code expired — please sign up again")
+        raise HTTPException(status_code=400, detail="Verification code expired. Please sign up again")
 
     if pending.attempts >= MAX_VERIFY_ATTEMPTS:
         db.delete(pending)
         db.commit()
-        raise HTTPException(status_code=400, detail="Too many incorrect attempts — please sign up again")
+        raise HTTPException(status_code=400, detail="Too many incorrect attempts. Please sign up again")
 
     if code.strip() != pending.verification_code:
         pending.attempts = (pending.attempts or 0) + 1

@@ -115,7 +115,7 @@ async def add_staff_referral_email(
     if not user:
         raise HTTPException(
             status_code=404,
-            detail=f"No Lavoo account exists for {body.email} yet — they need an account before they can be added.",
+            detail=f"No Lavoo account exists for {body.email} yet. They need an account before they can be added.",
         )
 
     existing = db.query(StaffReferralPool).filter(StaffReferralPool.user_id == user.id).first()
@@ -179,7 +179,7 @@ async def backfill_staff_referrals(
     from api.services.notification_service import NotificationService
 
     if not db.query(StaffReferralPool).filter(StaffReferralPool.is_active.is_(True)).first():
-        raise HTTPException(status_code=400, detail="The staff referral pool is empty — add at least one staff email first.")
+        raise HTTPException(status_code=400, detail="The staff referral pool is empty. Add at least one staff email first.")
 
     already_referred_ids = {r[0] for r in db.query(Referral.referred_user_id).all()}
     already_in_pool_ids = {r[0] for r in db.query(StaffReferralPool.user_id).all()}

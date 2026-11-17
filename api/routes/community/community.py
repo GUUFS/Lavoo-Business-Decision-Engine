@@ -163,9 +163,9 @@ VOO_FOLLOWUP_SYSTEM_PROMPT_HASH: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT_HASH: Optional[str] = None
 
-ANGLE_PROMPT_VERSION = "angle_v2.2"
+ANGLE_PROMPT_VERSION = "angle_v2.3"
 SUMMARY_PROMPT_VERSION = "summary_v2.0"
-FOLLOWUP_PROMPT_VERSION = "followup_v1.0"
+FOLLOWUP_PROMPT_VERSION = "followup_v1.1"
 
 
 def _load_voo_glossary() -> str:
@@ -322,6 +322,28 @@ LAVOO_PROTECTED_TERMS = (
     "decision engine",
     "reflection",
 )
+
+
+def _mentions_lavoo(text: str) -> bool:
+    """True when the text names Lavoo or one of its features (the same terms
+    the Lavoo guard checks). Used to keep Lavoo talk out of the context Voo
+    gets for an ordinary question, so it doesn't answer as if the member's
+    question were about Lavoo."""
+    lower = (text or "").lower()
+    return any(re.search(rf"\b{re.escape(term)}\b", lower) for term in LAVOO_PROTECTED_TERMS)
+
+
+_CONTEXT_STOPWORDS = {
+    "the", "and", "for", "you", "your", "with", "that", "this", "what", "how", "should", "would", "could",
+    "can", "are", "was", "have", "has", "from", "about", "into", "when", "why", "who", "any", "get", "more",
+}
+
+
+def _shares_topic(a: str, b: str) -> bool:
+    """True when two titles share at least two meaningful words, so a past
+    discussion is actually related to this question."""
+    words = lambda t: {w for w in re.findall(r"[a-z]{3,}", (t or "").lower()) if w not in _CONTEXT_STOPWORDS}
+    return len(words(a) & words(b)) >= 2
 
 
 def _clean_dashes(text: str) -> str:

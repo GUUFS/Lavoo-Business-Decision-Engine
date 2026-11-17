@@ -64,6 +64,13 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     is_bot = Column(Boolean, default=False, server_default="false")
     is_partner = Column(Boolean, default=False)   # partners/staff receive 50% payout; display shows 40% — a COMMISSION-RATE flag, unrelated to is_staff below
+    # Set on the admin Permissions page (subscriptions/partner_service.py):
+    # the day they became a partner, and the end of the free Premium that
+    # comes with it (6 calendar months from partner_since).
+    partner_since = Column(DateTime(timezone=True), nullable=True)
+    partner_premium_until = Column(DateTime(timezone=True), nullable=True)
+    # Premium forever, without paying (subscriptions/lifetime_premium.py).
+    lifetime_premium = Column(Boolean, default=False, server_default="false", nullable=False)
     is_active = Column(Boolean, default=True)
     user_status = Column(String(20), server_default="active", nullable=False)
 
@@ -117,6 +124,16 @@ class User(Base):
     # Flutterwave card token — captured from data.card.token in the verify
     # response so the card can be charged off-session for renewals.
     flutterwave_card_token = Column(String(500), nullable=True)
+    # Founding members: everyone who paid a founding price (any payment
+    # before SystemSettings.founding_monthly_ends_at). founding_number is
+    # their place in line (1 = first). See subscriptions/founding.py.
+    is_founding_member = Column(Boolean, default=False, server_default="false")
+    founding_number = Column(Integer, nullable=True, unique=True)
+    founding_member_at = Column(DateTime(timezone=True), nullable=True)
+    # What a beta user picked when saving their card (charged at launch by
+    # subscriptions/beta_billing.py). subscription_plan holds the period.
+    preferred_currency = Column(String(3), nullable=True)
+    preferred_plan_tier = Column(String(20), nullable=True)
 
     # Business profile fields
     company_name = Column(String(255), nullable=True)
@@ -187,6 +204,10 @@ class AITool(Base):
     who_should_use = Column(Text)  # JSON string of use cases
     compatibility_integration = Column(Text)  # JSON string of integrations
 
+    # Where the row came from: "catalog" (the original list) or "discovered"
+    # (added by decision_engine/tool_discovery.py from an analysis).
+    source = Column(String(40), default="catalog", server_default="catalog", nullable=True)
+
     # Vector embedding for semantic search (pgvector, 384 dims).
     # Populated by scripts/generate_tool_embeddings.py (or on import via cache clear + reload).
     # Used by decision_engine/vector_recommender.py and generate script.
@@ -196,6 +217,201 @@ class AITool(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class ToolDiscovery(Base):
+    """One tool name an analysis suggested that the catalog didn't have, and
+    what decision_engine/tool_discovery.py did about it: added, already in
+    the catalog, rejected, not found, or failed (with the reason in words)."""
+
+    __tablename__ = "tool_discoveries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)                       # as the analysis wrote it
+    name_key = Column(String(255), unique=True, index=True, nullable=False)  # lower case, one row per tool
+    status = Column(String(30), nullable=False, default="pending", index=True)
+    reason = Column(Text, nullable=True)                             # why it ended in that status
+    times_suggested = Column(Integer, nullable=False, default=1)
+    attempts = Column(Integer, nullable=False, default=0)
+    website = Column(String(500), nullable=True)                     # the official site its columns came from
+    directory = Column(String(40), nullable=True)                    # "wikidata" or "website"
+    directory_url = Column(String(500), nullable=True)               # the directory entry, when there is one
+    tool_id = Column(Integer, ForeignKey("ai_tools.id", ondelete="SET NULL"), nullable=True)
+    first_analysis_id = Column(Integer, nullable=True)
+    last_analysis_id = Column(Integer, nullable=True)
+    # Analyses whose saved result got this tool's website link written in (tool_discovery.link_into_analyses).
+    linked_analyses = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class ClarityCorpus(Base):
+    """
+    The zero-LLM clarifying-questions engine's reference corpus (see
+    decision_engine/clarity_engine.py). Each row is one real or
+    LLM-generated example of a business submission, what gap-types it had,
+    and what clarifying questions (if any) were judged appropriate for it.
+    At runtime a new submission is matched against this corpus by embedding
+    similarity (nearest neighbors) rather than calling an LLM — the LLM's
+    judgment is baked into these rows ahead of time (source='llm_seed' /
+    'llm_teacher'), not invoked per request.
+
+    source: 'llm_seed' (bootstrap), 'llm_teacher' (periodic low-confidence
+        enrichment job), or 'live' (a real user submission, logged at
+        decision time).
+    outcome: for source='live' rows where questions were actually shown —
+        'answered' or 'skipped', filled in once known (see /analyze's
+        clarity_corpus_id handling). Null until then, and always null for
+        llm_seed/llm_teacher rows and for live rows where no clarification
+        was triggered.
+    confidence: the top neighbor-similarity score this row's OWN decision
+        was made with (null for llm_seed/llm_teacher rows, which ARE the
+        precedent rather than a lookup against it). Low-confidence live
+        rows are what the periodic teacher job prioritizes for enrichment.
+    """
+    __tablename__ = "clarity_corpus"
+
+    id = Column(Integer, primary_key=True, index=True)
+    submission_text = Column(Text, nullable=False)
+    # Same raw-Column pattern as AITool.embedding above — Postgres's
+    # vector(384) type handles the "[0.1,-0.2,...]" string we assign.
+    embedding = Column("embedding", nullable=True)
+    needs_clarification = Column(Boolean, nullable=False, default=False)
+    gap_types = Column(JSON, nullable=False, default=list)
+    questions = Column(JSON, nullable=False, default=list)
+    source = Column(String(20), nullable=False)
+    outcome = Column(String(20), nullable=True)
+    confidence = Column(Float, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Why the micromodel decided what it did (facts found, step notes).
+    reasoning = Column(JSON, nullable=True)
+    # How it decided: 'neighbor' (copied a similar example), 'blend'
+    # (its own thinking with an example's wording), or 'reasoner' (its own
+    # thinking only).
+    decision_path = Column(String(20), nullable=True)
+    # The user's answers: [{"question", "answer"}].
+    answers = Column(JSON, nullable=True)
+    # When the LLM checked this decision, and whether it agreed.
+    teacher_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    teacher_agreed = Column(Boolean, nullable=True)
+    # Which diagnosis (business_analyses row) this checkup produced. Lets us
+    # see whether asking questions led to better advice.
+    analysis_id = Column(Integer, ForeignKey("business_analyses.id", ondelete="SET NULL"), nullable=True)
+    # A person's verdict on an LLM answer: None (not looked at yet), 'good',
+    # or 'wrong'. A 'wrong' answer is never copied or trained on again.
+    person_verdict = Column(String(20), nullable=True)
+    person_note = Column(Text, nullable=True)
+    person_checked_at = Column(DateTime(timezone=True), nullable=True)
+    person_checked_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class ClarityTeacherRun(Base):
+    """One run of the teacher job (decision_engine/clarity_teacher.py), so
+    the admin can see when the LLM last checked the micromodel and how it
+    went. trigger: 'scheduled' (every 3 hours) or 'manual' (admin button)."""
+    __tablename__ = "clarity_teacher_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trigger = Column(String(20), nullable=False, default="scheduled")
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    candidates = Column(Integer, nullable=False, default=0)
+    reviewed = Column(Integer, nullable=False, default=0)
+    agreed = Column(Integer, nullable=False, default=0)
+    llm_calls = Column(Integer, nullable=False, default=0)
+    new_precedents = Column(Integer, nullable=False, default=0)
+    errors = Column(Integer, nullable=False, default=0)
+    # Set when the whole run failed (not just one prompt).
+    error = Column(Text, nullable=True)
+    # Why the run did or didn't call the LLM, in plain words (e.g. "Nothing
+    # to check: 2 decisions under 15 minutes old"). Shown on the admin page.
+    note = Column(Text, nullable=True)
+
+
+class ClarityTeacherCall(Base):
+    """One decision the teacher checked: what the micromodel said (and asked),
+    what the LLM said (and asked), and whether they agreed. called_llm is False when an earlier
+    LLM answer for the exact same prompt was reused (no new LLM call)."""
+    __tablename__ = "clarity_teacher_calls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("clarity_teacher_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    corpus_id = Column(Integer, ForeignKey("clarity_corpus.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    submission_text = Column(Text, nullable=False)
+    called_llm = Column(Boolean, nullable=False, default=True)
+    micromodel_asked = Column(Boolean, nullable=True)
+    micromodel_questions = Column(JSON, nullable=True)
+    micromodel_confidence = Column(Float, nullable=True)
+    decision_path = Column(String(20), nullable=True)
+    llm_asked = Column(Boolean, nullable=True)
+    llm_questions = Column(JSON, nullable=True)
+    # How closely the micromodel's questions match the LLM's in meaning
+    # (0-1, clarity_teacher.question_match); None if either asked nothing.
+    question_match = Column(Float, nullable=True)
+    agreed = Column(Boolean, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    error = Column(Text, nullable=True)
+    # Why the LLM checked this decision: 'unsure' (the micromodel wasn't
+    # sure) or 'random' (it was sure; picked at random to catch confident
+    # mistakes).
+    why_checked = Column(String(20), nullable=False, default="unsure", server_default="unsure")
+
+
+class MicromodelExamQuestion(Base):
+    """One question in the micromodel's weekly exam: a founder's prompt and
+    the right answer, written by an admin (should it ask questions, and
+    which ones). See decision_engine/micromodel_exam.py."""
+    __tablename__ = "micromodel_exam_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    prompt = Column(Text, nullable=False)
+    should_ask = Column(Boolean, nullable=False)
+    # The questions it should ask (wording can differ; meaning is compared).
+    expected_questions = Column(JSON, nullable=False, default=list)
+    note = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # A removed question stays (old results mention it) but isn't asked again.
+    active = Column(Boolean, nullable=False, default=True, server_default="true")
+
+
+class MicromodelExamResult(Base):
+    """One sitting of the exam: how many questions the micromodel got right.
+    marking: for each question, what it answered and whether that was right."""
+    __tablename__ = "micromodel_exam_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # 'weekly' (the automatic job) or 'manual' (the admin's "Run exam now").
+    trigger = Column(String(20), nullable=False, default="weekly")
+    taken_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    total = Column(Integer, nullable=False, default=0)
+    # Right about WHETHER to ask.
+    right_decision = Column(Integer, nullable=False, default=0)
+    # Right about whether to ask AND asked the right questions.
+    fully_right = Column(Integer, nullable=False, default=0)
+    marking = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+
+
+class CheckupUsage(Base):
+    """One Decision Engine checkup a user started, used to enforce the weekly
+    limit (decision_engine/checkup_limits.py): Pro 1 and Premium 2 per 7
+    days, on every billing period. Kept separate from BusinessAnalysis on
+    purpose: deleting an analysis must not give the checkup back.
+    status: 'started' -> 'completed' (analysis saved, analysis_id set), or
+    'failed' / 'cancelled', which don't count toward the limit. The admin
+    Engine Health page uses these rows for its success/failure numbers."""
+    __tablename__ = "checkup_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="started", server_default="started")
+    analysis_id = Column(Integer, nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    error = Column(Text, nullable=True)
 
 
 class BusinessAnalysis(Base):
@@ -269,6 +485,7 @@ class SaveCardRequest(BaseModel):
     payment_method_id: str
     currency: str           # required — USD | GBP | NGN
     plan_type: str          # required — monthly | quarterly | yearly
+    plan_tier: str = "pro"  # pro | premium
     save_card: bool = True  # False = charge this period only, never auto-renew
 
 
@@ -460,6 +677,13 @@ class Subscriptions(Base):
     # being ambiguous between "never checked" and "already awarded."
     chops_awarded = Column(Boolean, default=False, server_default="false")
 
+    # Which plan this payment was for ('pro' or 'premium') and which price
+    # set it was charged at ('founding' or 'standard'). NULL on rows saved
+    # before these columns existed: for those the plan is worked out from
+    # the amount (plan_prices.resolve_tier).
+    plan_tier = Column(VARCHAR(20), nullable=True)
+    price_type = Column(VARCHAR(20), nullable=True)
+
     user = relationship("User", back_populates="subscriptions")
     commission = relationship("Commission", back_populates="subscription", uselist=False)
 
@@ -510,6 +734,7 @@ class NotificationHistory(Base):
 class CreateSubscriptionRequest(BaseModel):
     payment_method_id: str
     plan_type: str  # 'monthly' or 'yearly'
+    plan_tier: str = "pro"  # pro | premium
     currency: Optional[str] = "USD"
     billing_details: Optional[Dict] = None
     save_card: bool = True  # False = charge this period only, never auto-renew
@@ -855,6 +1080,105 @@ class Commission(Base):
     user = relationship("User", foreign_keys=[user_id])
     referred_user = relationship("User", foreign_keys=[referred_user_id])
     subscription = relationship("Subscriptions", foreign_keys=[subscription_id])
+
+
+class AdminRefund(Base):
+    """A refund an admin made from the admin Refunds page
+    (subscriptions/admin_refunds.py): what was refunded, why, by whom, and
+    what was updated in our records."""
+    __tablename__ = "admin_refunds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    stripe_charge_id = Column(String(255), nullable=False, index=True)
+    stripe_payment_intent_id = Column(String(255), nullable=True)
+    stripe_refund_id = Column(String(255), nullable=True)
+    amount = Column(Numeric(precision=10, scale=2), nullable=False)
+    currency = Column(String(10), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Our payment record that was marked refunded (None if none was found).
+    subscription_record_id = Column(Integer, ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True)
+    # The Stripe subscription that was cancelled so it never charges again.
+    stripe_subscription_cancelled = Column(String(255), nullable=True)
+    reason = Column(String(40), nullable=False)
+    note = Column(Text, nullable=True)
+    # Plain-words list of what was done, shown on the admin page.
+    steps = Column(JSON, nullable=True)
+    refunded_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminSentEmail(Base):
+    """An email an admin sent to a user from the admin "Email a user" page
+    (api/routes/admin/user_emails.py)."""
+    __tablename__ = "admin_sent_emails"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    to_email = Column(String(255), nullable=False)
+    subject = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    # 'sent' (Resend or SMTP) or 'logged' (no email service set up, only logged).
+    status = Column(String(20), nullable=False)
+    sent_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CommissionPayoutAttempt(Base):
+    """What the payout system did when it tried to pay a commission.
+
+    One row per KIND of outcome: if the same thing happens again (for
+    example "waiting for money" on every 10-minute retry), the row's
+    `tries` and `last_tried_at` go up instead of adding a new row. A new
+    row is added only when the outcome changes, so the rows read as a
+    short history: waiting for money -> sent.
+
+    Written by subscriptions/payout_tracker.py; shown on the admin
+    Payout Tracker page and in the Revenue page's health check.
+    """
+    __tablename__ = "commission_payout_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    commission_id = Column(Integer, ForeignKey("commissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 'flutterwave' or 'stripe' (the route the money goes out through), or None when there is no route.
+    route = Column(String(20), nullable=True)
+    # True when the money is converted to another currency to be paid (e.g. GBP earned, NGN sent).
+    cross_border = Column(Boolean, nullable=False, default=False, server_default="false")
+    from_currency = Column(String(10), nullable=True)
+    to_currency = Column(String(10), nullable=True)
+    amount = Column(Numeric(precision=12, scale=2), nullable=True)            # the commission, in from_currency
+    converted_amount = Column(Numeric(precision=14, scale=2), nullable=True)  # what is sent, in to_currency
+    fx_rate = Column(Numeric(precision=18, scale=6), nullable=True)
+    # The spendable balance seen on the route's wallet when it checked (in to_currency).
+    balance_available = Column(Numeric(precision=14, scale=2), nullable=True)
+    # sent | waiting_for_money | no_payout_account | account_not_ready | rate_unavailable
+    # | too_small | needs_review | could_not_check | failed
+    outcome = Column(String(30), nullable=False)
+    reason = Column(Text, nullable=False)  # the plain-words explanation shown to the admin
+    payout_id = Column(Integer, ForeignKey("payouts.id", ondelete="SET NULL"), nullable=True)
+    tries = Column(Integer, nullable=False, default=1, server_default="1")
+    first_tried_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_tried_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminActivity(Base):
+    """A stamp for every change an admin made from the admin end: who, what,
+    when, and whether it worked (api/services/admin_activity.py). Request
+    bodies are never stored. Shown on the admin Activity page."""
+    __tablename__ = "admin_activity"
+
+    id = Column(Integer, primary_key=True, index=True)
+    admin_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Name and email at the time, kept even if the admin account changes later.
+    admin_name = Column(String(255), nullable=True)
+    admin_email = Column(String(255), nullable=True)
+    method = Column(String(10), nullable=False)
+    path = Column(String(500), nullable=False)
+    query = Column(String(500), nullable=True)
+    action = Column(String(300), nullable=False)  # plain words, e.g. "Refunded Stripe payment ch_1"
+    status_code = Column(Integer, nullable=False)
+    succeeded = Column(Boolean, nullable=False, default=True)
+    ip_address = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 '''Payouts Table'''
@@ -1642,6 +1966,15 @@ class SystemSettings(Base):
     monthly_price = Column(Float, default=29.99)
     quarterly_price = Column(Float, default=79.99)
     yearly_price = Column(Float, default=299.99)
+
+    # Founding prices (see subscriptions/founding.py). Everyone who pays
+    # before founding_monthly_ends_at pays the founding price: monthly on
+    # every payment until then; quarterly/yearly on the first payment of each.
+    # founding_watch_enabled and founding_member_limit are no longer used
+    # (there is no cap any more); the columns are kept so nothing breaks.
+    founding_watch_enabled = Column(Boolean, default=False, server_default="false")
+    founding_member_limit = Column(Integer, default=500, server_default="500")
+    founding_monthly_ends_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

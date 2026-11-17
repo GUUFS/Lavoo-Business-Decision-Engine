@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
@@ -20,6 +20,10 @@ class SetRoleRequest(BaseModel):
 
 class SetStaffRequest(BaseModel):
     is_staff: bool
+
+
+class SetPartnerRequest(BaseModel):
+    is_partner: bool
 
 
 @router.get("")
@@ -52,6 +56,8 @@ async def get_users_for_permissions(
 
     if role == "staff":
         query = query.filter(User.is_staff.is_(True))
+    elif role == "partner":
+        query = query.filter(User.is_partner.is_(True))
     elif role in ASSIGNABLE_ROLES:
         query = query.filter(User.role == role)
 
@@ -64,17 +70,26 @@ async def get_users_for_permissions(
         .all()
     )
 
+    # The plan each active user is on (Pro or Premium; a partner on their
+    # free 6 months counts as Premium), for the Subscription column.
+    from decision_engine.checkup_limits import user_plan_tier
+
     result = []
     for user in users:
+        active = (user.subscription_status or "").lower() == "active"
         result.append({
             "id": user.id,
             "name": user.name,
             "email": user.email,
             "is_admin": user.is_admin,
             "is_staff": bool(user.is_staff),
+            "is_partner": bool(user.is_partner),
+            "partner_since": user.partner_since.isoformat() if user.partner_since else None,
+            "partner_premium_until": user.partner_premium_until.isoformat() if user.partner_premium_until else None,
             "is_active": user.is_active,
             "role": user.role or UserRole.NORMAL.value,
             "subscription_status": user.subscription_status or "none",
+            "plan_tier": user_plan_tier(db, user) if active else None,
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "avatar": get_user_avatar(user.name),
         })
@@ -184,5 +199,75 @@ async def set_user_staff(
         "status": "success",
         "message": f"{user.name} is {'now' if request.is_staff else 'no longer'} Staff",
         "is_staff": user.is_staff,
+        "user_id": user.id,
+    }
+
+@router.patch("/{user_id}/partner")
+async def set_user_partner(
+    user_id: int,
+    request: SetPartnerRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """
+    Make a user a partner, or remove it, the same way as Staff. A partner
+    earns a 50% Builder Bonus rate on their referrals and gets Premium free
+    for 6 calendar months from the day they become a partner (see
+    subscriptions/partner_service.py); any Stripe subscription they pay for
+    is paused for those 6 months. Removing it ends both straight away and
+    resumes that Stripe billing. A new partner gets a welcome email.
+    Cannot change your own partner status or another admin's.
+    """
+    from subscriptions.partner_service import grant_partner, revoke_partner
+
+    # 0. Find the user and refuse changes to yourself or another admin.
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    caller_id = (
+        current_user.get("id") or current_user.get("user", {}).get("id")
+        if isinstance(current_user, dict)
+        else current_user.id
+    )
+
+    if user.id == caller_id:
+        raise HTTPException(
+            status_code=400, detail="Cannot change your own partner status"
+        )
+
+    if user.is_admin:
+        raise HTTPException(
+            status_code=400, detail="Cannot change the partner status of a platform admin"
+        )
+
+    # 1. Grant: partner status, 6 months of free Premium, Stripe billing paused.
+    if request.is_partner:
+        result = grant_partner(db, user)
+        until = user.partner_premium_until.strftime("%d %B %Y") if user.partner_premium_until else None
+        message = f"{user.name} is now a Partner: 50% builder bonus, Premium free until {until}"
+        if result["stripe_paused"]:
+            message += f". Stripe billing paused until then ({result['stripe_paused']} subscription(s))"
+        # 1b. A new partner is told by email (after the response, so the page doesn't wait).
+        if result.get("is_new") and user.email:
+            from emailing.email_service import email_service
+            background_tasks.add_task(email_service.send_partner_welcome, user.email, user.name, until)
+            message += ". A welcome email is on its way to them"
+    # 2. Revoke: both end now, and paused Stripe billing resumes.
+    else:
+        result = revoke_partner(db, user)
+        message = f"{user.name} is no longer a Partner"
+        if result["stripe_resumed"]:
+            message += f". Stripe billing resumed ({result['stripe_resumed']} subscription(s))"
+
+    # 3. Tell the admin page what changed.
+
+    return {
+        "status": "success",
+        "message": message,
+        "is_partner": bool(user.is_partner),
+        "partner_since": user.partner_since.isoformat() if user.partner_since else None,
+        "partner_premium_until": user.partner_premium_until.isoformat() if user.partner_premium_until else None,
         "user_id": user.id,
     }

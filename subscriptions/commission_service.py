@@ -1,3 +1,30 @@
+"""
+Builder Bonus referral commissions.
+
+When a referred user's subscription payment succeeds, this module decides
+whether their referrer earns from it and at what rate, records the
+Commission, and keeps CommissionSummary totals up to date.
+
+Rules (enforced in CommissionService._eligibility_for_payment):
+  - The rate comes from the REFERRER's own plan at the time of the payment:
+    Premium 40%, Pro 25%. A referrer who isn't actively subscribed is
+    treated as free (Starter).
+  - Pro/Premium referrer: earns on the referral's payments for 6 months of
+    the referral's subscription. How the 6 months are counted depends on
+    the REFERRER's own billing period at the time of each payment:
+      - referrer on a YEARLY plan: only months the referral actually paid
+        for count. If the referral pays month 1 and misses month 2, 1 month
+        is used and 5 are left, whenever they come back.
+      - referrer on a MONTHLY or QUARTERLY plan (and partners/staff with no
+        yearly plan): a straight count of 6 calendar months from the
+        referral's first payment. If the referral pays month 1 and misses
+        month 2, 1 month is earned and 4 are left (months 3 to 6).
+    In both cases a payment never earns once the referral has already paid
+    for 6 months (6 monthly or 2 quarterly payments), and a yearly payment
+    earns once (it covers 12 months, so nothing after it earns).
+  - Free referrer: 10% of the referral's first payment only.
+  - Staff-pool signups (no referral code): flat 30%.
+"""
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -6,48 +33,71 @@ from datetime import datetime, timedelta, timezone
 from database.pg_models import Commission, Referral, CommissionSummary, User, NotificationType, Subscriptions
 from api.services.notification_service import NotificationService
 from emailing.email_service import email_service
+from subscriptions import payout_tracker
 import os
 import logging
 
 logger = logging.getLogger(__name__)
 
-COMMISSION_RATE_STANDARD = Decimal("0.40")   # 40% — shown on screen, paid to subscribed regular users
-COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff (screen still shows 40%)
-COMMISSION_RATE_FREE     = Decimal("0.15")   # 15% — paid to a referrer who is on the free plan themselves
-COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides the normal 40/15/50% logic regardless of that staff member's own plan
+COMMISSION_RATE_PARTNER  = Decimal("0.50")   # 50% — paid internally to partners/staff on their own real referrals, under the same 6-month/one-time rules as everyone else (see _eligibility_for_payment)
+COMMISSION_RATE_STAFF_POOL = Decimal("0.30")  # 30% flat — a referral-less signup auto-assigned to staff (see Referral.via_staff_pool); overrides everything below regardless of that staff member's own plan
 
-# Awarded to the SUBSCRIBER themselves (not a referrer) EVERY time one of
-# their subscription payments succeeds — initial purchase or renewal alike,
-# not just the first ever. Which amount depends on which plan they paid
-# for, told apart by the actual amount charged (see PLAN_PRICES below):
-# there's no separate "tier" column on Subscriptions, and the checkout flow
-# itself doesn't pass a tier through yet — the home page's pricing section
-# (lib/currency.ts's LAVOO_PRICING on the frontend) already prices both
-# tiers for every currency/billing-period, which is what PLAN_PRICES
-# mirrors here.
+# Builder Bonus Rewards rates, keyed by the REFERRER's own current plan —
+# not the referral's. Eligibility (whether a given payment pays out at all)
+# is separate — see _commission_eligibility below.
+COMMISSION_RATE_PREMIUM = Decimal("0.40")    # 40% — referrer is actively on Premium
+COMMISSION_RATE_PRO     = Decimal("0.25")    # 25% — referrer is actively on Pro
+COMMISSION_RATE_STARTER = Decimal("0.10")    # 10% — referrer is on the free Starter plan; ONE-TIME only, see below
+
+# Legacy aliases kept for anything that still imports the old names directly.
+COMMISSION_RATE_STANDARD = COMMISSION_RATE_PREMIUM
+COMMISSION_RATE_FREE = COMMISSION_RATE_STARTER
+
+# A Pro/Premium referrer earns from a referral for 6 months of the
+# referral's subscription (see the module docstring for how a yearly
+# referrer's months are counted differently). Each payment adds the months
+# it covers:
+PAID_MONTHS_LIMIT = 6
+MONTHS_PER_PAYMENT = {"monthly": 1, "quarterly": 3, "yearly": 12}
+# Referrers on a monthly or quarterly plan: the 6 months are calendar months
+# from the referral's first payment (a straight count; missed months are lost).
+EARNING_WINDOW_MONTHS = 6
+
+# A referrer counts as actively subscribed while their status is one of
+# these ('canceling' = cancelled at period end, still paid up) and their
+# paid period hasn't ended. The grace covers a renewal that is a little late
+# to be recorded.
+ACTIVE_REFERRER_STATUSES = ("active", "canceling")
+EXPIRY_GRACE = timedelta(days=2)
+
+
+def months_covered(billing_period: "str | None") -> int:
+    """How many months of subscription one payment pays for: monthly 1,
+    quarterly 3, yearly 12. An unknown or missing period counts as 1."""
+    return MONTHS_PER_PAYMENT.get((billing_period or "monthly").lower(), 1)
+
+
+def add_calendar_months(dt: datetime, months: int) -> datetime:
+    """The same day `months` calendar months later, clamped to the last day
+    of a shorter month (31 January + 1 month = 28/29 February)."""
+    from calendar import monthrange
+    years, month_index = divmod(dt.month - 1 + months, 12)
+    year, month = dt.year + years, month_index + 1
+    return dt.replace(year=year, month=month, day=min(dt.day, monthrange(year, month)[1]))
+
+
+def _as_utc(dt: "datetime | None") -> "datetime | None":
+    """Treat a naive datetime as UTC so it can be compared with aware ones
+    (some rows and test fixtures store naive times). None stays None."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+# Awarded to the SUBSCRIBER themselves (not a referrer) every time one of
+# their subscription payments succeeds. Pro or Premium is worked out from
+# the amount paid, compared with the live Stripe prices
+# (subscriptions/plan_prices.py).
 PLAN_CHOPS = {"pro": 1500, "premium": 3000}
-
-# Mirrors lib/currency.ts's LAVOO_PRICING on the frontend — each tier's
-# actual discounted "price" per currency/billing-period (never "regular",
-# which is only ever shown struck-through, never charged). Keep both files
-# in sync by hand if either changes; there's no shared source between a
-# Python backend and a TypeScript frontend to enforce it automatically.
-PLAN_PRICES = {
-    "pro": {
-        "GBP": {"monthly": Decimal("22.49"), "quarterly": Decimal("60.00"), "yearly": Decimal("269.78")},
-        "USD": {"monthly": Decimal("29.95"), "quarterly": Decimal("84.25"), "yearly": Decimal("336.98")},
-        "NGN": {"monthly": Decimal("34000"), "quarterly": Decimal("22680"), "yearly": Decimal("20160")},
-    },
-    "premium": {
-        "GBP": {"monthly": Decimal("29.58"), "quarterly": Decimal("78.98"), "yearly": Decimal("354.96")},
-        "USD": {"monthly": Decimal("36.95"), "quarterly": Decimal("110.85"), "yearly": Decimal("443.40")},
-        "NGN": {"monthly": Decimal("45000"), "quarterly": Decimal("28080"), "yearly": Decimal("24960")},
-    },
-}
-# A charged amount is matched to a plan within this tolerance — covers minor
-# rounding (e.g. minor-unit conversion) without being loose enough to
-# confuse two genuinely different price points.
-PLAN_PRICE_MATCH_TOLERANCE = Decimal("0.50")
 
 # A payment is "real" for chops/stats purposes under a different word per
 # provider (Flutterwave writes "successful", Stripe "completed") — same set
@@ -67,43 +117,234 @@ class CommissionService:
     _last_waiting_alert_flutterwave: "datetime | None" = None
 
     @staticmethod
-    def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
-        """Return the actual payout rate for a referrer.
-        Partners AND staff (is_partner OR is_staff — see User.is_staff's own
-        comment: an admin-assignable role, independent of is_partner) earn
-        50% regardless of their own subscription — assigning the Staff role
-        on the admin Permissions page is what's supposed to grant this, so
-        it has to actually change the rate, not just show a badge.
-        Otherwise the rate depends on the referrer's own subscription: an
-        active/paying referrer earns the standard 40%; a referrer on the
-        free plan earns 15%.
+    def _resolve_referrer_tier(referrer_id: int, db: Session, at: "datetime | None" = None) -> str:
+        """Which Builder Bonus tier a referrer is in RIGHT NOW: 'partner',
+        'premium', 'pro' or 'starter'. Checked fresh on every call — this is
+        what makes eligibility a per-payment check rather than something
+        locked in at the referral's first payment: a referrer who lapses
+        from Pro back to Starter between two of a referral's payments earns
+        the Pro rate on the payments that cleared while they were still
+        subscribed, and nothing on the ones that cleared after they lapsed.
+
+        Partners AND staff (is_partner OR is_staff — an admin-assignable
+        role, independent of is_partner) are 'partner' regardless of their
+        own subscription — assigning the Staff role on the admin
+        Permissions page is what's supposed to grant this, so it has to
+        actually change the rate, not just show a badge.
+
+        Otherwise: 'starter' unless the referrer is actively subscribed at
+        `at` (default now): status 'active' or 'canceling' (cancelled at
+        period end but still paid up) AND their paid period hasn't ended
+        (subscription_expires_at, with EXPIRY_GRACE). Then the plan saved on
+        the referrer's own most recent active Subscriptions row tells Pro
+        from Premium (_subscription_tier; older
+        rows without a saved plan are matched against the Stripe prices). An
+        active referrer whose plan can't be told (legacy pricing, a manual
+        adjustment) is treated as 'starter' rather than guessed at.
         """
         referrer = db.query(User).filter(User.id == referrer_id).first()
         if not referrer:
-            return COMMISSION_RATE_STANDARD
+            return "starter"
         if getattr(referrer, "is_partner", False) or getattr(referrer, "is_staff", False):
-            return COMMISSION_RATE_PARTNER
-        if (referrer.subscription_status or "").lower() == "active":
-            return COMMISSION_RATE_STANDARD
-        return COMMISSION_RATE_FREE
+            return "partner"
+        if (referrer.subscription_status or "").lower() not in ACTIVE_REFERRER_STATUSES:
+            return "starter"
+        at = _as_utc(at) or datetime.now(timezone.utc)
+        expires_at = _as_utc(getattr(referrer, "subscription_expires_at", None))
+        if expires_at is not None and expires_at + EXPIRY_GRACE < at:
+            # Their paid period is over; the status just hasn't caught up yet.
+            return "starter"
+
+        own_sub = CommissionService._referrer_own_subscription(referrer_id, db)
+        if not own_sub:
+            return "starter"
+        tier = CommissionService._subscription_tier(own_sub)
+        return tier or "starter"
 
     @staticmethod
-    def _resolve_plan_tier(amount: Decimal, currency: str) -> "str | None":
-        """Tell a Pro payment from a Premium one by matching the amount
-        actually charged against PLAN_PRICES — see that constant's comment
-        for why there's nothing more direct to check yet. Returns None if
-        nothing matches closely enough (an old/legacy price point, a beta
-        discount, a manually-adjusted amount, …) so the caller can skip
-        awarding rather than guess at which tier it was."""
-        currency = (currency or "USD").upper()
-        for tier, by_currency in PLAN_PRICES.items():
-            periods = by_currency.get(currency)
-            if not periods:
-                continue
-            for period_price in periods.values():
-                if abs(amount - period_price) <= PLAN_PRICE_MATCH_TOLERANCE:
-                    return tier
-        return None
+    def _referrer_own_subscription(referrer_id: int, db: Session) -> "Subscriptions | None":
+        """The referrer's own most recent active (or cancelled-at-period-end)
+        subscription payment: it says which plan (Pro/Premium) and which
+        billing period (monthly/quarterly/yearly) they are on now."""
+        return (
+            db.query(Subscriptions)
+            .filter(
+                Subscriptions.user_id == referrer_id,
+                Subscriptions.subscription_status.in_(ACTIVE_REFERRER_STATUSES),
+            )
+            .order_by(Subscriptions.created_at.desc())
+            .first()
+        )
+
+    @staticmethod
+    def _referrer_on_yearly_plan(referrer_id: int, db: Session) -> bool:
+        """True if the referrer's own current plan is billed yearly. Only
+        yearly referrers have the 6 months counted as months the referral
+        actually paid for; everyone else gets a straight calendar count."""
+        own_sub = CommissionService._referrer_own_subscription(referrer_id, db)
+        return bool(own_sub) and (own_sub.subscription_plan or "").lower() == "yearly"
+
+    @staticmethod
+    def _get_rate_for_referrer(referrer_id: int, db: Session) -> Decimal:
+        """Display-only: the rate a referrer currently earns on an eligible
+        payment, for showing on the earnings page. Does NOT by itself mean
+        every payment pays this rate — see _commission_eligibility for the
+        first-payment/6-month-window/yearly-one-time rules that decide
+        whether a given payment is eligible at all."""
+        tier = CommissionService._resolve_referrer_tier(referrer_id, db)
+        return {
+            "partner": COMMISSION_RATE_PARTNER,
+            "premium": COMMISSION_RATE_PREMIUM,
+            "pro": COMMISSION_RATE_PRO,
+            "starter": COMMISSION_RATE_STARTER,
+        }[tier]
+
+    @staticmethod
+    def _eligibility_for_payment(
+        referrer_id: int,
+        via_staff_pool: bool,
+        referred_user_id: int,
+        billing_period: "str | None",
+        payment_time: datetime,
+        db: Session,
+        exclude_subscription_id: "int | None" = None,
+    ) -> "tuple[bool, Decimal]":
+        """Core eligibility/rate decision, built from primitives so it can be
+        called both AFTER a payment row exists (calculate_commission, via
+        _commission_eligibility below) and BEFORE one does — when
+        Flutterwave's split has to be configured on the charge request
+        itself, ahead of the charge succeeding (see
+        flutterwave_split.get_split_config_for_referred_user). Returns
+        (eligible, rate).
+
+        Rules (see commission_service.py module docstring area for the
+        rates themselves):
+          - via_staff_pool: flat 30%, always eligible, no window — this is a
+            no-referral-code signup auto-assigned to a staff member from a
+            rotating pool (set at signup, before any payment exists), not a
+            real Builder Bonus referral, so none of the rules below apply to
+            it.
+          - Every other referrer — partner/staff (50%), Premium (40%), Pro
+            (25%) alike — is a real referral and follows the SAME
+            eligibility rules, just at a different rate. The referrer's tier
+            is checked fresh for each payment, at that payment's time (see
+            _resolve_referrer_tier): a referrer who isn't actively
+            subscribed is treated as Starter.
+              - Starter (free) referrer: 10%, but ONLY on the referral's
+                first-ever successful payment. Never again from that
+                referral, regardless of billing period.
+              - Pro/Premium/partner referrer: the tier rate on a payment
+                if, BEFORE it, the referral had paid for fewer than 6
+                months of subscription (PAID_MONTHS_LIMIT). The months are
+                added up from their earlier successful payments (monthly 1,
+                quarterly 3, yearly 12). How a gap in the referral's
+                payments is treated depends on the REFERRER's own billing
+                period (_referrer_on_yearly_plan):
+                  - yearly referrer: months the referral wasn't subscribed
+                    never count; they earn whenever the referral pays,
+                    until 6 months are paid for;
+                  - monthly/quarterly referrer (and partners/staff without
+                    a yearly plan): the payment must also clear within 6
+                    calendar months of the referral's first payment
+                    (EARNING_WINDOW_MONTHS), so missed months are lost.
+                In practice, with no gaps:
+                  - monthly: the first 6 payments earn, wherever they fall;
+                  - quarterly: the first 2 payments earn;
+                  - yearly: the first yearly payment earns if fewer than 6
+                    months were paid before it; it covers 12 months, so no
+                    later payment (including its renewal) ever earns.
+
+        `billing_period` (this payment's own period) isn't needed for the
+        decision; only earlier payments count. It's kept so existing callers
+        (flutterwave_split) don't have to change.
+        """
+        if via_staff_pool:
+            return True, COMMISSION_RATE_STAFF_POOL
+
+        tier = CommissionService._resolve_referrer_tier(referrer_id, db, at=payment_time)
+        payment_time = _as_utc(payment_time) or datetime.now(timezone.utc)
+
+        # 1. The referred user's earlier successful payments (not this one),
+        #    with the billing period of each.
+        filters = [
+            Subscriptions.user_id == referred_user_id,
+            Subscriptions.status.in_(PAID_SUBSCRIPTION_STATUSES),
+            Subscriptions.created_at < payment_time,
+        ]
+        if exclude_subscription_id is not None:
+            filters.append(Subscriptions.id != exclude_subscription_id)
+        earlier = db.query(Subscriptions.subscription_plan, Subscriptions.created_at).filter(*filters).all()
+        earlier_periods = [row[0] for row in earlier]
+
+        # 2. Free (Starter) referrer: 10% of the referral's first payment only.
+        if tier == "starter":
+            return not earlier_periods, COMMISSION_RATE_STARTER
+
+        # partner/staff, premium and pro all follow the same 6-month rule
+        # below; only the rate differs. A staff member's own personal
+        # referral is a real Builder Bonus referral like anyone else's; only
+        # the staff-pool auto-assignment above is exempt from these rules.
+        rate = {
+            "partner": COMMISSION_RATE_PARTNER,
+            "premium": COMMISSION_RATE_PREMIUM,
+            "pro": COMMISSION_RATE_PRO,
+        }[tier]
+
+        # 3. Add up how many months of subscription the referral had already
+        #    paid for. This payment earns only if that is under 6.
+        months_paid_before = sum(months_covered(period) for period in earlier_periods)
+        if months_paid_before >= PAID_MONTHS_LIMIT:
+            return False, rate
+
+        # 4. A referrer on a yearly plan: only paid months count, so a gap
+        #    in the referral's payments uses up nothing (paid month 1,
+        #    missed month 2: 1 used, 5 left).
+        if CommissionService._referrer_on_yearly_plan(referrer_id, db):
+            return True, rate
+
+        # 5. Everyone else: a straight count of 6 calendar months from the
+        #    referral's first payment; months they missed are lost (paid
+        #    month 1, missed month 2: 1 earned, 4 left). The first payment
+        #    itself always starts the window.
+        if not earlier:
+            return True, rate
+        first_payment = min(_as_utc(created) for _, created in earlier)
+        window_end = add_calendar_months(first_payment, EARNING_WINDOW_MONTHS)
+        return payment_time < window_end, rate
+
+    @staticmethod
+    def _commission_eligibility(subscription, referral, db: Session) -> "tuple[bool, Decimal]":
+        """calculate_commission's entry point into _eligibility_for_payment
+        — see that method's docstring for the actual rules."""
+        return CommissionService._eligibility_for_payment(
+            referrer_id=referral.referrer_id,
+            via_staff_pool=referral.via_staff_pool,
+            referred_user_id=subscription.user_id,
+            billing_period=getattr(subscription, "subscription_plan", None),
+            payment_time=subscription.created_at,
+            db=db,
+            exclude_subscription_id=subscription.id,
+        )
+
+    @staticmethod
+    def _subscription_tier(subscription) -> "str | None":
+        """Pro or Premium for a payment row: the plan saved on it, or for
+        older rows saved before plan_tier existed, worked out from the amount."""
+        saved = getattr(subscription, "plan_tier", None)
+        if saved:
+            return saved
+        return CommissionService._resolve_plan_tier(
+            Decimal(str(subscription.amount)), subscription.currency,
+            getattr(subscription, "subscription_plan", None),
+        )
+
+    @staticmethod
+    def _resolve_plan_tier(amount: Decimal, currency: str, period: "str | None" = None) -> "str | None":
+        """Pro or Premium, worked out from the amount paid and the live
+        Stripe prices. Returns None if it matches neither (an old price,
+        a discount, a manual change), so the caller skips rather than guesses."""
+        from subscriptions.plan_prices import resolve_tier
+        return resolve_tier(amount, currency, period)
 
     @staticmethod
     def _award_plan_signup_chops(subscription, db: Session) -> None:
@@ -128,9 +369,7 @@ class CommissionService:
         if getattr(subscription, "chops_awarded", False):
             return
 
-        tier = CommissionService._resolve_plan_tier(
-            Decimal(str(subscription.amount)), subscription.currency
-        )
+        tier = CommissionService._subscription_tier(subscription)
         if tier is None:
             logger.info(
                 f"[PLAN SIGNUP CHOPS] subscription={subscription.id} amount="
@@ -198,13 +437,18 @@ class CommissionService:
                 logger.info(f"Commission already exists for subscription {subscription.id}")
                 return existing
 
-            # Determine rate: a staff-pool auto-assignment is a flat 30%
-            # regardless of that staff member's own plan; otherwise partners
-            # get 50%, everyone else 40% (15% if the referrer is on the free plan).
-            if referral.via_staff_pool:
-                actual_rate = COMMISSION_RATE_STAFF_POOL
-            else:
-                actual_rate = CommissionService._get_rate_for_referrer(referral.referrer_id, db)
+            # Determine eligibility and rate — see _commission_eligibility's
+            # own docstring for the full first-payment/6-month-window/
+            # yearly-one-time rules this payment is checked against.
+            eligible, actual_rate = CommissionService._commission_eligibility(subscription, referral, db)
+            if not eligible:
+                logger.info(
+                    f"[BUILDER BONUS] skipped | subscription={subscription.id} "
+                    f"referred_user={subscription.user_id} referrer={referral.referrer_id} — "
+                    f"not eligible (outside recurring window, past the one-time yearly/Starter "
+                    f"payment, or referrer not actively subscribed)"
+                )
+                return None
 
             # Calculate commission amount
             original_amount = Decimal(str(subscription.amount))
@@ -242,6 +486,8 @@ class CommissionService:
             payout_id = None
             if not already_settled:
                 payout_id = CommissionService._attempt_immediate_payout(commission, db)
+                # Record what the first try did (Payout Tracker), saved with the commission.
+                payout_tracker.save(db, commission.id, commit=False)
                 if payout_id:
                     commission.status = 'auto_settled'
                     commission.paid_at = now
@@ -274,7 +520,7 @@ class CommissionService:
             cur = getattr(subscription, "currency", "USD") or "USD"
             bonus_message = (
                 f"You earned a {cur} {commission_amount:.2f} builder bonus from a "
-                f"referral's subscription payment — sent straight to your account."
+                f"referral's subscription payment, sent straight to your account."
                 if settled_now else
                 f"You earned a {cur} {commission_amount:.2f} builder bonus "
                 f"from a referral's subscription payment."
@@ -466,6 +712,12 @@ class CommissionService:
                         f"[BUILDER BONUS] Could not fetch {commission_currency}->NGN rate for "
                         f"commission {commission.id} — leaving pending for manual payout"
                     )
+                    payout_tracker.note(
+                        commission, "rate_unavailable",
+                        f"Cross-border payout: couldn't get today's {commission_currency} → NGN rate from "
+                        f"Flutterwave. Retried every 10 minutes.",
+                        route="flutterwave", to_currency="NGN",
+                    )
                     return None
                 payout_amount = (commission_amount * fx_rate).quantize(Decimal("0.01"))
                 logger.info(
@@ -495,6 +747,17 @@ class CommissionService:
                     + ". It will be paid automatically once funded."
                 )
                 logger.warning(f"[BUILDER BONUS] flutterwave payout waiting for balance | {msg}")
+                payout_tracker.note(
+                    commission, "waiting_for_money",
+                    (f"Needs {payout_tracker.money(payout_amount, 'NGN')}"
+                     + (f" ({payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.2f})" if fx_rate else "")
+                     + ". The Flutterwave NGN wallet has "
+                     + (payout_tracker.money(available_amount, 'NGN') if available_amount is not None
+                        else "an unknown balance (Flutterwave didn't answer)")
+                     + " available, so nothing was sent to Flutterwave yet. Add money to the Flutterwave NGN wallet."),
+                    route="flutterwave", to_currency="NGN", converted_amount=payout_amount,
+                    fx_rate=fx_rate, balance_available=available_amount,
+                )
                 if notify_admin:
                     CommissionService._alert_admin(f"⚠️ Referral payout waiting for Flutterwave balance — commission #{commission.id}", msg)
                 return None
@@ -566,10 +829,24 @@ class CommissionService:
                 f"(from {commission_amount} {commission_currency}"
                 + (f" @ rate {fx_rate}" if fx_rate else "") + ")"
             )
+            payout_tracker.note(
+                commission, "sent",
+                f"Sent {payout_tracker.money(payout_amount, 'NGN')} to {payout_account.bank_name} "
+                f"****{payout_account.account_number[-4:]} through Flutterwave"
+                + (f" (converted from {payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.2f})" if fx_rate else "")
+                + ".",
+                route="flutterwave", to_currency="NGN", converted_amount=payout_amount, fx_rate=fx_rate,
+                balance_available=available_amount, payout_id=payout.id,
+            )
             return payout.id
 
         except Exception as e:
             logger.error(f"[BUILDER BONUS] Immediate payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            payout_tracker.note(
+                commission, "failed",
+                f"Flutterwave transfer failed: {e}. Retried every 10 minutes.",
+                route="flutterwave", to_currency="NGN",
+            )
             # Commit here, not just flush: the caller (settle_pending_commission)
             # rolls back on a None return, which would otherwise undo the
             # failed Payout row and commission.payout_id link this attempt
@@ -672,6 +949,11 @@ class CommissionService:
                     f"referrer={commission.user_id} has neither a Flutterwave bank account nor a "
                     f"verified Stripe Connect account — leaving pending for manual payout"
                 )
+                payout_tracker.note(
+                    commission, "no_payout_account",
+                    "The referrer has no Flutterwave bank account and no verified Stripe account, so there is "
+                    "nowhere to send it. They need to finish their payout details on the Earnings page.",
+                )
                 return None
 
             # LOCK: only one process may pay this commission at a time.
@@ -698,6 +980,12 @@ class CommissionService:
                     f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} connected account "
                     f"{stripe_account.stripe_account_id} cannot receive transfers yet — leaving pending"
                 )
+                payout_tracker.note(
+                    commission, "account_not_ready",
+                    "The referrer's Stripe account can't receive transfers yet (Stripe still needs details "
+                    "from them). It is retried once Stripe turns transfers on.",
+                    route="stripe",
+                )
                 return None
             target_currency = (account.get("default_currency") or "gbp").upper()
 
@@ -713,6 +1001,12 @@ class CommissionService:
                         f"[BUILDER BONUS] Could not fetch {commission_currency}->{target_currency} rate for "
                         f"commission {commission.id} — leaving pending"
                     )
+                    payout_tracker.note(
+                        commission, "rate_unavailable",
+                        f"Cross-border payout: couldn't get today's {commission_currency} → {target_currency} rate. "
+                        f"Retried every 10 minutes.",
+                        route="stripe", to_currency=target_currency,
+                    )
                     return None
                 payout_amount = (commission_amount * fx_rate).quantize(Decimal("0.01"))
             logger.info(
@@ -724,6 +1018,10 @@ class CommissionService:
             amount_minor = int(payout_amount * 100)
             if amount_minor < 1:
                 logger.warning(f"[BUILDER BONUS] stripe payout skipped | commission={commission.id} converts to less than 0.01 {target_currency}")
+                payout_tracker.note(
+                    commission, "too_small", f"It converts to less than 0.01 {target_currency}, which Stripe can't send.",
+                    route="stripe", to_currency=target_currency, converted_amount=payout_amount, fx_rate=fx_rate,
+                )
                 return None
 
             # Ask Stripe if this commission was already paid, before sending.
@@ -747,6 +1045,12 @@ class CommissionService:
             except Exception as lookup_err:
                 # If we can't check, we can't be sure it wasn't paid, so don't send.
                 logger.warning(f"[BUILDER BONUS] could not check Stripe for an existing transfer for commission {commission.id}: {lookup_err} — leaving pending")
+                payout_tracker.note(
+                    commission, "could_not_check",
+                    f"Couldn't ask Stripe whether it was already paid ({lookup_err}), so nothing was sent, to avoid "
+                    f"paying twice. Retried every 10 minutes.",
+                    route="stripe", to_currency=target_currency,
+                )
                 return None
 
             if reversed_transfer and not prior_transfer:
@@ -756,6 +1060,12 @@ class CommissionService:
                     f"[BUILDER BONUS] commission {commission.id} was already sent (transfer "
                     f"{reversed_transfer.get('id')}) and Stripe reversed it — not sending again. "
                     f"Review it and pay manually if it is still owed."
+                )
+                payout_tracker.note(
+                    commission, "needs_review",
+                    f"It was sent once (Stripe transfer {reversed_transfer.get('id')}) and then reversed in Stripe, so "
+                    f"it is not sent again automatically. Decide by hand whether it is still owed.",
+                    route="stripe", to_currency=target_currency,
                 )
                 return None
 
@@ -768,6 +1078,16 @@ class CommissionService:
                     f"then be paid automatically."
                 )
                 logger.warning(f"[BUILDER BONUS] stripe payout waiting for balance | {msg}")
+                payout_tracker.note(
+                    commission, "waiting_for_money",
+                    f"Needs {payout_tracker.money(payout_amount, target_currency)}"
+                    + (f" ({payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.4f})" if fx_rate else "")
+                    + f". Stripe's available {target_currency} balance is {payout_tracker.money(available / 100, target_currency)}"
+                    + " (money still 'Incoming' can't be sent), so nothing was sent yet. It sends once the "
+                    + "incoming money becomes available, or top up Stripe (Balances > Add to balance).",
+                    route="stripe", to_currency=target_currency, converted_amount=payout_amount,
+                    fx_rate=fx_rate, balance_available=Decimal(available) / 100,
+                )
                 if notify_admin:
                     CommissionService._alert_admin(f"⚠️ Referral payout waiting for Stripe balance — commission #{commission.id}", msg)
                 return None
@@ -827,10 +1147,22 @@ class CommissionService:
                 logger.warning(f"[BUILDER BONUS] payout notification failed (payout itself succeeded): {notif_err}")
 
             logger.info(f"[BUILDER BONUS] stripe payout complete | commission={commission.id} payout={payout.id}")
+            payout_tracker.note(
+                commission, "sent",
+                f"Sent {payout_tracker.money(payout.amount, payout.currency)} to the referrer's Stripe account"
+                + (f" (converted from {payout_tracker.money(commission_amount, commission_currency)} at {fx_rate:,.4f})" if fx_rate else "")
+                + ".",
+                route="stripe", to_currency=payout.currency, converted_amount=payout.amount, fx_rate=fx_rate,
+                payout_id=payout.id,
+            )
             return payout.id
 
         except Exception as e:
             logger.error(f"[BUILDER BONUS] Stripe payout attempt failed for commission {commission.id}: {e}", exc_info=True)
+            payout_tracker.note(
+                commission, "failed", f"Stripe transfer failed: {e}. Retried every 10 minutes.",
+                route="stripe",
+            )
             # Commit here, not just flush: the caller (settle_pending_commission)
             # rolls back on a None return, which would otherwise undo the
             # failed Payout row and commission.payout_id link this attempt
@@ -869,12 +1201,16 @@ class CommissionService:
         """
         from database.pg_models import Payout
         from subscriptions.payout_service import PayoutService
+        # Read the id now: after a rollback the commission object has to reload it.
+        commission_id = commission.id
         try:
             payout_id = CommissionService._attempt_immediate_payout(
                 commission, db, notify_admin=notify_admin, balance_override=balance_override,
             )
             if not payout_id:
                 db.rollback()
+                # Record why nothing was sent (Payout Tracker), after the rollback so it is kept.
+                payout_tracker.save(db, commission_id)
                 return None
             commission.status = 'auto_settled'
             commission.paid_at = datetime.now(timezone.utc)
@@ -882,10 +1218,13 @@ class CommissionService:
             db.flush()  # session has autoflush off; the summary update reads by payout_id
             PayoutService._update_summary_on_payout(db.get(Payout, payout_id), db)
             db.commit()
+            # Record that it was sent (Payout Tracker).
+            payout_tracker.save(db, commission_id)
             return payout_id
         except Exception as e:
             db.rollback()
-            logger.error(f"[BUILDER BONUS] settle_pending_commission failed for {commission.id}: {e}", exc_info=True)
+            logger.error(f"[BUILDER BONUS] settle_pending_commission failed for {commission_id}: {e}", exc_info=True)
+            payout_tracker.save(db, commission_id)
             return None
 
     @staticmethod

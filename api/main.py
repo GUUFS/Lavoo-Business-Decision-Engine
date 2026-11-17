@@ -12,7 +12,7 @@ except (ImportError, RuntimeError):
 import asyncio
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # Third-party imports
 from dotenv import load_dotenv
@@ -108,6 +108,38 @@ async def log_requests(request: Request, call_next):
     logger.info(f"INCOMING REQUEST: {request.method} {request.url.path}")
     response = await call_next(request)
     logger.info(f"RESPONSE STATUS: {request.method} {request.url.path} -> {response.status_code}")
+    return response
+
+
+# Admin activity stamps: who changed what from the admin end, and when
+# (api/services/admin_activity.py). Saved after the response, off the
+# request path, so it never slows an admin action down.
+_admin_activity_tasks: set = set()
+
+
+@app.middleware("http")
+async def record_admin_actions(request: Request, call_next):
+    """Stamp every change an admin makes from the admin end (who, what, when)."""
+    # 1. Handle the request as normal.
+    response = await call_next(request)
+    # 2. A change from the admin end: record it in the background.
+    try:
+        from api.services import admin_activity
+        came_from = request.headers.get("origin") or request.headers.get("referer")
+        if admin_activity.should_record(request.method, request.url.path, came_from):
+            # Behind Railway's proxy the visitor's IP is the first X-Forwarded-For entry.
+            forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            ip = forwarded or (request.client.host if request.client else None)
+            task = asyncio.create_task(asyncio.to_thread(
+                admin_activity.record, request.headers.get("authorization"),
+                request.cookies.get("access_token_cookie"), request.method, request.url.path,
+                request.url.query, response.status_code, ip,
+            ))
+            # Keep a reference until it finishes (asyncio only holds weak ones).
+            _admin_activity_tasks.add(task)
+            task.add_done_callback(_admin_activity_tasks.discard)
+    except Exception as e:
+        logger.warning(f"[admin-activity] couldn't queue the stamp: {e}")
     return response
 
 
@@ -307,11 +339,15 @@ def create_admin_user(db: Session):
 #   4. A user is NEVER charged by both methods for the same renewal cycle.
 # =============================================================================
 
-def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currency: str) -> bool:
+def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currency: str, plan_tier: str = "pro") -> bool:
     """
     Attempt an off-session renewal charge via Flutterwave using a previously
     stored card token. Returns True only on a confirmed successful charge.
     Creates a fresh Subscriptions row on success and updates the user's status.
+
+    Renews the same plan (plan_tier + plan) at its price today: founding or
+    standard by the founding rules (subscriptions/founding.py). `amount` (what
+    they paid last time) is only used if that price isn't set up in Stripe.
     """
     try:
         import requests as _req
@@ -330,6 +366,19 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
             if not secret_key:
                 logger.error("[flw-renewal] FLUTTERWAVE_SECRET_KEY not set")
                 return False
+
+            from subscriptions import founding
+            from subscriptions.plan_prices import get_plan_price
+            price_type = founding.price_type_for(db, user, plan)
+            plan_price = get_plan_price(plan_tier, plan, currency, price_type)
+            if plan_price is not None:
+                amount = float(plan_price)
+            else:
+                logger.error(
+                    "[flw-renewal] no %s price set for %s/%s/%s; charging last amount %s (user %s)",
+                    price_type, plan_tier, plan, currency, amount, user_id,
+                )
+                price_type = None
 
             tx_ref = f"LAVOO-RENEW-{plan.upper()}-{int(datetime.now(timezone.utc).timestamp())}-{secrets.token_hex(3).upper()}"
             parts = (user.name or "Customer Name").split()
@@ -371,7 +420,7 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
                 build_split_config,
                 get_split_config_for_referred_user,
             )
-            split_config = get_split_config_for_referred_user(user_id, db)
+            split_config = get_split_config_for_referred_user(user_id, db, billing_period=plan)
             if split_config:
                 payload["subaccounts"] = [
                     build_split_config(split_config["subaccount_id"], split_config["main_account_charge_percentage"])
@@ -407,6 +456,8 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
                         end_date=end,
                     )
                     db.add(new_sub)
+                    db.flush()
+                    founding.record_payment(db, user, new_sub, plan_tier, price_type)
                     user.subscription_status = "active"
                     user.subscription_plan = plan
                     db.commit()
@@ -419,12 +470,19 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
                     # here rather than left as a separate task since a split
                     # renewal charge with no matching Commission row would
                     # itself be a correctness gap in the earnings history.
+                    # The payment is already committed above. The commission
+                    # (and any payout it sent, and the subscriber's chops) is
+                    # saved by its own commit here: without it, leaving the
+                    # `with SessionLocal()` block rolled it all back, while a
+                    # transfer to the referrer had already really been sent.
                     try:
                         from subscriptions.commission_service import CommissionService
                         CommissionService.calculate_commission(
                             subscription=new_sub, db=db, already_settled=bool(split_config)
                         )
+                        db.commit()
                     except Exception as comm_exc:
+                        db.rollback()
                         logger.error("[flw-renewal] commission calc failed for user %s: %s", user_id, comm_exc, exc_info=True)
 
                     logger.info("[flw-renewal] ✅ renewed user %s plan=%s tx=%s split=%s", user_id, plan, tx_ref, bool(split_config))
@@ -439,7 +497,7 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
 PLAN_DURATION_MAP = {"monthly": 30, "quarterly": 90, "yearly": 365}
 
 
-def _attempt_stripe_renewal(user_id: int, plan_type: str) -> bool:
+def _attempt_stripe_renewal(user_id: int, plan_type: str, plan_tier: str = "pro", currency: str = "") -> bool:
     """
     Attempt an off-session Stripe Subscription.create using the customer's
     saved payment method. On success a local Subscriptions record is also
@@ -458,7 +516,20 @@ def _attempt_stripe_renewal(user_id: int, plan_type: str) -> bool:
                 return False
 
             from subscriptions.stripe import get_stripe_price_id, get_amount_from_stripe_price, _create_active_subscription_record
-            price_id = get_stripe_price_id(plan_type, "GBP") or get_stripe_price_id(plan_type, "USD")
+            # Renew on the same plan (Pro or Premium) AND currency they were on.
+            # Stripe won't put one customer on two currencies, so guessing
+            # GBP for a USD/NGN subscriber made the renewal fail (or bill in
+            # the wrong currency if their card allowed it).
+            # Founding or standard price, by the founding rules
+            # (subscriptions/founding.py).
+            from subscriptions import founding
+            price_type = founding.price_type_for(db, user, plan_type)
+            price_id = get_stripe_price_id(plan_type, currency, plan_tier, price_type) if currency else ""
+            if not price_id:
+                price_id = (
+                    get_stripe_price_id(plan_type, "GBP", plan_tier, price_type)
+                    or get_stripe_price_id(plan_type, "USD", plan_tier, price_type)
+                )
             if not price_id:
                 logger.warning("[renewal] no price_id for plan=%s user=%s", plan_type, user_id)
                 return False
@@ -473,7 +544,8 @@ def _attempt_stripe_renewal(user_id: int, plan_type: str) -> bool:
                 items=[{"price": price_id}],
                 default_payment_method=user.stripe_payment_method_id,
                 expand=["latest_invoice.payment_intent"],
-                metadata={"user_id": str(user_id), "plan_type": plan_type, "source": "auto_renewal"},
+                metadata={"user_id": str(user_id), "plan_type": plan_type, "plan_tier": plan_tier,
+                          "price_type": price_type, "source": "auto_renewal"},
             )
             if sub.get("status") in ("active", "trialing"):
                 amount = get_amount_from_stripe_price(price_id)
@@ -556,10 +628,20 @@ async def run_subscription_expiry_job():
                 renewed = 0
                 expired_count = 0
                 affected_users: set[int] = set()
+                # Partners on their free 6 months of Premium
+                # (subscriptions/partner_service.py): not charged for a
+                # renewal and not moved to Free until it ends.
+                # Premium-forever accounts (subscriptions/lifetime_premium.py)
+                # are skipped the same way, for good.
+                from subscriptions.lifetime_premium import lifetime_premium_user_ids
+                from subscriptions.partner_service import partner_premium_user_ids
+                on_partner_premium = partner_premium_user_ids(db, now) | lifetime_premium_user_ids(db)
 
                 for user_id, sub in latest_per_user.items():
                     # Yield to the event loop between users to prevent blocking health checks
                     await asyncio.sleep(0.1)
+                    if user_id in on_partner_premium:
+                        continue
 
                     user = db.query(User).filter(User.id == user_id).first()
                     plan = sub.subscription_plan or "monthly"
@@ -612,12 +694,17 @@ async def run_subscription_expiry_job():
                             ([("stripe", {})] if has_stripe else [])
                         )
 
+                    # Renew the plan that just ended: Pro or Premium as saved on
+                    # the payment (older rows: worked out from the amount paid).
+                    from subscriptions.plan_prices import resolve_tier
+                    tier = getattr(sub, "plan_tier", None) or resolve_tier(amount, currency, plan) or "pro"
+
                     success = False
                     for method, kwargs in strategy:
                         if method == "stripe":
-                            success = _attempt_stripe_renewal(user_id, plan)
+                            success = _attempt_stripe_renewal(user_id, plan, tier, currency)
                         elif method == "flutterwave":
-                            success = _attempt_flutterwave_renewal(user_id, plan, kwargs["amount"], kwargs["currency"])
+                            success = _attempt_flutterwave_renewal(user_id, plan, kwargs["amount"], kwargs["currency"], tier)
                         if success:
                             logger.info("[expiry-job] ✅ renewed user %s via %s plan=%s", user_id, method, plan)
                             renewed += 1
@@ -659,6 +746,30 @@ async def run_subscription_expiry_job():
                 db.rollback()
             finally:
                 db.close()
+
+            # Partners whose free 6 months of Premium have ended go back to
+            # what they actually pay for, or Free.
+            partner_db = SessionLocal()
+            try:
+                from subscriptions.partner_service import end_expired_partner_premium
+                end_expired_partner_premium(partner_db)
+            except Exception as exc:
+                logger.error("[subscription-expiry-job] partner premium error: %s", exc, exc_info=True)
+                partner_db.rollback()
+            finally:
+                partner_db.close()
+
+            # Move founding members' Stripe subscriptions to the standard
+            # price once it's due (subscriptions/founding.py). Normally done
+            # after each payment; this catches anything a webhook missed.
+            sweep_db = SessionLocal()
+            try:
+                from subscriptions.founding import sweep_founding_subscriptions
+                await asyncio.to_thread(sweep_founding_subscriptions, sweep_db)
+            except Exception as exc:
+                logger.error("[subscription-expiry-job] founding sweep error: %s", exc, exc_info=True)
+            finally:
+                sweep_db.close()
         except Exception as outer:
             logger.error("[subscription-expiry-job] outer error: %s", outer)
         await asyncio.sleep(24 * 60 * 60)
@@ -732,6 +843,95 @@ async def run_scheduled_reflections_job():
                 await cron_process_pending_reflections(db=db)
         except Exception as exc:
             logger.error("[reflections-job] error: %s", exc)
+
+
+async def run_clarity_teacher_job():
+    """
+    Runs every 3 hours. The LLM checks up to 20 of the micromodel's least
+    certain decisions and saves its answers as new examples to learn from
+    (see decision_engine/clarity_teacher.py).
+
+    The wait is worked out from the last run stored in the database, not
+    from when this server started, so a restart or redeploy doesn't push
+    the next run back (before, a redeploy within 6 hours meant no run).
+    """
+    from datetime import datetime, timedelta, timezone
+    from decision_engine import clarity_teacher
+    from database.pg_connections import SessionLocal
+    # 0. Tell the admin page this server's scheduler is running.
+    clarity_teacher.scheduler_started_at = datetime.now(timezone.utc)
+    while True:
+        # 1. How long until the next run is due (from the last run in the DB).
+        try:
+            with SessionLocal() as db:
+                wait = clarity_teacher.seconds_until_next_run(db)
+        except Exception as exc:
+            clarity_teacher.last_job_error = f"Couldn't read the last run time from the database: {exc}"
+            logger.error("[clarity-teacher-job] %s", clarity_teacher.last_job_error)
+            wait = clarity_teacher.RUN_EVERY_SECONDS
+        # 2. Shown on the admin Micromodel page as "next run".
+        clarity_teacher.next_scheduled_run_at = datetime.now(timezone.utc) + timedelta(seconds=wait)
+        await asyncio.sleep(wait)
+        # 3. Run, unless a run (e.g. "Run now") happened while we waited.
+        try:
+            with SessionLocal() as db:
+                if clarity_teacher.seconds_until_next_run(db) > clarity_teacher.MIN_FIRST_WAIT_SECONDS:
+                    continue
+                result = await clarity_teacher.run_teacher_batch(db, limit=20, trigger="scheduled")
+            clarity_teacher.last_job_error = None
+            logger.info("[clarity-teacher-job] %s", result)
+        except Exception as exc:
+            # 4. Keep the exact reason for the admin page, then try again next time.
+            clarity_teacher.last_job_error = str(exc)[:500]
+            logger.error("[clarity-teacher-job] error: %s", exc)
+
+
+async def run_micromodel_exam_job():
+    """
+    The micromodel's weekly exam (decision_engine/micromodel_exam.py): it
+    answers the exam questions an admin wrote, and the result shows whether
+    it is getting smarter. Looks every 6 hours whether a week has passed,
+    so a restart doesn't skip a week. No LLM calls.
+    """
+    from decision_engine.micromodel_exam import exam_is_due, run_exam
+    from database.pg_connections import SessionLocal
+    # 1. Let the server start first (the embedding model loads).
+    await asyncio.sleep(600)
+    while True:
+        # 2. Take the exam if there are questions and a week has passed.
+        try:
+            with SessionLocal() as db:
+                if exam_is_due(db):
+                    logger.info("[exam-job] %s", run_exam(db, trigger="weekly"))
+        except Exception as exc:
+            logger.error("[exam-job] error: %s", exc)
+        # 3. Look again in 6 hours.
+        await asyncio.sleep(6 * 3600)
+
+
+async def run_tool_discovery_job():
+    """
+    Runs every hour. Looks up tool names analyses suggested that the
+    catalog doesn't have and are still pending, or failed and are under
+    the retry limit, and adds them to ai_tools (decision_engine/tool_discovery.py).
+    Most names are handled straight after their analysis; this catches
+    the rest (a restart mid-lookup, a website that was down).
+    """
+    from decision_engine.tool_discovery import process_pending
+    from database.pg_connections import SessionLocal
+    # 1. Give the server time to start before the first pass.
+    await asyncio.sleep(300)
+    while True:
+        # 2. Up to 10 names per pass; nothing to do costs one small query.
+        try:
+            with SessionLocal() as db:
+                result = await process_pending(db, limit=10)
+            if result.get("looked_up"):
+                logger.info("[tool-discovery-job] %s", result)
+        except Exception as exc:
+            logger.error("[tool-discovery-job] error: %s", exc)
+        # 3. Again in an hour.
+        await asyncio.sleep(3600)
 
 
 async def run_scheduled_voo_bot_job():
@@ -1051,6 +1251,50 @@ def run_heavy_schema_migrations():
                 db.commit()
             except Exception as e:
                 logger.warning(f"Failed to add subscriptions.chops_awarded: {e}")
+
+            try:
+                # Founding pricing (same as alembic migration a7f3c9e1b2d4;
+                # see subscriptions/founding.py).
+                db.execute(text("""
+                    ALTER TABLE users
+                        ADD COLUMN IF NOT EXISTS is_founding_member BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS founding_number INTEGER,
+                        ADD COLUMN IF NOT EXISTS founding_member_at TIMESTAMPTZ,
+                        ADD COLUMN IF NOT EXISTS preferred_currency VARCHAR(3),
+                        ADD COLUMN IF NOT EXISTS preferred_plan_tier VARCHAR(20)
+                """))
+                db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_founding_number ON users (founding_number)"))
+                db.execute(text("""
+                    ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS plan_tier VARCHAR(20),
+                        ADD COLUMN IF NOT EXISTS price_type VARCHAR(20)
+                """))
+                db.execute(text("""
+                    ALTER TABLE system_settings
+                        ADD COLUMN IF NOT EXISTS founding_watch_enabled BOOLEAN DEFAULT FALSE,
+                        ADD COLUMN IF NOT EXISTS founding_member_limit INTEGER DEFAULT 500,
+                        ADD COLUMN IF NOT EXISTS founding_monthly_ends_at TIMESTAMPTZ
+                """))
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"Failed to add founding pricing columns: {e}")
+
+            try:
+                # Columns the micromodel needs to learn (same as alembic
+                # migration 6c1e2f3a4b5d).
+                db.execute(text("""
+                    ALTER TABLE clarity_corpus
+                        ADD COLUMN IF NOT EXISTS reasoning JSON,
+                        ADD COLUMN IF NOT EXISTS decision_path VARCHAR(20),
+                        ADD COLUMN IF NOT EXISTS answers JSON,
+                        ADD COLUMN IF NOT EXISTS teacher_reviewed_at TIMESTAMPTZ,
+                        ADD COLUMN IF NOT EXISTS teacher_agreed BOOLEAN
+                """))
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"Failed to add clarity_corpus learning columns: {e}")
 
             # Security table fixes
             try:
@@ -1558,6 +1802,9 @@ async def startup_event():
     asyncio.create_task(run_new_alert_notifications_job())
     asyncio.create_task(run_scheduled_reflections_job())
     asyncio.create_task(run_scheduled_voo_bot_job())
+    asyncio.create_task(run_clarity_teacher_job())
+    asyncio.create_task(run_tool_discovery_job())
+    asyncio.create_task(run_micromodel_exam_job())
     asyncio.create_task(run_flutterwave_payout_reconcile_job())
     asyncio.create_task(run_flutterwave_balance_monitor_job())
     asyncio.create_task(run_stripe_balance_monitor_job())
@@ -1715,6 +1962,14 @@ app.include_router(permissions.router, prefix="/api")
 app.include_router(admin_fraud.router, prefix="/api")
 app.include_router(staff_referrals.router, prefix="/api")
 app.include_router(admin_contact.router, prefix="/api")
+from api.routes.admin import refunds as admin_refunds_routes, user_emails as admin_user_emails_routes
+app.include_router(admin_refunds_routes.router, prefix="/api")  # /api/control/refunds (admin Refunds page)
+app.include_router(admin_user_emails_routes.router, prefix="/api")  # /api/control/user-emails (admin "Email a user")
+from api.routes.admin import payout_tracker as admin_payout_tracker_routes
+app.include_router(admin_payout_tracker_routes.router, prefix="/api")  # /api/control/payout-tracker (admin Payout Tracker)
+from api.routes.admin import account as admin_account_routes, activity as admin_activity_routes
+app.include_router(admin_account_routes.router, prefix="/api")  # /api/control/account (admin changes own password)
+app.include_router(admin_activity_routes.router, prefix="/api")  # /api/control/activity (who did what, and when)
 app.include_router(signals.router, prefix="/api")
 
 app.include_router(dashboard.router, prefix="/api")

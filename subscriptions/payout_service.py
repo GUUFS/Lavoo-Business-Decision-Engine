@@ -341,6 +341,43 @@ class PayoutService:
     _last_integrity_alert: "datetime | None" = None
 
     @staticmethod
+    def stripe_invoice_is_recorded(db: Session, invoice) -> bool:
+        """True if a paid Stripe invoice has a matching Subscriptions row.
+
+        Our rows store whichever Stripe id the webhook had: the payment
+        intent, the charge, the invoice, or (for a first payment) the Stripe
+        subscription id. Steps:
+          1. Try the invoice id.
+          2. Ask Stripe for the payment intent that paid the invoice
+             (InvoicePayment) and try that, and its charge.
+          3. A FIRST invoice (billing_reason subscription_create) may be stored
+             under the subscription id. A renewal is NOT matched that way,
+             because the subscription id belongs to the first payment's row
+             and would hide a missing renewal.
+        """
+        from database.pg_models import Subscriptions
+        from subscriptions.admin_refunds import subscription_id_of_invoice
+
+        # 1. The invoice as a plain dict, and its id.
+        inv = invoice.to_dict() if hasattr(invoice, "to_dict") else dict(invoice)
+        ids = [inv.get("id")]
+        # 2. The payment intent (and charge) that paid it.
+        try:
+            payments = stripe.InvoicePayment.list(invoice=inv.get("id"), limit=5,
+                                                  api_key=os.getenv("STRIPE_SECRET_KEY"))
+            for row in (payments.to_dict() if hasattr(payments, "to_dict") else payments).get("data") or []:
+                payment = row.get("payment") or {}
+                ids += [payment.get("payment_intent"), payment.get("charge")]
+        except Exception as e:
+            logger.warning(f"[integrity-check] couldn't read payments of invoice {inv.get('id')}: {e}")
+        # 3. First invoice only: the subscription id.
+        if inv.get("billing_reason") == "subscription_create":
+            ids.append(subscription_id_of_invoice(inv))
+        ids = [i if isinstance(i, str) else (i or {}).get("id") for i in ids]
+        ids = [i for i in ids if i]
+        return bool(ids) and db.query(Subscriptions).filter(Subscriptions.transaction_id.in_(ids)).first() is not None
+
+    @staticmethod
     def check_payout_system_integrity(db: Session) -> Dict[str, Any]:
         """
         A single live answer to "is the payout system actually working right
@@ -428,41 +465,17 @@ class PayoutService:
             stuck_failed,
         )
 
-        # 4. Pending commissions with a real payout account that have
-        # NEVER been attempted at all (payout_id still null) — should only
-        # ever be momentary, between creation and the first attempt.
-        #
-        # Capped at 30 days old (settle_pending_flutterwave_commissions /
-        # settle_pending_stripe_commissions's own lookback_days default in
-        # commission_service.py): a commission older than that was never
-        # going to be picked up by the settle jobs in the first place — it's
-        # a known, separate "needs manual handling" case, not a sign those
-        # jobs are down. Without this cap, two of Clinton's own commissions
-        # (#52, #55 — both outside that 30-day window) permanently tripped
-        # this into "broken" even though the settle jobs were working fine
-        # the whole time; every FUTURE commission outside the window would
-        # do the same, alarming on something this check isn't meant to
-        # catch instead of the real thing it's for: a commission that's new
-        # enough to still be in-window but hasn't been touched yet.
-        never_attempted_cutoff = now - timedelta(hours=1)
-        settle_job_lookback_cutoff = now - timedelta(days=30)
-        never_attempted = (
-            db.query(Commission)
-            .join(PayoutAccount, PayoutAccount.user_id == Commission.user_id)
-            .filter(
-                Commission.status == "pending",
-                Commission.payout_id.is_(None),
-                Commission.created_at < never_attempted_cutoff,
-                Commission.created_at >= settle_job_lookback_cutoff,
-            )
-            .count()
-        )
-        add(
-            "Commissions never attempted", "critical" if never_attempted else "ok",
-            f"{never_attempted} commission(s) with a usable payout account have sat over an hour with no payout attempt at all" if never_attempted
-            else "No commission with a usable account has gone unattempted",
-            never_attempted,
-        )
+        # 4. Commissions that should have been paid by now, each with its
+        # REAL reason (subscriptions/payout_tracker.py), split three ways:
+        #   - waiting for money (warning: retried every 10 minutes, sends itself)
+        #   - needs action (critical: nothing happens until a person acts)
+        #   - never tried (critical: the payout jobs may be down)
+        # Before this, all three showed as "never attempted" and the page said
+        # "broken" even when the system was only waiting for the wallet to be
+        # topped up. The 30-day window matches the retry jobs' own lookback.
+        from subscriptions.payout_tracker import unpaid_commission_checks
+        for name, status, detail, count in unpaid_commission_checks(db, now, lookback_days=30):
+            add(name, status, detail, count)
 
         # 5 & 6. Cross-check against the providers THEMSELVES, not just our
         # own tables. Every check above this point only ever looks at data
@@ -498,11 +511,11 @@ class PayoutService:
                 if paid_at and datetime.fromtimestamp(paid_at, tz=timezone.utc) > age_cutoff:
                     continue
                 checked_stripe += 1
-                payment_intent_id = getattr(inv, 'payment_intent', None)
-                charge_id = getattr(inv, 'charge', None)
-                candidates = [c for c in (payment_intent_id, charge_id, inv.id) if c]
-                found = db.query(Subscriptions).filter(Subscriptions.transaction_id.in_(candidates)).first()
-                if not found:
+                # Since Stripe API 2025+ an invoice no longer has payment_intent or
+                # charge fields, so the old lookup could only try the invoice id and
+                # flagged real, recorded payments as missing. stripe_invoice_is_recorded
+                # asks Stripe for the invoice's payment and tries every id we store.
+                if not PayoutService.stripe_invoice_is_recorded(db, inv):
                     missing_stripe.append(inv.id)
             add(
                 "Stripe transactions recorded in our database",
