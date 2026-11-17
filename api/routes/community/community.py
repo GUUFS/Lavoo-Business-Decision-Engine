@@ -951,6 +951,336 @@ def _generate_voo_answer_message(author_handle: str, question_title: str, questi
     return f"Hey @{clean_h}.\n\nWhat is the single constraint you are avoiding that settles this decision?\n\nTHE VOO TEST\nIf you could only build one thing this month, what survives?"
 
 
+def check_voo_angle_eligibility(author: User, db: Session, voo_user: Optional[User] = None) -> Tuple[bool, str]:
+    """
+    Determines whether a user is eligible for Voo's Angle (question or @voo tag).
+    - Pro / Paid accounts have unlimited access.
+    - Free users get exactly ONE response from Voo across their first 7 days of signing up.
+    Returns: (is_eligible, reason)
+    """
+    if not author:
+        return False, "author_not_found"
+
+    author_sub = (getattr(author, "subscription_status", "") or "").strip().lower()
+    is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author, "is_admin", False))
+    if is_paid:
+        return True, "pro_unlimited"
+
+    # Free user check: Must have signed up within last 7 days
+    if not getattr(author, "created_at", None):
+        return False, "free_tier_no_signup_date"
+
+    now = datetime.now(timezone.utc)
+    user_created = author.created_at
+    if user_created.tzinfo is None:
+        user_created = user_created.replace(tzinfo=timezone.utc)
+
+    days_since_signup = (now - user_created).total_seconds() / 86400.0
+    if days_since_signup > 7.0:
+        return False, "free_tier_7_days_expired"
+
+    # Free user check: Must not have already received a Voo Angle answer
+    if not voo_user:
+        voo_user = ensure_voo_bot_user(db)
+
+    voo_replies_count = (
+        db.query(func.count(DiscussionReply.id))
+        .join(CommunityDiscussion, DiscussionReply.discussion_id == CommunityDiscussion.id)
+        .filter(
+            DiscussionReply.user_id == voo_user.id,
+            CommunityDiscussion.user_id == author.id
+        )
+        .scalar() or 0
+    )
+
+    if voo_replies_count >= 1:
+        return False, "free_tier_single_use_consumed"
+
+    return True, "free_tier_eligible"
+
+
+def check_voo_summary_eligibility(author: User, db: Session) -> Tuple[bool, str]:
+    """
+    Determines whether a user is eligible for Voo's summary (AI takeaways) on a Build Room post.
+    - Pro / Paid accounts receive takeaways on their posts.
+    - Free users receive Voo's summary on their FIRST post in the Build Room within their first 7 days.
+    Returns: (is_eligible, reason)
+    """
+    if not author:
+        return False, "author_not_found"
+
+    author_sub = (getattr(author, "subscription_status", "") or "").strip().lower()
+    is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author, "is_admin", False))
+    if is_paid:
+        return True, "pro_unlimited"
+
+    if not getattr(author, "created_at", None):
+        return False, "free_tier_no_signup_date"
+
+    now = datetime.now(timezone.utc)
+    user_created = author.created_at
+    if user_created.tzinfo is None:
+        user_created = user_created.replace(tzinfo=timezone.utc)
+
+    days_since_signup = (now - user_created).total_seconds() / 86400.0
+    if days_since_signup > 7.0:
+        return False, "free_tier_7_days_expired"
+
+    # Free user check: Must be their first post in the Build Room
+    user_posts_count = (
+        db.query(func.count(CommunityDiscussion.id))
+        .filter(CommunityDiscussion.user_id == author.id)
+        .scalar() or 0
+    )
+
+    # Note: If called right after inserting the post, user_posts_count == 1
+    if user_posts_count <= 1:
+        return True, "free_tier_first_post"
+
+    return False, "free_tier_summary_quota_exceeded"
+
+
+async def _process_single_voo_reply(discussion_id: int, db: Session, voo_user: Optional[User] = None) -> bool:
+    """
+    Processes Voo's Angle for a single discussion.
+    Checks eligibility, builds context, calls LLM, saves reply, logs to VooAngleLog,
+    notifies author, and purges Redis cache.
+    Returns True if reply was generated and posted, False otherwise.
+    """
+    try:
+        d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
+        if not d:
+            return False
+        if d.is_resolved:
+            return False
+
+        if not voo_user:
+            voo_user = ensure_voo_bot_user(db)
+
+        # Check if discussion already has a Voo reply
+        existing_voo_reply = db.query(DiscussionReply).filter_by(
+            discussion_id=d.id,
+            user_id=voo_user.id
+        ).first()
+
+        if existing_voo_reply:
+            d.voo_status = "completed"
+            d.voo_reply_id = existing_voo_reply.id
+            db.commit()
+            return True
+
+        # Check content and tagging
+        content_words = (d.content or "").strip().split()
+        title_is_q = "?" in (d.title or "")
+        is_tagged_voo = (voo_user.id in (d.tagged_user_ids or [])) or bool(re.search(r"@voo\b", f"{d.title} {d.content}", re.IGNORECASE))
+        if len(content_words) < 8 and not title_is_q and not is_tagged_voo:
+            d.voo_status = "skipped"
+            db.commit()
+            logger.info(f"[voo-bot] Skipping discussion {d.id}: under 8 words, not a question, and not tagged voo.")
+            return False
+
+        # Author lookup and entitlement check
+        author_user = db.query(User).filter_by(id=d.user_id).first()
+        if not author_user:
+            d.voo_status = "skipped"
+            db.commit()
+            return False
+
+        is_eligible, reason = check_voo_angle_eligibility(author_user, db, voo_user=voo_user)
+        if not is_eligible:
+            d.voo_status = "skipped"
+            d.voo_scheduled_for = None
+            db.commit()
+            logger.info(f"[voo-bot] Skipping Voo answer for discussion {d.id}: author {author_user.id} not eligible ({reason}).")
+            return False
+
+        # Section 3: Member details (Prioritize author's real Build Room journey and posts)
+        bits = []
+        is_staff = bool(getattr(author_user, "is_admin", False))
+        if not is_staff:
+            company = getattr(author_user, "company_name", None)
+            if company and company.strip().lower() not in ("lavoo", "lavoo creators", "lavoo team"):
+                bits.append(f"Business: {company.strip()}")
+            if getattr(author_user, "industry", None):
+                bits.append(f"Industry: {author_user.industry}")
+            if getattr(author_user, "venture_stage", None):
+                bits.append(f"Stage: {author_user.venture_stage}")
+            if getattr(author_user, "location", None):
+                bits.append(f"Country/Location: {author_user.location}")
+
+        # Fetch author's recent public posts/reflections in the Build Room (up to 3, excluding current post)
+        recent_author_discussions = (
+            db.query(CommunityDiscussion)
+            .filter(
+                CommunityDiscussion.user_id == d.user_id,
+                CommunityDiscussion.id != d.id,
+                CommunityDiscussion.visibility == "public"
+            )
+            .order_by(CommunityDiscussion.id.desc())
+            .limit(4)
+            .all()
+        )
+        seen_recent_titles = set()
+        recent_history_snippets = []
+        for past_d in recent_author_discussions:
+            t = (past_d.title or "").strip()
+            if t and t.lower() not in seen_recent_titles:
+                seen_recent_titles.add(t.lower())
+                c_snip = " ".join((past_d.content or "").strip().split()[:15])
+                if c_snip:
+                    recent_history_snippets.append(f'"{t}" ({c_snip}...)')
+                else:
+                    recent_history_snippets.append(f'"{t}"')
+
+        if recent_history_snippets:
+            bits.append(f"Recent Build Room activity: {'; '.join(recent_history_snippets[:3])}")
+
+        member_details = " | ".join(bits) if bits else "None"
+
+        # Post type: Only staff accounts can create Platform Polls
+        if d.post_type == "poll" or d.poll_data:
+            post_type_label = "Platform Poll"
+        elif _is_question_discussion(post_type=d.post_type, title=d.title or "", content=d.content or ""):
+            post_type_label = "Question"
+        else:
+            post_type_label = "Post"
+
+        # Trim question content to ~1,500 words
+        trimmed_content = " ".join(content_words[:1500])
+
+        # Fetch human thread replies (up to 10, oldest first, trimmed to ~80 words)
+        replies = db.query(DiscussionReply).filter(
+            DiscussionReply.discussion_id == d.id,
+            DiscussionReply.user_id != voo_user.id
+        ).order_by(DiscussionReply.created_at.asc()).limit(10).all()
+
+        reply_lines = []
+        for r in replies:
+            u = db.query(User).filter_by(id=r.user_id).first()
+            u_handle = (u.username if u and u.username else (u.name if u and u.name else "builder")).strip().lstrip("@")
+            r_words = (r.content or "").split()
+            r_trimmed = " ".join(r_words[:80])
+            reply_lines.append(f"@{u_handle}: {r_trimmed}")
+        thread_replies_str = "\n".join(reply_lines) if reply_lines else "None"
+
+        # Optional community context: up to 3 similar resolved questions
+        similar_resolved = db.query(CommunityDiscussion).filter(
+            CommunityDiscussion.id != d.id,
+            CommunityDiscussion.is_resolved == True
+        ).order_by(CommunityDiscussion.created_at.desc()).limit(3).all()
+        if similar_resolved:
+            community_context_str = "Recent resolved discussions:\n" + "\n".join([f"- {s.title}" for s in similar_resolved])
+        else:
+            community_context_str = "None"
+
+        # Memory from voo_angle_log
+        recent_openings, recent_tests, recent_angle_types, recent_raw_openings = _get_voo_memory(db)
+
+        # Extract author handle, role and post topic
+        author_handle = (f"@{author_user.username}" if getattr(author_user, "username", None) else (f"@{author_user.name}" if getattr(author_user, "name", None) else "@builder")).strip()
+        is_staff = bool(getattr(author_user, "is_admin", False))
+        author_role = "lavoo_team" if (is_staff and (d.post_type == "poll" or d.poll_data)) else "member"
+        post_topic = "General"
+        if d.channel_id:
+            ch = db.query(CommunityChannel).filter_by(id=d.channel_id).first()
+            if ch and ch.name:
+                post_topic = ch.name
+
+        # Generate Voo Angle
+        angle_data, used_model = _generate_voo_angle_reply(
+            db=db,
+            post_id=d.id,
+            post_type=post_type_label,
+            question_title=d.title,
+            question_content=trimmed_content,
+            member_details=member_details,
+            thread_replies=thread_replies_str,
+            community_context=community_context_str,
+            recent_openings=recent_openings,
+            recent_tests=recent_tests,
+            recent_angle_types=recent_angle_types,
+            recent_raw_openings=recent_raw_openings,
+            author_handle=author_handle,
+            author_role=author_role,
+            post_topic=post_topic
+        )
+
+        if not angle_data:
+            logger.warning(f"[voo-bot] Voo angle generation failed or timed out for discussion {d.id}")
+            d.voo_status = "skipped"
+            db.commit()
+            return False
+
+        if not angle_data.get("respond"):
+            logger.info(f"[voo-bot] Voo angle skipped for discussion {d.id}. Reasoning: {angle_data.get('reasoning')}")
+            d.voo_status = "skipped"
+            db.commit()
+            return False
+
+        angle_body = angle_data.get("angle", "").strip()
+        test_line = angle_data.get("test", "").strip()
+
+        # Section 3 & 4: Resolve author handle fresh by user ID at posting time
+        fresh_author = db.query(User).filter_by(id=d.user_id).first()
+        author_handle = (fresh_author.username if fresh_author and fresh_author.username else (fresh_author.name if fresh_author and fresh_author.name else "builder")).strip().lstrip("@")
+
+        full_reply_text = f"Hey @{author_handle}.\n\n{angle_body}\n\nTHE VOO TEST\n{test_line}"
+
+        voo_reply = DiscussionReply(
+            discussion_id=d.id,
+            user_id=voo_user.id,
+            content=full_reply_text,
+            parent_reply_id=None,
+            tagged_user_ids=[d.user_id] if d.user_id else []
+        )
+        db.add(voo_reply)
+        db.flush()
+
+        # Record in voo_angle_log
+        opening_snippet = _extract_opening(angle_body)
+        log_entry = VooAngleLog(
+            post_id=d.id,
+            prompt_version=ANGLE_PROMPT_VERSION,
+            question_type=angle_data.get("question_type", "decision"),
+            opening=opening_snippet,
+            test=test_line,
+            angle=angle_body,
+            angle_type=angle_data.get("angle_type", "reframe"),
+            reasoning=angle_data.get("reasoning", ""),
+            obvious_answer=angle_data.get("obvious_answer", ""),
+            model=used_model
+        )
+        db.add(log_entry)
+
+        d.reply_count = (d.reply_count or 0) + 1
+        d.voo_status = "completed"
+        d.voo_reply_id = voo_reply.id
+        db.commit()
+        db.refresh(voo_reply)
+
+        # Notify author
+        if d.user_id:
+            try:
+                notif_title = "🤖 Voo answered your question" if post_type_label == "Question" else "🤖 Voo shared an angle on your post"
+                _notify_community(
+                    db, d.user_id, "voo_checkin", notif_title,
+                    f"Voo shared an angle on: '{d.title[:50]}'",
+                    f"/dashboard/community?discussionId={d.id}",
+                )
+            except Exception as ne:
+                logger.warning(f"[voo-bot] Notification creation failed: {ne}")
+
+        await delete_cached("community:discussions:*")
+        await delete_cached(f"community:public_post:{d.id}")
+        logger.info(f"[voo-bot] Successfully posted Voo Angle on discussion {d.id} and recorded to voo_angle_log")
+        return True
+
+    except Exception as e:
+        logger.error(f"[voo-bot] Failed processing discussion {discussion_id}: {e}", exc_info=True)
+        db.rollback()
+        return False
+
+
 async def cron_process_pending_voo_replies(db: Session):
     """
     Checks for discussions where voo_status == 'scheduled' AND voo_scheduled_for <= now.
@@ -967,244 +1297,35 @@ async def cron_process_pending_voo_replies(db: Session):
     if not eligible:
         return
 
-    logger.info(f"[voo-bot] Found {len(eligible)} discussions eligible for Voo answer")
+    logger.info(f"[voo-bot] Found {len(eligible)} discussions eligible for Voo answer in cron loop")
     voo_user = ensure_voo_bot_user(db)
 
     for d in eligible:
         try:
-            # Check if discussion already has a Voo reply
-            existing_voo_reply = db.query(DiscussionReply).filter_by(
-                discussion_id=d.id,
-                user_id=voo_user.id
-            ).first()
-
-            if existing_voo_reply:
-                d.voo_status = "completed"
-                d.voo_reply_id = existing_voo_reply.id
-                db.commit()
-                continue
-
-            # Skip posts under 8 words of content where the title is not a question
-            content_words = (d.content or "").strip().split()
-            title_is_q = "?" in (d.title or "")
-            if len(content_words) < 8 and not title_is_q:
-                d.voo_status = "skipped"
-                db.commit()
-                logger.info(f"[voo-bot] Skipping discussion {d.id}: under 8 words and title is not a question.")
-                continue
-
-            # Author lookup and Pro / Paid Account verification
-            author_user = db.query(User).filter_by(id=d.user_id).first()
-            if not author_user:
-                d.voo_status = "skipped"
-                db.commit()
-                continue
-
-            author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower()
-            author_is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author_user, 'is_admin', False))
-            if not author_is_paid:
-                d.voo_status = "skipped"
-                d.voo_scheduled_for = None
-                db.commit()
-                logger.info(f"[voo-bot] Skipping Voo answer for discussion {d.id}: author {author_user.id} is a beta/free account.")
-                continue
-
-            # Section 3: Member details (Prioritize author's real Build Room journey and posts)
-            bits = []
-            # 3a. Does this question itself name Lavoo or a Lavoo feature? If
-            #     not, nothing about Lavoo may reach Voo through the context.
-            post_names_lavoo = _mentions_lavoo(f"{d.title or ''} {d.content or ''}")
-            # 3b. Admins and staff work on Lavoo: their profile describes Lavoo,
-            #     not a business of their own, so it isn't sent.
-            is_staff = bool(getattr(author_user, "is_admin", False) or getattr(author_user, "is_staff", False))
-            if not is_staff:
-                company = getattr(author_user, "company_name", None)
-                if company and company.strip().lower() not in ("lavoo", "lavoo creators", "lavoo team"):
-                    bits.append(f"Business: {company.strip()}")
-                if getattr(author_user, "industry", None):
-                    bits.append(f"Industry: {author_user.industry}")
-                if getattr(author_user, "venture_stage", None):
-                    bits.append(f"Stage: {author_user.venture_stage}")
-                if getattr(author_user, "location", None):
-                    bits.append(f"Country/Location: {author_user.location}")
-
-            # Fetch author's recent public posts/reflections in the Build Room (up to 3, excluding current post)
-            recent_author_discussions = (
-                db.query(CommunityDiscussion)
-                .filter(
-                    CommunityDiscussion.user_id == d.user_id,
-                    CommunityDiscussion.id != d.id,
-                    CommunityDiscussion.visibility == "public"
-                )
-                .order_by(CommunityDiscussion.id.desc())
-                .limit(4)
-                .all()
-            )
-            seen_recent_titles = set()
-            recent_history_snippets = []
-            for past_d in recent_author_discussions:
-                t = (past_d.title or "").strip()
-                # 3c. Skip platform polls and posts about Lavoo for an ordinary
-                #     question: they made Voo read the member as building Lavoo.
-                if not post_names_lavoo and (past_d.post_type == "poll" or past_d.poll_data
-                                             or _mentions_lavoo(f"{t} {past_d.content or ''}")):
-                    continue
-                if t and t.lower() not in seen_recent_titles:
-                    seen_recent_titles.add(t.lower())
-                    c_snip = " ".join((past_d.content or "").strip().split()[:15])
-                    if c_snip:
-                        recent_history_snippets.append(f'"{t}" ({c_snip}...)')
-                    else:
-                        recent_history_snippets.append(f'"{t}"')
-
-            if recent_history_snippets:
-                bits.append(f"Recent Build Room activity: {'; '.join(recent_history_snippets[:3])}")
-
-            member_details = " | ".join(bits) if bits else "None"
-
-            # Post type: Only staff accounts can create Platform Polls
-            post_type_label = "Platform Poll" if (d.post_type == "poll" or d.poll_data) else "Question"
-
-            # Trim question content to ~1,500 words
-            trimmed_content = " ".join(content_words[:1500])
-
-            # Fetch human thread replies (up to 10, oldest first, trimmed to ~80 words)
-            # Resolve handles fresh by user ID at call time
-            replies = db.query(DiscussionReply).filter(
-                DiscussionReply.discussion_id == d.id,
-                DiscussionReply.user_id != voo_user.id
-            ).order_by(DiscussionReply.created_at.asc()).limit(10).all()
-
-            reply_lines = []
-            for r in replies:
-                u = db.query(User).filter_by(id=r.user_id).first()
-                u_handle = (u.username if u and u.username else (u.name if u and u.name else "builder")).strip().lstrip("@")
-                r_words = (r.content or "").split()
-                r_trimmed = " ".join(r_words[:80])
-                reply_lines.append(f"@{u_handle}: {r_trimmed}")
-            thread_replies_str = "\n".join(reply_lines) if reply_lines else "None"
-
-            # Optional community context: up to 3 resolved questions on the
-            # SAME topic (they used to be the latest 3, whatever their topic,
-            # which pulled unrelated and Lavoo threads into every answer).
-            recent_resolved = db.query(CommunityDiscussion).filter(
-                CommunityDiscussion.id != d.id,
-                CommunityDiscussion.is_resolved == True
-            ).order_by(CommunityDiscussion.created_at.desc()).limit(50).all()
-            similar_resolved = [
-                s for s in recent_resolved
-                if _shares_topic(s.title, f"{d.title or ''} {d.content or ''}")
-                and (post_names_lavoo or not _mentions_lavoo(f"{s.title or ''}"))
-            ][:3]
-            if similar_resolved:
-                community_context_str = "Recent resolved discussions:\n" + "\n".join([f"- {s.title}" for s in similar_resolved])
-            else:
-                community_context_str = "None"
-
-            # Memory from voo_angle_log
-            recent_openings, recent_tests, recent_angle_types, recent_raw_openings = _get_voo_memory(db)
-
-            # Extract author handle, role and post topic
-            author_handle = (f"@{author_user.username}" if getattr(author_user, "username", None) else (f"@{author_user.name}" if getattr(author_user, "name", None) else "@builder")).strip()
-            is_staff = bool(getattr(author_user, "is_admin", False))
-            author_role = "lavoo_team" if (is_staff and (d.post_type == "poll" or d.poll_data)) else "member"
-            post_topic = "General"
-            if d.channel_id:
-                ch = db.query(CommunityChannel).filter_by(id=d.channel_id).first()
-                if ch and ch.name:
-                    post_topic = ch.name
-
-            # Generate Voo Angle
-            angle_data, used_model = _generate_voo_angle_reply(
-                db=db,
-                post_id=d.id,
-                post_type=post_type_label,
-                question_title=d.title,
-                question_content=trimmed_content,
-                member_details=member_details,
-                thread_replies=thread_replies_str,
-                community_context=community_context_str,
-                recent_openings=recent_openings,
-                recent_tests=recent_tests,
-                recent_angle_types=recent_angle_types,
-                recent_raw_openings=recent_raw_openings,
-                author_handle=author_handle,
-                author_role=author_role,
-                post_topic=post_topic
-            )
-
-            if not angle_data:
-                logger.warning(f"[voo-bot] Voo angle generation failed or timed out for discussion {d.id}")
-                d.voo_status = "skipped"
-                db.commit()
-                continue
-
-            if not angle_data.get("respond"):
-                logger.info(f"[voo-bot] Voo angle skipped for discussion {d.id}. Reasoning: {angle_data.get('reasoning')}")
-                d.voo_status = "skipped"
-                db.commit()
-                continue
-
-            angle_body = angle_data.get("angle", "").strip()
-            test_line = angle_data.get("test", "").strip()
-
-            # Section 3 & 4: Resolve author handle fresh by user ID at posting time
-            fresh_author = db.query(User).filter_by(id=d.user_id).first()
-            author_handle = (fresh_author.username if fresh_author and fresh_author.username else (fresh_author.name if fresh_author and fresh_author.name else "builder")).strip().lstrip("@")
-
-            full_reply_text = f"Hey @{author_handle}.\n\n{angle_body}\n\nTHE VOO TEST\n{test_line}"
-
-            voo_reply = DiscussionReply(
-                discussion_id=d.id,
-                user_id=voo_user.id,
-                content=full_reply_text,
-                parent_reply_id=None,
-                tagged_user_ids=[d.user_id] if d.user_id else []
-            )
-            db.add(voo_reply)
-            db.flush()
-
-            # Record in voo_angle_log
-            opening_snippet = _extract_opening(angle_body)
-            log_entry = VooAngleLog(
-                post_id=d.id,
-                prompt_version=ANGLE_PROMPT_VERSION,
-                question_type=angle_data.get("question_type", "decision"),
-                opening=opening_snippet,
-                test=test_line,
-                angle=angle_body,
-                angle_type=angle_data.get("angle_type", "reframe"),
-                reasoning=angle_data.get("reasoning", ""),
-                obvious_answer=angle_data.get("obvious_answer", ""),
-                model=used_model
-            )
-            db.add(log_entry)
-
-            d.reply_count = (d.reply_count or 0) + 1
-            d.voo_status = "completed"
-            d.voo_reply_id = voo_reply.id
-            db.commit()
-            db.refresh(voo_reply)
-
-            # Notify author
-            if d.user_id:
-                try:
-                    _notify_community(
-                        db, d.user_id, "voo_checkin", "🤖 Voo answered your question",
-                        f"Voo shared an angle on your question: '{d.title[:50]}'",
-                        f"/dashboard/community?discussionId={d.id}",
-                    )
-                except Exception as ne:
-                    logger.warning(f"[voo-bot] Notification creation failed: {ne}")
-
-            await delete_cached("community:discussions:*")
-            logger.info(f"[voo-bot] Successfully posted Voo Angle on discussion {d.id} and recorded to voo_angle_log")
-
+            await _process_single_voo_reply(discussion_id=d.id, db=db, voo_user=voo_user)
         except Exception as e:
-            logger.error(f"[voo-bot] Failed processing discussion {d.id}: {e}", exc_info=True)
+            logger.error(f"[voo-bot] Failed processing discussion {d.id} in cron: {e}", exc_info=True)
             db.rollback()
 
 
+async def _async_fast_voo_angle_worker(discussion_id: int, delay_seconds: int = 45):
+    """
+    Fast-track async worker to answer questions or tagged posts within ~1 minute.
+    Waits delay_seconds (~45s), then generates and posts Voo's Angle.
+    """
+    try:
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+        with SessionLocal() as db:
+            d = db.query(CommunityDiscussion).filter_by(id=discussion_id).first()
+            if not d or d.voo_status != "scheduled":
+                return
+            if d.is_resolved:
+                return
+            voo_user = ensure_voo_bot_user(db)
+            await _process_single_voo_reply(discussion_id=discussion_id, db=db, voo_user=voo_user)
+    except Exception as e:
+        logger.error(f"[voo-bot] Fast-track worker failed for discussion {discussion_id}: {e}", exc_info=True)
 async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, replier_user_id: int):
     """
     Background worker for Voo Follow-up mode.
@@ -1603,7 +1724,31 @@ _AUTHOR_GRADIENTS = [
 _TOPIC_SLUGS = {
     'what-worked', 'tool-recommendations', 'collaboration-offers',
     'questions', 'shared-wins', 'resources', 'reflections', 'poll',
+    'general',
 }
+
+
+def _ensure_general_channel(db: Session) -> CommunityChannel:
+    """Ensure a General channel exists in community_channels table."""
+    ch = db.query(CommunityChannel).filter_by(slug="general").first()
+    if not ch:
+        ch = CommunityChannel(
+            name="General",
+            slug="general",
+            description="General discussions, founder introductions, and open thoughts.",
+            category="General",
+            member_count=0,
+            post_count=0,
+            is_public=True
+        )
+        db.add(ch)
+        try:
+            db.commit()
+            db.refresh(ch)
+        except Exception:
+            db.rollback()
+            ch = db.query(CommunityChannel).filter_by(slug="general").first()
+    return ch
 
 
 def _slugify(text: str) -> str:
@@ -1767,7 +1912,7 @@ def _discussion_dict(
     slug_val = _slugify(d.title or "")
 
     is_q_post = _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or "")
-    has_valid_takeaways = bool(author_is_paid and raw_takeaways and not is_q_post)
+    has_valid_takeaways = bool(raw_takeaways and not is_q_post)
     takeaways_val = raw_takeaways if has_valid_takeaways else None
 
     recent_likers = []
@@ -1890,6 +2035,7 @@ class UpdateDiscussionRequest(BaseModel):
     analysis_id: Optional[int] = None
     step_id: Optional[str] = None
     task_id: Optional[str] = None
+    tagged_user_ids: Optional[List[int]] = None
 
 
 class VotePollRequest(BaseModel):
@@ -1983,6 +2129,7 @@ async def get_channels(
     db: Session = Depends(get_db)
 ):
     try:
+        _ensure_general_channel(db)
         valid_slugs = list(_TOPIC_SLUGS)
         q = db.query(CommunityChannel).filter(CommunityChannel.slug.in_(valid_slugs))
         if category and category.lower() != "all":
@@ -2808,8 +2955,10 @@ async def get_discussion(
 
     post_type_val = getattr(d, 'post_type', None) or getattr(d, 'type', '') or ''
     is_q = _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or "")
-    if author_is_paid and d.ai_takeaways is None and not is_q:
-        background_tasks.add_task(_async_generate_takeaways_worker, d.id)
+    if author_user and d.ai_takeaways is None and not is_q:
+        is_eligible_for_takeaways, _ = check_voo_summary_eligibility(author_user, db)
+        if is_eligible_for_takeaways:
+            background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
     def _serialise_reply_node(r) -> dict:
         is_bot = bool(
@@ -2880,19 +3029,20 @@ async def get_discussion_takeaways(
     if _is_question_discussion(post_type=post_type_val, title=d.title or "", content=d.content or ""):
         return {"status": "none", "has_takeaways": False, "takeaways": None}
 
-    author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
-    author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower() if author_user else ''
-    author_is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author_user, 'is_admin', False) if author_user else False)
-
-    if not author_is_paid:
-        return {"status": "none", "has_takeaways": False, "takeaways": None}
-
     if not force and d.ai_takeaways is not None and isinstance(d.ai_takeaways, list):
         if len(d.ai_takeaways) == 0:
             return {"status": "none", "has_takeaways": False, "takeaways": None}
         return {"status": "ready", "takeaways": d.ai_takeaways}
 
-    # Strategy 2: On-Demand Lazy Generation for paid authors (schedule in background and return status)
+    author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
+    if not author_user:
+        return {"status": "none", "has_takeaways": False, "takeaways": None}
+
+    is_eligible, _ = check_voo_summary_eligibility(author_user, db)
+    if not is_eligible:
+        return {"status": "none", "has_takeaways": False, "takeaways": None}
+
+    # Strategy 2: On-Demand Lazy Generation for eligible authors (schedule in background and return status)
     background_tasks.add_task(_async_generate_takeaways_worker, d.id, force=force)
     return {"status": "generating", "takeaways": None}
 
@@ -2910,13 +3060,18 @@ async def create_discussion(
             detail="Your post contains language that isn't allowed in the Lavoo Build Room. Please review your content and try again."
         )
 
-    ch = db.query(CommunityChannel).filter_by(id=body.channel_id).first()
-    if not ch:
-        raise HTTPException(status_code=404, detail="Channel not found")
+    ch = None
+    if body.channel_id:
+        ch = db.query(CommunityChannel).filter_by(id=body.channel_id).first()
 
     _all_valid_types = {'discussion', 'reflection'} | _TOPIC_SLUGS
     raw_type = (body.type or 'discussion').strip().lower()
     post_type = raw_type if raw_type in _all_valid_types else 'discussion'
+
+    if post_type == 'general' or not ch:
+        general_ch = _ensure_general_channel(db)
+        if post_type == 'general' or not ch:
+            ch = general_ch
 
     tagged_ids = body.tagged_user_ids or []
     if not tagged_ids:
@@ -2951,18 +3106,25 @@ async def create_discussion(
                 "expires_at": expires_at_iso
             }
 
-    # Detect if post is an inquiry / question and schedule Voo initial answer in 10 minutes (paid accounts only)
+    # Detect if post is an inquiry / question or tags @voo
     is_question = _is_question_discussion(post_type=post_type, title=body.title, content=body.content)
-    sub_status = (getattr(current_user, 'subscription_status', '') or '').strip().lower()
-    is_paid_user = bool(sub_status in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(current_user, 'is_admin', False))
-    should_schedule_voo = is_question and is_paid_user
+    voo_user = ensure_voo_bot_user(db)
+    is_voo_tagged = (voo_user.id in tagged_ids) or bool(re.search(r"@voo\b", f"{body.title} {body.content}", re.IGNORECASE))
+    if is_voo_tagged and voo_user.id not in tagged_ids:
+        tagged_ids.append(voo_user.id)
 
-    interval_minutes = int(os.getenv("VOO_BOT_INTERVAL_MINUTES", "10"))
+    # Entitlement check: Pro accounts unlimited; free accounts 1 response within first 7 days
+    is_eligible_for_angle, _ = check_voo_angle_eligibility(current_user, db, voo_user=voo_user)
+    should_schedule_voo = (is_question or is_voo_tagged) and is_eligible_for_angle
+
+    # Fast response time: 60 seconds (~1 minute)
+    interval_seconds = int(os.getenv("VOO_BOT_INTERVAL_SECONDS", "60"))
     voo_init_status = "scheduled" if should_schedule_voo else "untracked"
-    voo_init_scheduled_for = (datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)) if should_schedule_voo else None
+    voo_init_scheduled_for = (datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)) if should_schedule_voo else None
 
+    target_channel_id = ch.id if ch else body.channel_id
     d = CommunityDiscussion(
-        channel_id=body.channel_id, user_id=current_user.id,
+        channel_id=target_channel_id, user_id=current_user.id,
         title=body.title.strip(), content=body.content.strip(),
         tags=body.tags or [], post_type=post_type,
         tagged_user_ids=tagged_ids, visibility=visibility_val,
@@ -2971,8 +3133,9 @@ async def create_discussion(
         voo_scheduled_for=voo_init_scheduled_for
     )
     db.add(d)
-    ch.post_count = (ch.post_count or 0) + 1
-    current_user.total_chops = (current_user.total_chops or 0) + 10
+    if ch:
+        ch.post_count = (ch.post_count or 0) + 1
+    current_user.total_chops = (current_user.total_chops or 0) + 5
     db.commit()
     db.refresh(d)
     await delete_cached("community:discussions:*")
@@ -2986,20 +3149,28 @@ async def create_discussion(
                 try:
                     _notify_community(
                         db, tagged_id, "user_tagged", "You were tagged in a Build Room post!",
-                        f"{current_user.name} tagged you in: \"{d.title[:60]}\"",
+                        f'{current_user.name} tagged you in: "{d.title[:60]}"',
                         f"/dashboard/community?discussionId={d.id}",
                     )
                 except Exception:
                     pass
         db.commit()
 
-    # Automatically schedule background AI generation for new posts upon creation if creator is paid/pro/trial and NOT a question
-    creator_sub = (getattr(current_user, 'subscription_status', '') or '').strip().lower()
-    creator_is_paid = bool(creator_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(current_user, 'is_admin', False))
-    if creator_is_paid and not is_question:
+    # If scheduled for Voo answer, trigger fast-track worker to respond within ~1 minute (~45s delay)
+    if should_schedule_voo:
+        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=45)
+
+    # Automatically schedule background AI generation (summary/takeaways) for new posts if creator is eligible and NOT a question
+    is_eligible_for_summary, _ = check_voo_summary_eligibility(current_user, db)
+    if is_eligible_for_summary and not is_question:
         background_tasks.add_task(_async_generate_takeaways_worker, d.id)
 
-    return {"success": True, "data": _discussion_dict(d, set(), current_user=current_user)}
+    return {
+        "success": True,
+        "data": _discussion_dict(d, set(), current_user=current_user),
+        "total_chops": current_user.total_chops or 0,
+        "chops_awarded": 5
+    }
 
 
 @router.post("/discussions/{discussion_id}/poll/vote")
@@ -3272,6 +3443,7 @@ def _resolve_reflection_target(
 async def update_discussion(
     discussion_id: str,
     body: UpdateDiscussionRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -3460,13 +3632,36 @@ async def update_discussion(
         d.tags = body.tags
     if body.visibility in ("public", "tagged_only"):
         d.visibility = body.visibility
+    if body.tagged_user_ids is not None:
+        old_tagged = set(d.tagged_user_ids or [])
+        d.tagged_user_ids = body.tagged_user_ids
+        newly_tagged = set(body.tagged_user_ids) - old_tagged
+        for tagged_id in newly_tagged:
+            if tagged_id != current_user.id:
+                try:
+                    _notify_community(
+                        db, tagged_id, "user_tagged", "You were tagged in a Build Room post!",
+                        f'{current_user.name} tagged you in: "{d.title[:60]}"',
+                        f"/dashboard/community?discussionId={d.id}",
+                    )
+                except Exception:
+                    pass
+
     if body.type is not None:
         _all_valid_types = {'discussion', 'reflection'} | _TOPIC_SLUGS
         raw_type = body.type.strip().lower()
         if raw_type in _all_valid_types:
             d.post_type = raw_type
+            if raw_type == 'general':
+                general_ch = _ensure_general_channel(db)
+                if general_ch and d.channel_id != general_ch.id:
+                    old_ch = db.query(CommunityChannel).filter_by(id=d.channel_id).first()
+                    if old_ch and old_ch.post_count > 0:
+                        old_ch.post_count -= 1
+                    general_ch.post_count = (general_ch.post_count or 0) + 1
+                    d.channel_id = general_ch.id
 
-    if body.channel_id is not None and body.channel_id != d.channel_id:
+    if body.channel_id is not None and body.channel_id != d.channel_id and body.type != 'general':
         new_ch = db.query(CommunityChannel).filter_by(id=body.channel_id).first()
         if new_ch:
             old_ch = db.query(CommunityChannel).filter_by(id=d.channel_id).first()
@@ -3475,9 +3670,33 @@ async def update_discussion(
             new_ch.post_count = (new_ch.post_count or 0) + 1
             d.channel_id = new_ch.id
 
+    # Check if @voo was tagged in updated post
+    voo_user = ensure_voo_bot_user(db)
+    is_voo_tagged = (voo_user.id in (d.tagged_user_ids or [])) or bool(re.search(r"@voo\b", f"{d.title} {d.content}", re.IGNORECASE))
+    if is_voo_tagged and voo_user.id not in (d.tagged_user_ids or []):
+        current_tags = list(d.tagged_user_ids or [])
+        current_tags.append(voo_user.id)
+        d.tagged_user_ids = current_tags
+
+    should_trigger_voo = False
+    if is_voo_tagged and d.voo_status not in ("completed", "scheduled"):
+        has_voo_reply = db.query(DiscussionReply.id).filter_by(discussion_id=d.id, user_id=voo_user.id).first() is not None
+        if not has_voo_reply:
+            author_user = db.query(User).filter_by(id=d.user_id).first()
+            if author_user:
+                is_eligible, _ = check_voo_angle_eligibility(author_user, db, voo_user=voo_user)
+                if is_eligible:
+                    interval_seconds = int(os.getenv("VOO_BOT_INTERVAL_SECONDS", "60"))
+                    d.voo_status = "scheduled"
+                    d.voo_scheduled_for = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
+                    should_trigger_voo = True
+
     d.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(d)
+
+    if should_trigger_voo and background_tasks:
+        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=45)
     await delete_cached("community:discussions:*")
     await delete_cached(f"community:public_post:{disc_id}")
 
@@ -3494,11 +3713,12 @@ async def update_discussion(
 async def update_reflection_endpoint(
     reflection_id: str,
     body: UpdateDiscussionRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Direct alias for editing a mission reflection"""
-    return await update_discussion(discussion_id=reflection_id, body=body, current_user=current_user, db=db)
+    return await update_discussion(discussion_id=reflection_id, body=body, background_tasks=background_tasks, current_user=current_user, db=db)
 
 
 @router.delete("/discussions/{discussion_id}")
@@ -3824,10 +4044,12 @@ async def reply_to_discussion(
     d.reply_count = (d.reply_count or 0) + 1
     current_user.total_chops = (current_user.total_chops or 0) + 5
 
-    # Trigger Voo bot 10-minute answer timer for questions (paid author accounts only)
+    # Trigger Voo bot 1-minute answer timer for questions if author is eligible
     author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id else None
-    author_sub = (getattr(author_user, 'subscription_status', '') or '').strip().lower() if author_user else ''
-    author_is_paid = bool(author_sub in ("active", "trialing", "pro", "premium", "lifetime")) or bool(getattr(author_user, 'is_admin', False) if author_user else False)
+    if author_user:
+        is_eligible_for_angle, _ = check_voo_angle_eligibility(author_user, db)
+    else:
+        is_eligible_for_angle = False
 
     is_pending_question = getattr(d, "voo_status", "untracked") == "pending_replies"
     is_untracked_question = (
@@ -3836,16 +4058,17 @@ async def reply_to_discussion(
     )
     if (
         (is_pending_question or is_untracked_question)
-        and author_is_paid
+        and is_eligible_for_angle
         and current_user.id != d.user_id
         and not getattr(current_user, "is_bot", False)
         and not getattr(d, "is_resolved", False)
         and getattr(d, "voo_status", "untracked") not in ("completed", "skipped")
     ):
-        interval_minutes = int(os.getenv("VOO_BOT_INTERVAL_MINUTES", "10"))
+        interval_seconds = int(os.getenv("VOO_BOT_INTERVAL_SECONDS", "60"))
         d.voo_status = "scheduled"
-        d.voo_scheduled_for = datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)
-        logger.info(f"[voo-bot] Scheduled Voo answer for discussion {discussion_id} in {interval_minutes}m (at {d.voo_scheduled_for})")
+        d.voo_scheduled_for = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
+        logger.info(f"[voo-bot] Scheduled Voo answer for discussion {discussion_id} in {interval_seconds}s (at {d.voo_scheduled_for})")
+        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=45)
 
     db.commit()
     db.refresh(reply)
@@ -4595,7 +4818,9 @@ async def search_community_users(
     db: Session = Depends(get_db)
 ):
     try:
-        search_str = f"%{q.strip().lower()}%"
+        voo_bot = ensure_voo_bot_user(db)
+        search_term = q.strip().lower()
+        search_str = f"%{search_term}%"
         users = db.query(User).filter(
             or_(
                 func.lower(User.name).like(search_str),
@@ -4605,17 +4830,39 @@ async def search_community_users(
         ).limit(10).all()
 
         results = []
+        voo_included = False
         for u in users:
             username_val = u.username or re.sub(r'[^a-zA-Z0-9]', '', u.name.lower() if u.name else "user")
-            results.append({
-                "id": u.id,
-                "name": u.name or "Member",
-                "username": username_val,
-                "avatar_url": u.avatar_url,
-                "company_name": u.company_name or "Lavoo Creators"
+            is_voo = (u.id == voo_bot.id) or (username_val.lower() == "voo") or getattr(u, "is_bot", False)
+            if is_voo:
+                voo_included = True
+                results.append({
+                    "id": u.id,
+                    "name": "Voo's Angle",
+                    "username": "voo",
+                    "avatar_url": u.avatar_url or "https://lavoo.io/logo.png",
+                    "company_name": "Lavoo AI"
+                })
+            else:
+                results.append({
+                    "id": u.id,
+                    "name": u.name or "Member",
+                    "username": username_val,
+                    "avatar_url": u.avatar_url,
+                    "company_name": u.company_name or "Lavoo Creators"
+                })
+
+        # If user typed 'v', 'vo', 'voo', 'angle', 'ai', ensure Voo's Angle is included
+        if not voo_included and any(term in "voo's angle".lower() or term in "voo" for term in [search_term]):
+            results.insert(0, {
+                "id": voo_bot.id,
+                "name": "Voo's Angle",
+                "username": "voo",
+                "avatar_url": voo_bot.avatar_url or "https://lavoo.io/logo.png",
+                "company_name": "Lavoo AI"
             })
 
-        return {"success": True, "users": results}
+        return {"success": True, "users": results[:10]}
     except Exception as e:
         logger.error(f"Error searching community users: {e}")
         return {"success": True, "users": []}
