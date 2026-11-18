@@ -138,7 +138,11 @@ def when_counted(row, status_map: dict | None, now: datetime) -> dict:
     """When one Stripe payment row counts as revenue, and for how much.
 
     Returns {"counted": bool, "month_of": datetime | None, "amount": Decimal,
-             "currency": str, "matched": bool}.
+             "currency": str, "matched": bool, "rate": Decimal}.
+      - rate: how much of the landed currency one unit of the charged
+              currency became (e.g. $1 -> £0.79). 1 when they are the same.
+              Used to move the payment's builder bonus into the same
+              currency as the payment (api/routes/admin/revenue.py).
       - matched + available: counts in the month it became available, at net.
       - matched + pending:   not counted yet (incoming), at net.
       - unmatched:           counts at the recorded amount once older than
@@ -148,10 +152,17 @@ def when_counted(row, status_map: dict | None, now: datetime) -> dict:
     info = (status_map or {}).get(row.transaction_id)
     if info:
         available = info["status"] == "available" and (info["available_on"] is None or info["available_on"] <= now)
+        currency = info["currency"] or row.currency
+        # Charged in one currency, landed in another (e.g. $ into the £ balance):
+        # the rate is what landed before Stripe's fee, divided by what was charged.
+        charged = Decimal(str(row.amount or 0))
+        rate = Decimal(1)
+        if currency != (row.currency or currency) and charged > 0:
+            rate = (info["net"] + info["fee"]) / charged
         return {"counted": available, "month_of": info["available_on"], "amount": info["net"],
-                "currency": info["currency"] or row.currency, "matched": True}
+                "currency": currency, "matched": True, "rate": rate}
     # 2. No match: use the age rule at the recorded (gross) amount.
     created = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=UTC)
     ready_on = created + timedelta(days=UNMATCHED_AFTER_DAYS)
     return {"counted": ready_on <= now, "month_of": ready_on, "amount": Decimal(str(row.amount)),
-            "currency": row.currency, "matched": False}
+            "currency": row.currency, "matched": False, "rate": Decimal(1)}

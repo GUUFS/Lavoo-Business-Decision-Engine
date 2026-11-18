@@ -65,6 +65,9 @@ async def run_guest_checkup(body: GuestCheckupRequest, request: Request, backgro
     goal = guest_checkup.clean_goal(body.business_goal)
     row = guest_checkup.start(db, goal, body.visitor_id, guest_checkup.hash_ip(_client_ip(request)),
                               body.utm_source, body.utm_campaign)
+    # Read these now, while the session still holds the row: once the answer
+    # starts streaming, the row object can no longer be read or saved.
+    checkup_id, token = row.id, row.token
     queue: asyncio.Queue = asyncio.Queue()
 
     async def progress(pct: int, msg: str):
@@ -76,7 +79,7 @@ async def run_guest_checkup(body: GuestCheckupRequest, request: Request, backgro
         try:
             result = await create_analyzer(db).analyze(user_query=goal, user_id=None, progress_callback=progress)
             analysis_id = result["data"].get("analysis_id")
-            guest_checkup.finish(db, row, analysis_id=analysis_id)
+            guest_checkup.finish(db, checkup_id, analysis_id=analysis_id)
             # 3. The same follow-up work as a normal checkup (better tool stacks, tool discovery).
             stacks = result["data"].get("recommended_tool_stacks") or []
             if stacks:
@@ -86,13 +89,13 @@ async def run_guest_checkup(body: GuestCheckupRequest, request: Request, backgro
             background_tasks.add_task(discover_tools_for_analysis, analysis_id, result["data"])
             # 4. Only the teaser goes back to the page.
             analysis = db.get(BusinessAnalysis, analysis_id)
-            await queue.put(("result", {"token": row.token, "teaser": guest_checkup.teaser(analysis)}))
+            await queue.put(("result", {"token": token, "teaser": guest_checkup.teaser(analysis)}))
         except asyncio.CancelledError:
-            guest_checkup.finish(db, row, error="The visitor left before it finished")
+            guest_checkup.finish(db, checkup_id, error="The visitor left before it finished")
             raise
         except Exception as exc:
             logger.error(f"[guest-checkup] failed: {exc}", exc_info=True)
-            guest_checkup.finish(db, row, error=str(exc))
+            guest_checkup.finish(db, checkup_id, error=str(exc))
             text = str(exc)
             if text.startswith("UNSAFE_QUERY::"):
                 parts = text.split("::", 2)
