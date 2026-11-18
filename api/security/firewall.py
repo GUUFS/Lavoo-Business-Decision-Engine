@@ -342,6 +342,7 @@ class FirewallMiddleware(BaseHTTPMiddleware):
             "/api/customer-service/ws",  # WebSockets
             "/api/admin",                # Admin routes — already protected by admin_required
             "/api/business/analyze/stream",  # SSE streaming — body buffering breaks it
+            "/api/public/checkup/stream",    # ad checkup stream (lavoo.io/checkup) — same reason
         )
         if request.url.path.startswith(whitelist):
              return await call_next(request)

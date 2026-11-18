@@ -101,18 +101,22 @@ def compute_revenue_stats(db: Session) -> dict:
     # Here: bonuses on NON-Stripe payments (or on no payment), when earned.
     # Bonuses on Stripe payments are taken off in B below, in the same
     # month their payment is counted.
+    # A 'reversed' bonus was cancelled before it was paid, because its payment
+    # was refunded (commission_service.py): it never cost us anything, and
+    # the refunded payment is already out of revenue, so it isn't taken off.
     stripe_payment_ids = db.query(Subscriptions.id).filter(is_stripe)
     not_on_stripe = or_(Commission.subscription_id.is_(None), ~Commission.subscription_id.in_(stripe_payment_ids))
+    not_cancelled = Commission.status != 'reversed'
     monthly_bonus_by_ccy = sum_by_currency(
-        Commission.amount, Commission.currency, not_on_stripe,
+        Commission.amount, Commission.currency, not_on_stripe, not_cancelled,
         Commission.created_at >= current_month_start,
     )
     last_month_bonus_by_ccy = sum_by_currency(
-        Commission.amount, Commission.currency, not_on_stripe,
+        Commission.amount, Commission.currency, not_on_stripe, not_cancelled,
         Commission.created_at >= last_month_start,
         Commission.created_at < current_month_start,
     )
-    total_bonus_by_ccy = sum_by_currency(Commission.amount, Commission.currency, not_on_stripe)
+    total_bonus_by_ccy = sum_by_currency(Commission.amount, Commission.currency, not_on_stripe, not_cancelled)
 
     # B. STRIPE payments: counted only once Stripe makes the money
     # AVAILABLE, in the month it became available, at what we receive
@@ -132,8 +136,20 @@ def compute_revenue_stats(db: Session) -> dict:
     stripe_rows = db.query(Subscriptions).filter(is_stripe, Subscriptions.status.in_(ok_status)).all()
     bonuses_by_payment: dict = {}
     if stripe_rows:
-        for bonus in db.query(Commission).filter(Commission.subscription_id.in_([r.id for r in stripe_rows])).all():
+        for bonus in db.query(Commission).filter(Commission.subscription_id.in_([r.id for r in stripe_rows]),
+                                                 not_cancelled).all():
             bonuses_by_payment.setdefault(bonus.subscription_id, []).append(bonus)
+
+    def bonus_in_landed_currency(bonus, row, counted) -> float:
+        """The bonus in the currency the payment LANDED in, so both come off
+        the same column. E.g. a $ payment that landed in the £ balance: its
+        $1.70 bonus becomes £1.34 at that payment's own rate. Before this,
+        the payment went to £ and the bonus came off $, making $ negative."""
+        bonus_ccy = bonus.currency or row.currency or counted["currency"]
+        if bonus_ccy == counted["currency"]:
+            return float(bonus.amount)
+        return float(bonus.amount * counted["rate"])
+
     for row in stripe_rows:
         # 2. When (and for how much) this payment counts.
         counted = when_counted(row, stripe_map, now)
@@ -141,10 +157,10 @@ def compute_revenue_stats(db: Session) -> dict:
             add_to(incoming_by_ccy, counted["currency"], counted["amount"])
             continue
         bonuses = bonuses_by_payment.get(row.id, [])
-        # 3. All-time totals.
+        # 3. All-time totals (payment and its bonuses in the same currency).
         add_to(total_subscription_gross_by_ccy, counted["currency"], counted["amount"])
         for bonus in bonuses:
-            add_to(total_bonus_by_ccy, bonus.currency or counted["currency"], bonus.amount)
+            add_to(total_bonus_by_ccy, counted["currency"], bonus_in_landed_currency(bonus, row, counted))
         # 4. This month or last month, by the date the money became available.
         month_of = counted["month_of"]
         if month_of and month_of >= month_start_utc:
@@ -155,7 +171,7 @@ def compute_revenue_stats(db: Session) -> dict:
             continue
         add_to(gross, counted["currency"], counted["amount"])
         for bonus in bonuses:
-            add_to(bonus_totals, bonus.currency or counted["currency"], bonus.amount)
+            add_to(bonus_totals, counted["currency"], bonus_in_landed_currency(bonus, row, counted))
 
     currencies = sorted(
         set(monthly_gross_by_ccy) | set(total_subscription_gross_by_ccy)

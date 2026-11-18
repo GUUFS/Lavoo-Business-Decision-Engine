@@ -94,12 +94,26 @@ def start(db: Session, goal: str, visitor_id: str | None, ip_hash: str | None,
     return row
 
 
-def finish(db: Session, row: GuestCheckup, analysis_id: int | None = None, error: str | None = None) -> None:
-    """Record how the analysis ended: completed (with its analysis) or failed."""
-    row.status = "completed" if analysis_id else "failed"
-    row.analysis_id = analysis_id
-    row.error = (error or "")[:2000] or None
-    db.commit()
+def finish(db: Session, checkup_id: int, analysis_id: int | None = None, error: str | None = None) -> None:
+    """Record how the analysis ended: completed (with its analysis) or failed.
+
+    Takes the id, not the row object: while the answer streams, the request's
+    session has already let go of the row, so changing the object (or even
+    reading it) fails (same approach as checkup_limits._finish). Never raises."""
+    fields = {
+        "status": "completed" if analysis_id else "failed",
+        "analysis_id": analysis_id,
+        "error": (error or "")[:2000] or None,
+    }
+    try:
+        # 1. A failed analysis can leave half-done work in the session: clear it.
+        if not analysis_id:
+            db.rollback()
+        # 2. Save the outcome on the database row itself.
+        db.query(GuestCheckup).filter(GuestCheckup.id == checkup_id).update(fields)
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def teaser(analysis: BusinessAnalysis) -> dict:

@@ -51,7 +51,8 @@ def finished_checkup(db, created_at=None, visitor="v-1"):
     db.add(analysis)
     db.commit()
     row = guest_checkup.start(db, analysis.business_goal, visitor, "ip-1")
-    guest_checkup.finish(db, row, analysis_id=analysis.id)
+    guest_checkup.finish(db, row.id, analysis_id=analysis.id)
+    db.refresh(row)
     if created_at:
         row.created_at = created_at
         db.commit()
@@ -77,9 +78,20 @@ def test_a_browser_gets_two_free_checkups_a_day(db):
     assert refused.value.detail["code"] == "guest_visitor_limit"
 
 
+def test_finish_is_saved_even_when_the_session_let_go_of_the_row(db):
+    """While the answer streams, the request's session no longer tracks the
+    row (that is what happened live). The outcome must still be saved."""
+    row = guest_checkup.start(db, "Grow my shop please", "browser-detached", "ip-x")
+    row_id = row.id
+    db.expunge(row)                                   # the session lets go of it
+    guest_checkup.finish(db, row_id, error="LLM timeout")
+    saved = db.get(GuestCheckup, row_id)
+    assert (saved.status, saved.error) == ("failed", "LLM timeout")
+
+
 def test_a_failed_checkup_is_given_back(db):
     row = guest_checkup.start(db, "Grow my shop please", "browser-b", "ip-b")
-    guest_checkup.finish(db, row, error="LLM timeout")
+    guest_checkup.finish(db, row.id, error="LLM timeout")
     guest_checkup.start(db, "Grow my shop please", "browser-b", "ip-b")
     guest_checkup.start(db, "Grow my shop please", "browser-b", "ip-b")   # still allowed
 

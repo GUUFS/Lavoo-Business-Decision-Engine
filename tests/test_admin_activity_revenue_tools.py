@@ -210,3 +210,58 @@ def test_a_discovered_tools_link_is_written_into_the_analysis(db):
     assert row.linked_analyses == [analysis.id] and f"#{analysis.id}" in row.reason
     # 3. Running it again changes nothing.
     assert link_into_analyses(db, row) == []
+
+
+# ------------------------------------------------------------ negative balance fixes
+
+def test_a_dollar_payment_landing_in_pounds_takes_its_bonus_off_pounds(db, monkeypatch):
+    """A $ payment lands in the £ Stripe balance. Its $ bonus must come off
+    the £ column too (converted), not off $, which made $ go negative."""
+    from api.routes.admin import revenue
+    payer = _user(db, "fx-payer@test.local")
+    referrer = _user(db, "fx-ref@test.local")
+    # 1. $8.50 charged; it landed as £6.70 before Stripe's £0.30 fee (£6.40 net).
+    row = Subscriptions(user_id=payer.id, subscription_plan="monthly", plan_tier="pro", transaction_id="pi_fx_usd",
+                        tx_ref="ref-fx", amount=Decimal("8.50"), currency="USD", status="completed",
+                        payment_provider="stripe", start_date=NOW, end_date=NOW + timedelta(days=30),
+                        created_at=NOW - timedelta(days=5))
+    db.add(row)
+    db.flush()
+    db.add(Commission(user_id=referrer.id, referred_user_id=payer.id, subscription_id=row.id,
+                      amount=Decimal("1.70"), currency="USD", status="pending"))
+    db.flush()
+    status_map = {"pi_fx_usd": {"status": "pending", "available_on": NOW + timedelta(days=2),
+                                "net": Decimal("6.40"), "fee": Decimal("0.30"), "currency": "GBP"}}
+    monkeypatch.setattr(revenue, "stripe_payment_status", lambda: status_map)
+    before = revenue.compute_revenue_stats(db)["by_currency"]
+    # 2. The money becomes available.
+    status_map["pi_fx_usd"].update(status="available", available_on=NOW - timedelta(minutes=1))
+    after = revenue.compute_revenue_stats(db)["by_currency"]
+    usd_before = before.get("USD", {}).get("total_subscription_revenue", 0.0)
+    usd_after = after.get("USD", {}).get("total_subscription_revenue", 0.0)
+    # 3. $ is untouched; £ gets £6.40 minus the bonus at the payment's rate ($1.70 x 6.70/8.50 = £1.34).
+    assert round(usd_after - usd_before, 2) == 0
+    gbp_change = after["GBP"]["total_subscription_revenue"] - before["GBP"]["total_subscription_revenue"]
+    assert round(gbp_change, 2) == round(6.40 - 1.34, 2)
+
+
+def test_a_cancelled_bonus_on_a_refunded_payment_is_not_taken_off(db, monkeypatch):
+    """Refunded payment: it leaves revenue and its unpaid bonus is 'reversed'.
+    The reversed bonus must not keep lowering revenue."""
+    from api.routes.admin import revenue
+    monkeypatch.setattr(revenue, "stripe_payment_status", lambda: {})
+    payer = _user(db, "refund-payer@test.local")
+    referrer = _user(db, "refund-ref@test.local")
+    before = revenue.compute_revenue_stats(db)["by_currency"].get("USD", {}).get("total_subscription_revenue", 0.0)
+    # 1. A refunded Flutterwave $ payment whose bonus was cancelled.
+    row = Subscriptions(user_id=payer.id, subscription_plan="monthly", plan_tier="pro", transaction_id="flw-refunded",
+                        tx_ref="ref-flw-refunded", amount=Decimal("8.50"), currency="USD", status="refunded",
+                        payment_provider="flutterwave", start_date=NOW, end_date=NOW + timedelta(days=30))
+    db.add(row)
+    db.flush()
+    db.add(Commission(user_id=referrer.id, referred_user_id=payer.id, subscription_id=row.id,
+                      amount=Decimal("1.70"), currency="USD", status="reversed"))
+    db.flush()
+    after = revenue.compute_revenue_stats(db)["by_currency"].get("USD", {}).get("total_subscription_revenue", 0.0)
+    # 2. Nothing changes: no payment counted, no bonus taken off.
+    assert round(after - before, 2) == 0
