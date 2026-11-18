@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from database.pg_models import ClarityCorpus, ClarityTeacherCall, ClarityTeacherRun
 from decision_engine.clarity_engine import _TRUSTED_FILTER as _TRUSTED_SQL
+from decision_engine.clarity_engine import FOUNDER_TRUSTED_SQL as _FOUNDER_SQL
 from decision_engine.clarity_reasoner import classify_question
 
 logger = logging.getLogger(__name__)
@@ -72,9 +73,10 @@ def _candidates(db: Session, limit: int, random_checks: int = RANDOM_CHECKS_PER_
         WHERE source = 'live'
           AND teacher_reviewed_at IS NULL
           AND created_at < now() - interval '{MIN_AGE_MINUTES} minutes'
-          AND (outcome = 'skipped' OR decision_path IN ('reasoner', 'blend') OR confidence < :low)
+          AND (outcome = 'skipped' OR answer_trusted IS FALSE
+               OR decision_path IN ('reasoner', 'blend') OR confidence < :low)
         ORDER BY
-          CASE WHEN outcome = 'skipped' THEN 0 WHEN decision_path = 'blend' THEN 1
+          CASE WHEN outcome = 'skipped' OR answer_trusted IS FALSE THEN 0 WHEN decision_path = 'blend' THEN 1
                WHEN decision_path = 'reasoner' THEN 2 ELSE 3 END,
           confidence ASC NULLS FIRST,
           created_at DESC
@@ -134,7 +136,7 @@ def seconds_until_next_run(db: Session, now: datetime | None = None) -> float:
 # Mirrors the WHERE clause in _candidates (and its random confident sample
 # is NOT this).
 # NULL-safe (an unanswered row has outcome NULL), so NOT (...) works too.
-_WEAK_SQL = ("(COALESCE(outcome, '') = 'skipped' OR COALESCE(decision_path, '') IN ('reasoner', 'blend') "
+_WEAK_SQL = ("(COALESCE(outcome, '') = 'skipped' OR answer_trusted IS FALSE OR COALESCE(decision_path, '') IN ('reasoner', 'blend') "
              "OR COALESCE(confidence, 0) < :low)")
 
 
@@ -522,21 +524,21 @@ def _example_numbers(db: Session, days: int, weeks: int) -> dict:
         SELECT
           count(*) FILTER (WHERE source = 'llm_seed')                                         AS llm_seed,
           count(*) FILTER (WHERE source = 'llm_teacher')                                      AS llm_teacher,
-          count(*) FILTER (WHERE source = 'live' AND outcome = 'answered')                    AS user_answered,
+          count(*) FILTER (WHERE {_FOUNDER_SQL})                                               AS user_answered,
           count(*) FILTER (WHERE {_THIS_PERIOD} AND source = 'llm_teacher')                   AS new_llm,
-          count(*) FILTER (WHERE {_THIS_PERIOD} AND source = 'live' AND outcome = 'answered') AS new_user,
+          count(*) FILTER (WHERE {_THIS_PERIOD} AND {_FOUNDER_SQL})                          AS new_user,
           count(*) FILTER (WHERE {_PERIOD_BEFORE}
-                           AND (source = 'llm_teacher' OR (source = 'live' AND outcome = 'answered'))) AS new_before,
+                           AND (source = 'llm_teacher' OR {_FOUNDER_SQL})) AS new_before,
           count(*) FILTER (WHERE {_TRUSTED_SQL} AND embedding IS NULL)                         AS missing_embedding
         FROM clarity_corpus
     """), {"days": days}).mappings().one()
     total = row["llm_seed"] + row["llm_teacher"] + row["user_answered"]
 
     # 2. Added per week, with the running total after each week.
-    weekly = db.execute(text("""
+    weekly = db.execute(text(f"""
         SELECT date_trunc('week', created_at) AS week,
                count(*) FILTER (WHERE source = 'llm_teacher')                      AS from_llm,
-               count(*) FILTER (WHERE source = 'live' AND outcome = 'answered')    AS from_users
+               count(*) FILTER (WHERE {_FOUNDER_SQL})                              AS from_users
         FROM clarity_corpus
         WHERE created_at > date_trunc('week', now()) - make_interval(weeks => :weeks - 1)
         GROUP BY 1 ORDER BY 1
@@ -560,6 +562,7 @@ def _founder_numbers(db: Session, days: int) -> dict:
           count(*) FILTER (WHERE needs_clarification)                  AS asked,
           count(*) FILTER (WHERE outcome = 'answered')                 AS answered,
           count(*) FILTER (WHERE outcome = 'skipped')                  AS skipped,
+          count(*) FILTER (WHERE answer_trusted IS FALSE)              AS untrusted_answers,
           count(*) FILTER (WHERE needs_clarification AND outcome IS NULL
                            AND created_at < now() - interval '1 hour') AS no_outcome,
           count(*) FILTER (WHERE decision_path = 'neighbor')           AS copied,

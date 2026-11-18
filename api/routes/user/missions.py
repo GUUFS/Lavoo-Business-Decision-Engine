@@ -129,13 +129,13 @@ from pydantic import BaseModel
 from database.pg_connections import get_db
 from database.pg_models import User, BusinessAnalysis, CommunityDiscussion, CommunityChannel
 from api.routes.auth.login import get_current_user
-from api.routes.dependencies import subscriber_required
+from api.routes.dependencies import subscriber_or_ad_checkup_owner
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Missions are part of the Decision Engine: Pro and Premium subscribers only.
-router = APIRouter(prefix="/missions", tags=["missions"], dependencies=[Depends(subscriber_required)])
+router = APIRouter(prefix="/missions", tags=["missions"], dependencies=[Depends(subscriber_or_ad_checkup_owner)])
 
 
 class MissionStepComplete(BaseModel):

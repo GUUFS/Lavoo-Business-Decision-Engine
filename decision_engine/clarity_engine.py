@@ -14,7 +14,9 @@ HOW IT GETS SMARTER WITH EVERY CHECKUP
      diagnosis it leads to (link_analysis).
   3. The checkup then teaches it in one of two ways:
        a) The founder ANSWERS the questions -> this checkup becomes a
-          trusted example straight away.
+          trusted example straight away, if the answers look real and the
+          account hasn't taught it too much today (answer_trust.py).
+          Otherwise it is treated like a skip (b).
        b) The founder SKIPS, or the micromodel was unsure -> within 3
           hours the LLM teacher (clarity_teacher.py) answers the same
           prompt, and the LLM's answer becomes a trusted example.
@@ -24,7 +26,9 @@ HOW IT GETS SMARTER WITH EVERY CHECKUP
 So every checkup either is an example or produces one.
 
 TRUSTED = an LLM answer a person hasn't marked "wrong"
-          (micromodel_person_check.py), or a checkup a founder answered.
+          (micromodel_person_check.py), or a checkup a founder answered
+          with real-looking answers that the LLM teacher didn't overrule
+          (FOUNDER_TRUSTED_SQL).
           A founder's answer counts for more than a slightly closer LLM
           answer (USER_PREFERENCE_MARGIN). Its own unchecked guesses are
           never copied, so its mistakes don't spread.
@@ -52,10 +56,16 @@ MAX_QUESTIONS = 3
 # with the micromodel's own question (cosine similarity of their embeddings).
 RELEVANCE_MARGIN = 0.02
 
-# Trusted rows: LLM answers a person hasn't marked 'wrong', and checkups a
-# founder answered. clarity_teacher.py and training_data.py use the same rule.
+# A founder's answered checkup that can be copied: its answers passed
+# answer_trust.py (not junk, not over the daily limit) and the LLM teacher
+# didn't overrule it. Old rows (answer_trusted NULL) stay trusted.
+FOUNDER_TRUSTED_SQL = ("(source = 'live' AND outcome = 'answered' "
+                       "AND answer_trusted IS NOT FALSE AND teacher_agreed IS NOT FALSE)")
+# Trusted rows: LLM answers a person hasn't marked 'wrong', and founder
+# answers that pass FOUNDER_TRUSTED_SQL. clarity_teacher.py and
+# training_data.py use the same rule.
 _TRUSTED_FILTER = ("((source IN ('llm_seed', 'llm_teacher') AND COALESCE(person_verdict, '') <> 'wrong') "
-                   "OR (source = 'live' AND outcome = 'answered'))")
+                   f"OR {FOUNDER_TRUSTED_SQL})")
 # A user-answered example wins over a closer LLM example when it is at most
 # this much less similar: real signals are weighted above the LLM's.
 USER_PREFERENCE_MARGIN = 0.03
@@ -133,6 +143,7 @@ def user_history(db: Session, user_id: Optional[int]) -> dict:
         rows = db.execute(text("""
             SELECT answers FROM clarity_corpus
             WHERE user_id = :uid AND source = 'live' AND outcome = 'answered' AND answers IS NOT NULL
+              AND COALESCE(answer_flag, '') NOT LIKE 'junk%'
             ORDER BY created_at DESC LIMIT 10
         """), {"uid": user_id}).all()
         for (answers,) in rows:
@@ -396,14 +407,25 @@ def update_outcome(db: Session, corpus_id: int, clarifications, user_id: Optiona
             pairs.append({"question": q, "answer": re.sub(r"\s+", " ", a)[:1000]})
     # 2. Answered if at least one box has text, otherwise skipped.
     outcome = "answered" if any(p["answer"] for p in pairs) else "skipped"
+    # 3. Can these answers teach the micromodel? (answer_trust.py: junk
+    #    answers and too many from one account are saved but not copied.)
+    flag = None
+    if outcome == "answered":
+        from decision_engine.answer_trust import answers_trust_problem
+        flag = answers_trust_problem(db, user_id, corpus_id, pairs)
+        if flag:
+            logger.info(f"[clarity_engine] corpus {corpus_id} answers not trusted: {flag}")
+    trusted = None if outcome == "skipped" else flag is None
 
-    # 3. Save it, but only on this user's own row.
+    # 4. Save it, but only on this user's own row.
     db.execute(
         text("""
-            UPDATE clarity_corpus SET outcome = :outcome, answers = CAST(:answers AS JSON)
+            UPDATE clarity_corpus SET outcome = :outcome, answers = CAST(:answers AS JSON),
+                   answer_trusted = :trusted, answer_flag = :flag
             WHERE id = :id AND source = 'live' AND user_id = :uid AND needs_clarification
         """),
-        {"outcome": outcome, "answers": json.dumps(pairs) if pairs else None, "id": corpus_id, "uid": user_id},
+        {"outcome": outcome, "answers": json.dumps(pairs) if pairs else None, "trusted": trusted, "flag": flag,
+         "id": corpus_id, "uid": user_id},
     )
     db.commit()
 

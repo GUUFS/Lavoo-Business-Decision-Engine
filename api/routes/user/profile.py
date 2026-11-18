@@ -6,6 +6,8 @@ import base64
 import re
 
 from api.routes.auth.login import get_current_user
+from api.routes.dependencies import decision_engine_access_ends_at, has_decision_engine_access
+from subscriptions.free_trial import free_trial_active, free_trial_ends_at
 from api.utils.sub_utils import sync_user_subscription
 from database.pg_connections import get_db
 
@@ -89,6 +91,15 @@ def get_profile(
         "is_moderator": bool(getattr(current_user, 'role', None) == 'moderator' or getattr(current_user, 'is_staff', False) or getattr(current_user, 'is_partner', False) or getattr(current_user, 'role', None) in ('staff', 'admin') or getattr(current_user, 'is_admin', False)),
         "subscription_status": current_user.subscription_status or "Free",
         "subscription_plan": current_user.subscription_plan,
+        # Can they open the Decision Engine? Subscribers, admins, and new
+        # accounts in their free trial (api/routes/dependencies.py).
+        "decision_engine_access": has_decision_engine_access(current_user),
+        # When the free trial ("3 days of Premium") ends, while it lasts.
+        "free_trial_ends_at": free_trial_ends_at(current_user).isoformat() if free_trial_active(current_user) else None,
+        # When Decision Engine access stops: the trial's end if the trial is the
+        # ONLY reason they have access (not paying, not an admin), else None.
+        # The app shuts the Decision Engine at that moment without a reload.
+        "decision_engine_access_ends_at": decision_engine_access_ends_at(current_user),
         "is_beta_user": getattr(current_user, 'is_beta_user', False),
         "total_chops": current_user.total_chops or 0,
         "login_streak": current_user.login_streak or 0,
