@@ -197,12 +197,12 @@ def _secondary_problem(item, index: int) -> dict:
     }
 
 
-def _mission_count(analysis: BusinessAnalysis) -> int:
+def _mission_count(roadmap: list, action_plans: list) -> int:
     """How many daily Missions the plan has (the roadmap's tasks, repeats
     counted once, as on the result page), or the number of actions."""
     count = 0
     # 1. Count each roadmap phase's tasks, a repeated task only once.
-    for phase in analysis.execution_roadmap or []:
+    for phase in roadmap or []:
         tasks = phase.get("tasks") if isinstance(phase, dict) else None
         seen = set()
         for task in tasks or []:
@@ -211,40 +211,57 @@ def _mission_count(analysis: BusinessAnalysis) -> int:
                 seen.add(key)
                 count += 1
     # 2. No roadmap: one Mission per action.
-    return count or len(analysis.action_plans or [])
+    return count or len(action_plans or [])
 
 
 def teaser(analysis: BusinessAnalysis) -> dict:
-    """What the visitor sees before signing up.
+    """What the visitor sees before signing up, laid out like the result page.
 
     Shown in full: the Primary Problem and the Secondary Problems.
-    Shown as titles only: the Ranked Action Plan (the page blurs the rest).
-    Not sent at all: the action plans' content, what to stop doing and the
-    Missions. Only that they exist, so nothing hidden can be read with the
-    browser's developer tools."""
-    # 1. The Primary Problem, in full.
-    bottleneck = analysis.primary_bottleneck or {}
+    Shown as titles only: each action of the Ranked Action Plan.
+    Not sent at all: the actions' content, the Main Priority, what to stop
+    doing and the Missions. Only that they exist, so nothing hidden can be
+    read with the browser's developer tools.
+
+    The fields are read exactly as the result page reads them
+    (format_analysis_for_frontend): many analyses store each section as JSON
+    TEXT, and reading that text directly treated every character as its own
+    problem or action."""
+    from api.routes.decision_engine.analyzer import format_analysis_for_frontend
+
+    # 1. The analysis as the result page gets it (JSON text unpacked, dashes cleaned).
+    data = format_analysis_for_frontend(analysis)
+    bottleneck = data.get("primary_bottleneck") or {}
     if isinstance(bottleneck, str):
         bottleneck = {"title": bottleneck}
+    if not isinstance(bottleneck, dict):
+        bottleneck = {}
+    secondary = data.get("secondary_constraints") or []
+    plans = data.get("action_plans") or []
+    if not isinstance(secondary, list):
+        secondary = []
+    if not isinstance(plans, list):
+        plans = []
     # 2. The Ranked Action Plan: titles only.
     titles = []
-    for index, plan in enumerate(analysis.action_plans or []):
+    for index, plan in enumerate(plans):
         plan = plan if isinstance(plan, dict) else {}
         titles.append(plan.get("title") or plan.get("action_title") or f"Action {index + 1}")
     return {
+        # 3. The Primary Problem, in full.
         "primary_problem": {
             "title": bottleneck.get("title") or "",
             "description": bottleneck.get("description") or "",
             "consequence": bottleneck.get("consequence") or bottleneck.get("impact") or "",
         },
-        # 3. The Secondary Problems, in full.
-        "secondary_problems": [_secondary_problem(item, i)
-                               for i, item in enumerate(analysis.secondary_constraints or [])],
+        # 4. The Secondary Problems, in full.
+        "secondary_problems": [_secondary_problem(item, i) for i, item in enumerate(secondary)],
         "action_plan_titles": titles,
-        # 4. Behind the sign-up card: only how much is waiting.
+        # 5. Behind the sign-up card: only that they exist, and how many Missions.
         "locked": {
-            "stop_doing": bool((analysis.what_to_stop or "").strip()),
-            "missions": _mission_count(analysis),
+            "main_priority": bool((data.get("strategic_priority") or "").strip()),
+            "stop_doing": bool((data.get("what_to_stop") or "").strip()),
+            "missions": _mission_count(data.get("execution_roadmap") or [], plans),
         },
     }
 

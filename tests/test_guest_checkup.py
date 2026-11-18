@@ -159,11 +159,33 @@ def test_teaser_shows_both_problems_and_only_the_plan_titles(db):
     # 2. The action plan: titles only (a missing title gets "Action N").
     assert teaser["action_plan_titles"] == ["Post daily on Instagram", "Start a loyalty card", "Action 3"]
     # 3. Behind the card: only that they exist (a repeated roadmap task counts once).
-    assert teaser["locked"] == {"stop_doing": True, "missions": 3}
+    assert teaser["locked"] == {"main_priority": False, "stop_doing": True, "missions": 3}
     # 4. None of the hidden content is in it.
     sent = json.dumps(teaser)
     for hidden in ("Film the ovens", "Secret step", "Stop paying for flyers", "Hand out cards", "Canva"):
         assert hidden not in sent
+
+
+def test_teaser_reads_sections_saved_as_json_text(db):
+    """Many analyses store each section as JSON TEXT. The teaser must unpack
+    it like the result page does, not treat each character as an item."""
+    analysis = BusinessAnalysis(
+        user_id=None, business_goal="I want an advertising business",
+        primary_bottleneck=json.dumps({"title": "No defined offer", "description": "No package",
+                                       "consequence": "Lost revenue"}),
+        secondary_constraints=json.dumps([{"title": "No portfolio", "description": "Nothing to show"}]),
+        action_plans=json.dumps([{"title": "Pick one niche", "what_to_do": ["Hidden step"]},
+                                 {"title": "Build one package"}]),
+        strategic_priority="Hidden priority",
+    )
+    db.add(analysis)
+    db.commit()
+    teaser = guest_checkup.teaser(analysis)
+    assert teaser["primary_problem"]["title"] == "No defined offer"
+    assert [p["title"] for p in teaser["secondary_problems"]] == ["No portfolio"]
+    assert teaser["action_plan_titles"] == ["Pick one niche", "Build one package"]
+    assert teaser["locked"]["main_priority"] is True
+    assert "Hidden step" not in json.dumps(teaser) and "Hidden priority" not in json.dumps(teaser)
 
 
 # ── Failures ────────────────────────────────────────────────────────────────
