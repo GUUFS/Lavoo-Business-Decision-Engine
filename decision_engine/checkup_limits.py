@@ -3,6 +3,9 @@ Checkup limits for the Decision Engine.
 
   - Pro:     1 checkup per WEEK   (resets Monday 00:00 UTC)
   - Premium: 10 checkups per MONTH (resets on the 1st, 00:00 UTC)
+  - Free trial (new accounts, not paying yet): 1 checkup for the whole
+    trial (subscriptions/free_trial.py). An ad check-up claimed at signup
+    is that checkup.
 
 The limit is the same on every billing period (monthly, quarterly, yearly).
 A week is Monday 00:00 to Sunday 23:59 UTC; a month is a calendar month.
@@ -35,6 +38,48 @@ CHECKUP_LIMITS = {"pro": (1, "week"), "premium": (10, "month")}
 PAID_STATUSES = ("completed", "active", "paid", "successful", "succeeded")
 # Checkup statuses that use up one of the week's checkups.
 COUNTED_STATUSES = ("started", "completed")
+# Subscription statuses that mean the account pays (same as api/routes/dependencies.py).
+PAYING_STATUSES = ("active", "trialing")
+
+
+def on_free_trial_only(user: User, now: datetime | None = None) -> bool:
+    """True for a new account in its free trial that doesn't pay and has no
+    free Premium (partner or forever): its checkups follow the trial's limit."""
+    from subscriptions.free_trial import free_trial_active
+    from subscriptions.lifetime_premium import lifetime_premium_active
+    from subscriptions.partner_service import partner_premium_active
+    # 1. Paying, or free Premium: their plan's limit applies, not the trial's.
+    if (user.subscription_status or "").lower() in PAYING_STATUSES:
+        return False
+    if lifetime_premium_active(user) or partner_premium_active(user):
+        return False
+    # 2. Otherwise: only while the trial lasts.
+    return free_trial_active(user, now)
+
+
+def _trial_allowance(db: Session, user: User) -> dict:
+    """The free trial's allowance: TRIAL_CHECKUPS for the whole trial, never reset.
+    A claimed ad check-up (status 'guest', run before the account existed)
+    counts as the trial's checkup."""
+    from sqlalchemy import or_
+
+    from subscriptions.free_trial import TRIAL_CHECKUPS, free_trial_starts_at
+    # 1. Checkups run since the trial began, plus any claimed ad check-up.
+    start = free_trial_starts_at(user)
+    used = (
+        db.query(CheckupUsage)
+        .filter(
+            CheckupUsage.user_id == user.id,
+            or_(
+                CheckupUsage.status == "guest",
+                (CheckupUsage.created_at >= start) & CheckupUsage.status.in_(COUNTED_STATUSES),
+            ),
+        )
+        .count()
+    )
+    # 2. What's left. They don't come back: subscribing gives more.
+    return {"tier": "trial", "limit": TRIAL_CHECKUPS, "period": "trial", "used": used,
+            "remaining": max(0, TRIAL_CHECKUPS - used), "next_available_at": None, "unlimited": False}
 
 
 def user_plan_tier(db: Session, user: User) -> str:
@@ -103,10 +148,14 @@ def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> d
         return {"tier": tier, "limit": None, "period": None, "used": 0, "remaining": None,
                 "next_available_at": None, "unlimited": True}
 
-    # 2. Everyone else: their plan's limit (Pro 1 a week, Premium 10 a month).
+    # 2. A new account in its free trial: one checkup for the whole trial.
+    if on_free_trial_only(user, now):
+        return _trial_allowance(db, user)
+
+    # 3. Everyone else: their plan's limit (Pro 1 a week, Premium 10 a month).
     tier = user_plan_tier(db, user)
     limit, period = CHECKUP_LIMITS[tier]
-    # 3. Checkups started since this week or month began.
+    # 4. Checkups started since this week or month began.
     start, next_start = period_bounds(period, now)
     used = (
         db.query(CheckupUsage)
@@ -118,7 +167,7 @@ def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> d
         .count()
     )
     remaining = max(0, limit - used)
-    # 4. When none are left, they all come back when the next week or month starts.
+    # 5. When none are left, they all come back when the next week or month starts.
     next_available = next_start if remaining == 0 else None
     return {
         "tier": tier, "limit": limit, "period": period, "used": used, "remaining": remaining,
@@ -129,6 +178,11 @@ def checkup_allowance(db: Session, user: User, now: datetime | None = None) -> d
 
 def _limit_message(allowance: dict) -> str:
     """The text shown to a user who has used this period's checkups."""
+    # 1. The free trial's one checkup is used: subscribing gives more.
+    if allowance["tier"] == "trial":
+        return ("Your free trial includes one check-up, and you've used it. "
+                "Subscribe to Pro or Premium to run more check-ups.")
+    # 2. A plan's checkups for this week or month are used.
     plan = allowance["tier"].capitalize()
     count = allowance["limit"]
     plural = "check-up" if count == 1 else "check-ups"

@@ -54,15 +54,44 @@ def get_current_user_optional(
 PAID_SUBSCRIPTION_STATUSES = ("active", "trialing")
 
 
+def has_decision_engine_access(user: User) -> bool:
+    """True for Pro and Premium subscribers, admins, and new accounts in
+    their free trial ("3 days of Premium", subscriptions/free_trial.py)."""
+    from subscriptions.free_trial import free_trial_active
+    # 1. A paying subscriber, or an admin.
+    status_value = (user.subscription_status or "").lower()
+    if status_value in PAID_SUBSCRIPTION_STATUSES or getattr(user, "is_admin", False):
+        return True
+    # 2. A new account still in its free trial.
+    return free_trial_active(user)
+
+
+def decision_engine_access_ends_at(user: User) -> Optional[str]:
+    """When this user's Decision Engine access ends (ISO time), if it comes
+    only from the free trial; None when they pay, are an admin, or have no access."""
+    from subscriptions.free_trial import free_trial_active, free_trial_ends_at
+    # 1. Paying subscribers and admins: access doesn't end with the trial.
+    status_value = (user.subscription_status or "").lower()
+    if status_value in PAID_SUBSCRIPTION_STATUSES or getattr(user, "is_admin", False):
+        return None
+    # 2. In the free trial: access ends when the trial ends.
+    if free_trial_active(user):
+        return free_trial_ends_at(user).isoformat()
+    # 3. No access at all.
+    return None
+
+
 def subscriber_required(current_user: User = Depends(get_current_user)) -> User:
-    """Only Pro and Premium subscribers (and admins) may use the route.
+    """Only Pro and Premium subscribers, admins, and accounts in their free
+    trial may use the route.
 
     get_current_user already re-syncs subscription_status against the latest
     payment, so an expired subscription reads "Free" here, not "active".
     """
-    status_value = (current_user.subscription_status or "").lower()
-    if status_value in PAID_SUBSCRIPTION_STATUSES or getattr(current_user, "is_admin", False):
+    # 1. Let them in if they have access.
+    if has_decision_engine_access(current_user):
         return current_user
+    # 2. Otherwise: ask them to upgrade.
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="The Decision Engine is available to Pro and Premium subscribers. Upgrade to continue.",
