@@ -307,6 +307,11 @@ class ClarityCorpus(Base):
     person_note = Column(Text, nullable=True)
     person_checked_at = Column(DateTime(timezone=True), nullable=True)
     person_checked_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Can a founder's answers be copied for other founders? (answer_trust.py)
+    # None: not answered, or saved before this check. False: not trusted, and
+    # answer_flag says why ('junk: keyboard mash', 'over_daily_limit').
+    answer_trusted = Column(Boolean, nullable=True)
+    answer_flag = Column(String(60), nullable=True)
 
 
 class ClarityTeacherRun(Base):

@@ -1306,14 +1306,16 @@ def run_heavy_schema_migrations():
 
             try:
                 # Columns the micromodel needs to learn (same as alembic
-                # migration 6c1e2f3a4b5d).
+                # migrations 6c1e2f3a4b5d and c1e3a5b7d9f2).
                 db.execute(text("""
                     ALTER TABLE clarity_corpus
                         ADD COLUMN IF NOT EXISTS reasoning JSON,
                         ADD COLUMN IF NOT EXISTS decision_path VARCHAR(20),
                         ADD COLUMN IF NOT EXISTS answers JSON,
                         ADD COLUMN IF NOT EXISTS teacher_reviewed_at TIMESTAMPTZ,
-                        ADD COLUMN IF NOT EXISTS teacher_agreed BOOLEAN
+                        ADD COLUMN IF NOT EXISTS teacher_agreed BOOLEAN,
+                        ADD COLUMN IF NOT EXISTS answer_trusted BOOLEAN,
+                        ADD COLUMN IF NOT EXISTS answer_flag VARCHAR(60)
                 """))
                 db.commit()
             except Exception as e:
