@@ -131,14 +131,14 @@ def _limit_message(allowance: dict) -> str:
     """The text shown to a user who has used this period's checkups."""
     plan = allowance["tier"].capitalize()
     count = allowance["limit"]
-    plural = "checkup" if count == 1 else "checkups"
+    plural = "check-up" if count == 1 else "check-ups"
     period = "a week (Monday to Sunday)" if allowance["period"] == "week" else "a month"
     when = ""
     if allowance["next_available_at"]:
         when_dt = datetime.fromisoformat(allowance["next_available_at"])
-        when = f" Your checkups reset on {when_dt.strftime('%a %d %b at %H:%M')} UTC."
+        when = f" Your check-ups reset on {when_dt.strftime('%a %d %b at %H:%M')} UTC."
     premium_count, premium_period = CHECKUP_LIMITS["premium"]
-    upgrade = (f" Upgrade to Premium for {premium_count} checkups a {premium_period}."
+    upgrade = (f" Upgrade to Premium for {premium_count} check-ups a {premium_period}."
                if allowance["tier"] == "pro" else "")
     return (f"{plan} includes {count} {plural} {period}, and you've used "
             f"{'it' if count == 1 else 'them'}.{when}{upgrade}")

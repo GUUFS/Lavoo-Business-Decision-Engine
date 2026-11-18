@@ -3,7 +3,10 @@ Tests for the ad checkup run before signup (decision_engine/guest_checkup.py
 and api/routes/public_checkup.py).
 
   - Free limits: per browser, per internet address, and for everyone per day.
-  - The visitor only gets the teaser, never the full plan.
+  - The visitor only gets the teaser: both problems in full, the action
+    plan's titles, and nothing of what to stop doing or the Missions.
+  - Every failure is logged; more than 3 in an hour emails the admin once.
+  - Claiming copies the ad's UTM tags onto the new account.
   - Claiming after signup hands the analysis over, is safe to repeat, refuses
     another account, and doesn't use up a monthly or weekly checkup.
   - Unclaimed checkups are deleted after 7 days.
@@ -14,14 +17,14 @@ import asyncio
 import itertools
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 from starlette.requests import Request
 
 from api.routes import public_checkup
-from database.pg_models import BusinessAnalysis, CheckupUsage, GuestCheckup, User
+from database.pg_models import BusinessAnalysis, CheckupFailure, CheckupUsage, GuestCheckup, User
 from decision_engine import guest_checkup
 from decision_engine.checkup_limits import checkup_allowance
 
@@ -37,20 +40,25 @@ def make_user(db):
     return user
 
 
-def finished_checkup(db, created_at=None, visitor="v-1"):
+def finished_checkup(db, created_at=None, visitor="v-1", utm=(None, None)):
     """A guest checkup whose analysis (no owner) is saved."""
     analysis = BusinessAnalysis(
         user_id=None, business_goal="My bakery has no customers on weekdays",
         primary_bottleneck={"title": "Nobody knows you exist", "description": "No marketing",
                             "consequence": "Empty weekdays"},
-        secondary_constraints=[{"title": "Prices"}, {"title": "Opening hours"}],
-        action_plans=[{"step": 1}, {"step": 2}, {"step": 3}],
+        secondary_constraints=[{"title": "Prices", "description": "Too high for weekdays"}, "Opening hours"],
+        action_plans=[{"title": "Post daily on Instagram", "what_to_do": ["Film the ovens at 6am"]},
+                      {"action_title": "Start a loyalty card", "what_to_do": ["Print 200 cards"]},
+                      {"what_to_do": ["Secret step"]}],
+        what_to_stop="Stop paying for flyers",
+        execution_roadmap=[{"phase": 1, "tasks": ["Film the ovens", "film the  ovens", "Print cards"]},
+                           {"phase": 2, "tasks": ["Hand out cards"]}],
         recommended_tool_stacks=[{"tools": ["Canva", {"tool_name": "Mailchimp"}, "Canva"]}],
         estimated_days=30,
     )
     db.add(analysis)
     db.commit()
-    row = guest_checkup.start(db, analysis.business_goal, visitor, "ip-1")
+    row = guest_checkup.start(db, analysis.business_goal, visitor, "ip-1", *utm)
     guest_checkup.finish(db, row.id, analysis_id=analysis.id)
     db.refresh(row)
     if created_at:
@@ -138,19 +146,67 @@ def test_the_ip_is_never_stored_as_is():
 
 # ── Teaser ──────────────────────────────────────────────────────────────────
 
-def test_teaser_shows_only_what_to_fix_and_counts(db):
+def test_teaser_shows_both_problems_and_only_the_plan_titles(db):
     _, analysis = finished_checkup(db, visitor="v-teaser")
     teaser = guest_checkup.teaser(analysis)
-    assert teaser["what_to_fix"]["title"] == "Nobody knows you exist"
-    assert teaser["locked"] == {"other_problems": 2, "action_steps": 3, "tools": 2, "roadmap_days": 30}
-    # The full plan's content is not in it.
-    assert "Prices" not in json.dumps(teaser) and "Canva" not in json.dumps(teaser)
+    # 1. The Primary Problem and the Secondary Problems, in full.
+    assert teaser["primary_problem"] == {"title": "Nobody knows you exist", "description": "No marketing",
+                                         "consequence": "Empty weekdays"}
+    assert teaser["secondary_problems"] == [
+        {"number": "02", "title": "Prices", "description": "Too high for weekdays"},
+        {"number": "03", "title": "Opening hours", "description": "Opening hours"},
+    ]
+    # 2. The action plan: titles only (a missing title gets "Action N").
+    assert teaser["action_plan_titles"] == ["Post daily on Instagram", "Start a loyalty card", "Action 3"]
+    # 3. Behind the card: only that they exist (a repeated roadmap task counts once).
+    assert teaser["locked"] == {"stop_doing": True, "missions": 3}
+    # 4. None of the hidden content is in it.
+    sent = json.dumps(teaser)
+    for hidden in ("Film the ovens", "Secret step", "Stop paying for flyers", "Hand out cards", "Canva"):
+        assert hidden not in sent
+
+
+# ── Failures ────────────────────────────────────────────────────────────────
+
+def test_every_failure_is_logged_and_four_in_an_hour_alert_once(db, monkeypatch):
+    sent = []
+    monkeypatch.setattr(guest_checkup, "_send_failure_alert", lambda count, latest: sent.append(count))
+    # Start from a clean hour, so other tests' failures don't count.
+    db.query(CheckupFailure).delete()
+    db.commit()
+    # 1. Three failures: logged, no email yet.
+    for n in range(3):
+        assert guest_checkup.record_failure(db, "browser", f"Network dropped {n}", visitor_id="v-f") is False
+    assert db.query(CheckupFailure).count() == 3
+    # 2. The fourth: one email.
+    assert guest_checkup.record_failure(db, "server", "LLM timeout") is True
+    assert sent == [4]
+    # 3. The fifth in the same hour: logged, but no second email.
+    assert guest_checkup.record_failure(db, "server", "LLM timeout") is False
+    assert sent == [4] and db.query(CheckupFailure).count() == 5
+
+
+def test_a_visitor_closing_the_page_is_logged_but_never_alerts(db, monkeypatch):
+    sent = []
+    monkeypatch.setattr(guest_checkup, "_send_failure_alert", lambda count, latest: sent.append(count))
+    db.query(CheckupFailure).delete()
+    db.commit()
+    for _ in range(6):
+        guest_checkup.record_failure(db, "server", guest_checkup.VISITOR_LEFT)
+    assert sent == [] and db.query(CheckupFailure).count() == 6
+
+
+def test_a_failed_server_run_goes_in_the_failure_log(db):
+    row = guest_checkup.start(db, "Grow my shop please", "browser-log", "ip-log")
+    guest_checkup.finish(db, row.id, error="LLM timeout")
+    logged = db.query(CheckupFailure).filter_by(checkup_id=row.id).one()
+    assert (logged.source, logged.reason) == ("server", "LLM timeout")
 
 
 # ── Claim ───────────────────────────────────────────────────────────────────
 
 def test_claim_hands_the_analysis_over_without_using_a_checkup(db):
-    row, analysis = finished_checkup(db, visitor="v-claim")
+    row, analysis = finished_checkup(db, visitor="v-claim", utm=("facebook", "nov-launch"))
     user = make_user(db)
     # 1. The user becomes the owner.
     assert guest_checkup.claim(db, row.token, user) == analysis.id
@@ -160,7 +216,10 @@ def test_claim_hands_the_analysis_over_without_using_a_checkup(db):
     usage = db.query(CheckupUsage).filter_by(user_id=user.id).one()
     assert (usage.status, usage.analysis_id) == ("guest", analysis.id)
     assert checkup_allowance(db, user)["used"] == 0
-    # 3. Claiming again is safe.
+    # 3. The account remembers which ad brought them.
+    db.refresh(user)
+    assert (user.utm_source, user.utm_campaign) == ("facebook", "nov-launch")
+    # 4. Claiming again is safe.
     assert guest_checkup.claim(db, row.token, user) == analysis.id
     assert db.query(CheckupUsage).filter_by(user_id=user.id).count() == 1
 
@@ -215,40 +274,131 @@ class FakeAnalyzer:
             raise RuntimeError("LLM timeout")
         analysis = BusinessAnalysis(user_id=None, business_goal=kwargs["user_query"],
                                     primary_bottleneck={"title": "Slow follow-up"},
-                                    action_plans=[{"step": 1}])
+                                    action_plans=[{"title": "Reply within an hour", "what_to_do": ["Hidden"]}])
         self.db.add(analysis)
         self.db.commit()
         return {"data": {"analysis_id": analysis.id, "recommended_tool_stacks": []}}
 
 
-def run_stream(db, visitor, fail=False):
-    """Call /api/public/checkup/stream and return its events as (name, data)."""
-    async def go():
-        body = public_checkup.GuestCheckupRequest(business_goal="My leads never reply to me", visitor_id=visitor,
-                                                  utm_source="facebook", utm_campaign="nov")
-        request = Request({"type": "http", "method": "POST", "path": "/", "headers": [],
-                           "client": ("9.9.9.9", 1)})
-        with patch("decision_engine.agentic_analyzer.create_analyzer", return_value=FakeAnalyzer(db, fail)), \
-             patch("decision_engine.tool_discovery.discover_tools_for_analysis"):
-            response = await public_checkup.run_guest_checkup(body, request, BackgroundTasks(), db)
-            return [chunk async for chunk in response.body_iterator]
+def _stream_request(visitor):
+    """The body and request the check-up page sends."""
+    body = public_checkup.GuestCheckupRequest(business_goal="My leads never reply to me", visitor_id=visitor,
+                                              utm_source="facebook", utm_campaign="nov")
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": [],
+                       "client": ("9.9.9.9", 1)})
+    return body, request
+
+
+def _parse(chunks):
+    """Server-sent chunks as (event name, data) pairs."""
     events = []
-    for chunk in asyncio.run(go()):
+    for chunk in chunks:
         if chunk.startswith("event:"):
             name, data = chunk.strip().split("\n", 1)
             events.append((name.removeprefix("event: "), json.loads(data.removeprefix("data: "))))
     return events
 
 
+def run_stream(db, visitor, fail=False):
+    """Call /api/public/checkup/stream and return its events as (name, data)."""
+    async def go():
+        body, request = _stream_request(visitor)
+        with patch("decision_engine.agentic_analyzer.create_analyzer", return_value=FakeAnalyzer(db, fail)), \
+             patch("decision_engine.tool_discovery.discover_tools_for_analysis", new=AsyncMock()), \
+             patch.object(public_checkup, "_task_session", return_value=db):
+            response = await public_checkup.run_guest_checkup(body, request, BackgroundTasks(), db)
+            return [chunk async for chunk in response.body_iterator]
+    return _parse(asyncio.run(go()))
+
+
 def test_stream_returns_only_the_token_and_teaser(db):
     events = run_stream(db, "v-stream")
+    # 1. The token comes first, so a dropped connection can pick the result up later.
+    assert events[0][0] == "started"
     name, data = events[-1]
+    assert data["token"] == events[0][1]["token"]
     assert name == "result" and set(data) == {"token", "teaser"}
-    assert data["teaser"]["what_to_fix"]["title"] == "Slow follow-up"
+    assert data["teaser"]["primary_problem"]["title"] == "Slow follow-up"
+    assert data["teaser"]["action_plan_titles"] == ["Reply within an hour"]
+    assert "Hidden" not in json.dumps(data)
     row = guest_checkup.find(db, data["token"])
     assert (row.status, row.utm_source) == ("completed", "facebook")
 
 
 def test_a_failed_stream_shows_a_plain_message(db):
     events = run_stream(db, "v-stream-fail", fail=True)
-    assert events[-1] == ("error", {"message": "The checkup couldn't finish. Please try again."})
+    assert events[-1] == ("error", {"message": "The check-up couldn't finish. Please try again."})
+
+
+def test_a_dropped_connection_does_not_lose_the_check_up(db):
+    """The page disconnects right after `started` (mobile data). The analysis
+    keeps running, and the page can fetch the result by its token."""
+    async def go():
+        body, request = _stream_request("v-dropped")
+        with patch("decision_engine.agentic_analyzer.create_analyzer", return_value=FakeAnalyzer(db)), \
+             patch("decision_engine.tool_discovery.discover_tools_for_analysis", new=AsyncMock()), \
+             patch.object(public_checkup, "_task_session", return_value=db):
+            response = await public_checkup.run_guest_checkup(body, request, BackgroundTasks(), db)
+            stream = response.body_iterator
+            first = await stream.__anext__()          # only the token arrives
+            await stream.aclose()                     # then the connection drops
+            await asyncio.gather(*public_checkup._running)   # the analysis carries on
+            return first
+    token = _parse([asyncio.run(go())])[0][1]["token"]
+    found = public_checkup.get_checkup(token, db)["data"]
+    assert found["status"] == "completed" and found["teaser"]["primary_problem"]["title"] == "Slow follow-up"
+
+
+def test_status_shows_running_and_failed_without_a_teaser(db):
+    running = guest_checkup.start(db, "Grow my shop please", "v-status", "ip-s")
+    assert public_checkup.get_checkup(running.token, db)["data"] | {"token": None} == {
+        "token": None, "status": "running", "claimed": False, "teaser": None}
+    guest_checkup.finish(db, running.id, error="LLM timeout")
+    assert public_checkup.get_checkup(running.token, db)["data"]["status"] == "failed"
+    with pytest.raises(HTTPException):
+        public_checkup.get_checkup("not-a-real-token-123", db)
+
+
+# ── Browser failures and Meta events ────────────────────────────────────────
+
+def test_the_page_can_report_a_failure(db):
+    public_checkup.report_failure(public_checkup.FailureReport(reason="Network dropped", visitor_id="v-page"), db)
+    assert db.query(CheckupFailure).filter_by(source="browser", visitor_id="v-page").count() == 1
+
+
+def test_only_the_ad_pages_events_are_relayed_to_meta():
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": [], "client": ("9.9.9.9", 1)})
+    tasks = BackgroundTasks()
+    public_checkup.track_event(public_checkup.TrackRequest(event="ViewGate", event_id="e-1"), request, tasks)
+    assert len(tasks.tasks) == 1
+    with pytest.raises(HTTPException) as refused:
+        public_checkup.track_event(public_checkup.TrackRequest(event="Purchase", event_id="e-2"), request, tasks)
+    assert refused.value.status_code == 400
+
+
+def test_meta_events_do_nothing_until_set_up(monkeypatch):
+    from services import meta_capi
+    monkeypatch.delenv("META_PIXEL_ID", raising=False)
+    monkeypatch.delenv("META_CAPI_TOKEN", raising=False)
+    assert meta_capi.send_event("ViewContent", "e-3") is False
+
+
+def test_meta_event_hashes_the_email(monkeypatch):
+    from services import meta_capi
+    monkeypatch.setenv("META_PIXEL_ID", "123")
+    monkeypatch.setenv("META_CAPI_TOKEN", "tok")
+    posted = {}
+
+    class Ok:
+        status_code = 200
+
+    def fake_post(url, params, json, timeout):
+        posted.update(url=url, body=json)
+        return Ok()
+
+    monkeypatch.setattr(meta_capi.requests, "post", fake_post)
+    assert meta_capi.send_event("CompleteRegistration", "e-4", email=" Ada@Example.com ") is True
+    event = posted["body"]["data"][0]
+    assert posted["url"].endswith("/123/events") and event["event_id"] == "e-4"
+    assert event["user_data"]["em"] == [meta_capi._sha256("ada@example.com")]
+    assert "Ada@Example.com" not in str(posted)

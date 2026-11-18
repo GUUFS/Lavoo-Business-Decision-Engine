@@ -134,6 +134,9 @@ class User(Base):
     # subscriptions/beta_billing.py). subscription_plan holds the period.
     preferred_currency = Column(String(3), nullable=True)
     preferred_plan_tier = Column(String(20), nullable=True)
+    # Which ad brought this person (copied from their ad check-up when they claim it).
+    utm_source = Column(String(100), nullable=True)
+    utm_campaign = Column(String(150), nullable=True)
 
     # Business profile fields
     company_name = Column(String(255), nullable=True)
@@ -1204,6 +1207,25 @@ class GuestCheckup(Base):
     utm_campaign = Column(String(150), nullable=True)
     claimed_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     claimed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class CheckupFailure(Base):
+    """One ad check-up that went wrong, with the reason
+    (decision_engine/guest_checkup.py record_failure).
+
+    `source` is "server" (the analysis itself failed) or "browser" (the page
+    lost the connection before the server could answer). When more than 3
+    happen in an hour the admin gets one email; `alerted` marks the failure
+    that triggered it, so the next email waits an hour."""
+    __tablename__ = "checkup_failures"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source = Column(String(20), nullable=False)                          # server | browser
+    reason = Column(Text, nullable=False)
+    checkup_id = Column(Integer, ForeignKey("guest_checkups.id", ondelete="SET NULL"), nullable=True)
+    visitor_id = Column(String(64), nullable=True)
+    alerted = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 

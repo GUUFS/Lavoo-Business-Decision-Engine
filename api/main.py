@@ -1283,7 +1283,9 @@ def run_heavy_schema_migrations():
                         ADD COLUMN IF NOT EXISTS founding_number INTEGER,
                         ADD COLUMN IF NOT EXISTS founding_member_at TIMESTAMPTZ,
                         ADD COLUMN IF NOT EXISTS preferred_currency VARCHAR(3),
-                        ADD COLUMN IF NOT EXISTS preferred_plan_tier VARCHAR(20)
+                        ADD COLUMN IF NOT EXISTS preferred_plan_tier VARCHAR(20),
+                        ADD COLUMN IF NOT EXISTS utm_source VARCHAR(100),
+                        ADD COLUMN IF NOT EXISTS utm_campaign VARCHAR(150)
                 """))
                 db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_founding_number ON users (founding_number)"))
                 db.execute(text("""

@@ -490,6 +490,17 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                     end_date.strftime("%B %d, %Y")
                 )
 
+                # Tell the Facebook ads a payment succeeded (Meta Conversions
+                # API, services/meta_capi.py). The tx_ref is the event id, so a
+                # retried verify is counted once. Does nothing unless set up.
+                from services import meta_capi
+                background_tasks.add_task(
+                    meta_capi.send_event, "Purchase", f"purchase-{tx_ref}",
+                    email=user.email, external_id=user.id,
+                    custom_data={"value": float(recorded_amount), "currency": currency,
+                                 "content_name": current_plan},
+                )
+
                 # One consolidated summary per payment, so the full story of
                 # a single event (subscription + referral chops + builder
                 # bonus) is readable as one block instead of pieced together

@@ -220,6 +220,8 @@ def test_a_dollar_payment_landing_in_pounds_takes_its_bonus_off_pounds(db, monke
     from api.routes.admin import revenue
     payer = _user(db, "fx-payer@test.local")
     referrer = _user(db, "fx-ref@test.local")
+    monkeypatch.setattr(revenue, "stripe_payment_status", lambda: {})
+    charged_at_start = revenue.compute_revenue_stats(db)["by_currency"].get("USD", {}).get("charged_revenue", 0.0)
     # 1. $8.50 charged; it landed as £6.70 before Stripe's £0.30 fee (£6.40 net).
     row = Subscriptions(user_id=payer.id, subscription_plan="monthly", plan_tier="pro", transaction_id="pi_fx_usd",
                         tx_ref="ref-fx", amount=Decimal("8.50"), currency="USD", status="completed",
@@ -243,6 +245,12 @@ def test_a_dollar_payment_landing_in_pounds_takes_its_bonus_off_pounds(db, monke
     assert round(usd_after - usd_before, 2) == 0
     gbp_change = after["GBP"]["total_subscription_revenue"] - before["GBP"]["total_subscription_revenue"]
     assert round(gbp_change, 2) == round(6.40 - 1.34, 2)
+    # 4. For transparency the $ row still shows the dollars charged ($8.50 minus
+    #    the $1.70 bonus), from the day it was paid, and that they landed in
+    #    the £ balance as £6.40 once available.
+    assert round(after["USD"]["charged_revenue"] - charged_at_start, 2) == 6.80
+    assert after["USD"]["charged_revenue"] == before["USD"]["charged_revenue"]
+    assert after["USD"]["landed_as"]["GBP"] - before.get("USD", {}).get("landed_as", {}).get("GBP", 0.0) == 6.40
 
 
 def test_a_cancelled_bonus_on_a_refunded_payment_is_not_taken_off(db, monkeypatch):
