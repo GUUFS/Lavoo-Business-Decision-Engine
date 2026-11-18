@@ -20,7 +20,7 @@ from typing import Optional, List, Dict, Any
 from database.pg_connections import get_db
 from database.pg_models import BusinessAnalysis, User
 from api.routes.auth.login import get_current_user
-from api.routes.dependencies import admin_required, subscriber_required
+from api.routes.dependencies import admin_required, subscriber_or_ad_checkup_owner
 from api.cache import get_cached, set_cached, delete_cached
 from decision_engine.text_cleanup import strip_dashes_deep
 from decision_engine.tool_discovery import discover_tools_for_analysis
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/business",
     tags=["Business Analyzer"],
-    dependencies=[Depends(subscriber_required)],
+    dependencies=[Depends(subscriber_or_ad_checkup_owner)],
 )
 
 

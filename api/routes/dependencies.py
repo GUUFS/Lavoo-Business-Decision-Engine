@@ -1,6 +1,6 @@
 # write the code to prevent non-admins from accessing certain routes
 from typing import Optional
-from fastapi import Depends, HTTPException, status, Header, Cookie
+from fastapi import Depends, HTTPException, Request, status, Header, Cookie
 from sqlalchemy.orm import Session
 from database.pg_models import User
 from database.pg_connections import get_db
@@ -92,6 +92,45 @@ def subscriber_required(current_user: User = Depends(get_current_user)) -> User:
     if has_decision_engine_access(current_user):
         return current_user
     # 2. Otherwise: ask them to upgrade.
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="The Decision Engine is available to Pro and Premium subscribers. Upgrade to continue.",
+    )
+
+
+def owns_claimed_ad_checkup(db: Session, user: User, analysis_id) -> bool:
+    """True if this analysis came from an ad check-up (lavoo.io/checkup) that
+    this user claimed when they signed up (decision_engine/guest_checkup.py)."""
+    from database.pg_models import GuestCheckup
+    # 1. The address must name an analysis.
+    try:
+        analysis_id = int(analysis_id)
+    except (TypeError, ValueError):
+        return False
+    # 2. A claimed ad check-up, claimed by this same user.
+    return db.query(GuestCheckup.id).filter(
+        GuestCheckup.analysis_id == analysis_id,
+        GuestCheckup.claimed_by == user.id,
+        GuestCheckup.status == "claimed",
+    ).first() is not None
+
+
+def subscriber_or_ad_checkup_owner(request: Request, current_user: User = Depends(get_current_user),
+                                   db: Session = Depends(get_db)) -> User:
+    """Like subscriber_required, with one exception: anyone may open, and run
+    the Missions of, the analysis they claimed from an ad check-up.
+
+    The ad promises a free check-up with what to stop doing and daily
+    Missions, so a new free account must see its full result
+    (/l/checkup-result/ID) and start its Missions. Everything else in the
+    Decision Engine (new check-ups, history, other analyses) stays paid."""
+    # 1. Subscribers, admins and free-trial accounts: as before.
+    if has_decision_engine_access(current_user):
+        return current_user
+    # 2. Their own claimed ad check-up (routes with {analysis_id} in the address).
+    if owns_claimed_ad_checkup(db, current_user, request.path_params.get("analysis_id")):
+        return current_user
+    # 3. Otherwise: ask them to upgrade.
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="The Decision Engine is available to Pro and Premium subscribers. Upgrade to continue.",

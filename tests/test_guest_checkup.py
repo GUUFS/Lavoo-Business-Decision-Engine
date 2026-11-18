@@ -424,3 +424,43 @@ def test_meta_event_hashes_the_email(monkeypatch):
     assert posted["url"].endswith("/123/events") and event["event_id"] == "e-4"
     assert event["user_data"]["em"] == [meta_capi._sha256("ada@example.com")]
     assert "Ada@Example.com" not in str(posted)
+
+
+# ── A free account can open its claimed ad check-up ─────────────────────────
+
+def _request_for(analysis_id):
+    """A request whose address names this analysis (as /analyses/{analysis_id} does)."""
+    request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    request.scope["path_params"] = {"analysis_id": str(analysis_id)}
+    return request
+
+
+def test_a_free_account_can_open_and_run_its_claimed_ad_check_up(db):
+    from api.routes.dependencies import subscriber_or_ad_checkup_owner
+    row, analysis = finished_checkup(db, visitor="v-free-open")
+    user = make_user(db)                      # no subscription, no free trial
+    user.subscription_status = "Free"
+    user.created_at = datetime.now(UTC) - timedelta(days=400)
+    db.commit()
+    guest_checkup.claim(db, row.token, user)
+    # 1. Their own claimed check-up: allowed (result page and Missions).
+    assert subscriber_or_ad_checkup_owner(_request_for(analysis.id), user, db) is user
+
+
+def test_the_exception_covers_only_that_check_up(db):
+    from api.routes.dependencies import subscriber_or_ad_checkup_owner
+    row, analysis = finished_checkup(db, visitor="v-free-other")
+    owner, stranger = make_user(db), make_user(db)
+    for user in (owner, stranger):
+        user.subscription_status = "Free"
+        user.created_at = datetime.now(UTC) - timedelta(days=400)
+    db.commit()
+    guest_checkup.claim(db, row.token, owner)
+    # 1. Someone else asking for it: refused.
+    with pytest.raises(HTTPException) as refused:
+        subscriber_or_ad_checkup_owner(_request_for(analysis.id), stranger, db)
+    assert refused.value.status_code == 403
+    # 2. The owner on any other Decision Engine address (no analysis named): refused.
+    plain = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
+    with pytest.raises(HTTPException):
+        subscriber_or_ad_checkup_owner(plain, owner, db)
