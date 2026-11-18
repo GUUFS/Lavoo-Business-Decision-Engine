@@ -47,6 +47,12 @@ def compute_revenue_stats(db: Session) -> dict:
     revenue (successful payments minus every builder bonus earned on them,
     both in the payment's own currency), bonuses paid out, and money held
     in this currency's account for a payout sent through another provider.
+    Also, for transparency, what customers were CHARGED in each currency
+    (charged_monthly_revenue / charged_revenue), even when Stripe converted
+    it into another balance, e.g. a $ payment that landed in the £ balance.
+    The $ row then shows the dollars charged, and `landed_as` says where they
+    went ({"GBP": 30.20}). The balance figures above stay as they are (the
+    £ money is counted in £), so nothing is counted twice in a balance.
     Returns {"by_currency": {...}, "currencies": [...]}.
     """
     now = datetime.now(timezone.utc)
@@ -128,6 +134,22 @@ def compute_revenue_stats(db: Session) -> dict:
     last_month_start_utc = last_month_start.replace(tzinfo=timezone.utc)
     incoming_by_ccy: dict = {}
 
+    # C. What customers were CHARGED, in the currency they paid in, before
+    # any conversion (every successful payment, any provider, by the day it
+    # was paid), minus the builder bonuses earned on them (a bonus is always
+    # in its payment's currency). Shown next to the balance figures, so the $
+    # paid is visible even when Stripe turned it into £.
+    charged_total_by_ccy = sum_by_currency(Subscriptions.amount, Subscriptions.currency,
+                                           Subscriptions.status.in_(ok_status))
+    charged_month_by_ccy = sum_by_currency(Subscriptions.amount, Subscriptions.currency,
+                                           Subscriptions.status.in_(ok_status),
+                                           Subscriptions.created_at >= current_month_start)
+    charged_bonus_total_by_ccy = sum_by_currency(Commission.amount, Commission.currency, not_cancelled)
+    charged_bonus_month_by_ccy = sum_by_currency(Commission.amount, Commission.currency, not_cancelled,
+                                                 Commission.created_at >= current_month_start)
+    # Charged in one currency, available in another: {charged: {landed: amount}}.
+    landed_as_by_ccy: dict = {}
+
     def add_to(totals: dict, ccy, amount) -> None:
         """Add an amount to a per-currency total."""
         totals[ccy or 'USD'] = totals.get(ccy or 'USD', 0.0) + float(amount)
@@ -157,6 +179,10 @@ def compute_revenue_stats(db: Session) -> dict:
             add_to(incoming_by_ccy, counted["currency"], counted["amount"])
             continue
         bonuses = bonuses_by_payment.get(row.id, [])
+        # 2b. Charged in one currency, landed in another: note where it went.
+        charged_ccy = row.currency or counted["currency"]
+        if charged_ccy != counted["currency"]:
+            add_to(landed_as_by_ccy.setdefault(charged_ccy, {}), counted["currency"], counted["amount"])
         # 3. All-time totals (payment and its bonuses in the same currency).
         add_to(total_subscription_gross_by_ccy, counted["currency"], counted["amount"])
         for bonus in bonuses:
@@ -175,7 +201,7 @@ def compute_revenue_stats(db: Session) -> dict:
 
     currencies = sorted(
         set(monthly_gross_by_ccy) | set(total_subscription_gross_by_ccy)
-        | set(commissions_paid_by_ccy) | set(incoming_by_ccy)
+        | set(commissions_paid_by_ccy) | set(incoming_by_ccy) | set(charged_total_by_ccy)
     )
 
     # Money earned in this currency but actually settled through a
@@ -209,6 +235,13 @@ def compute_revenue_stats(db: Session) -> dict:
             "growth_rate": round(growth, 1),
             # Stripe money charged but not available yet: not in the figures above.
             "stripe_incoming": round(incoming_by_ccy.get(ccy, 0.0), 2),
+            # What customers paid in this currency, before any conversion (bonuses taken off).
+            "charged_monthly_revenue": round(charged_month_by_ccy.get(ccy, 0.0)
+                                             - charged_bonus_month_by_ccy.get(ccy, 0.0), 2),
+            "charged_revenue": round(charged_total_by_ccy.get(ccy, 0.0)
+                                     - charged_bonus_total_by_ccy.get(ccy, 0.0), 2),
+            # Where that money landed when Stripe converted it, e.g. {"GBP": 30.2}.
+            "landed_as": {k: round(v, 2) for k, v in landed_as_by_ccy.get(ccy, {}).items()},
         }
 
     return {

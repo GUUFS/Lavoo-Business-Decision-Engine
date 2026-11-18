@@ -63,7 +63,7 @@ def test_pro_gets_one_checkup_a_week_on_every_billing_period(db, period):
         reserve_checkup(db, user)
     assert refused.value.status_code == 429
     assert refused.value.detail["code"] == "checkup_limit_reached"
-    assert "Pro includes 1 checkup a week" in refused.value.detail["message"]
+    assert "Pro includes 1 check-up a week" in refused.value.detail["message"]
 
 
 @pytest.mark.parametrize("period", ["monthly", "quarterly", "yearly"])
@@ -74,7 +74,7 @@ def test_premium_gets_ten_checkups_a_month_on_every_billing_period(db, period):
     with pytest.raises(HTTPException) as refused:
         reserve_checkup(db, user)
     assert refused.value.status_code == 429
-    assert "Premium includes 10 checkups a month" in refused.value.detail["message"]
+    assert "Premium includes 10 check-ups a month" in refused.value.detail["message"]
 
 
 def used_checkup_at(db, user, when):
