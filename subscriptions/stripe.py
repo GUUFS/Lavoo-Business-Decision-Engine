@@ -1594,8 +1594,9 @@ async def stripe_webhook(
                 ).first()
 
                 if sub_record:
+                    # Only the plan ends. sub_record.status is the PAYMENT's
+                    # status: it stays 'completed' so the money still counts in revenue.
                     sub_record.subscription_status = "cancelled"
-                    sub_record.status = "cancelled"
                 NotificationService.create_notification(
                     db=db, user_id=user.id, type="subscription_cancelled",
                     title="Subscription Cancelled",
@@ -2047,6 +2048,8 @@ async def confirm_subscription(
         # SetupIntent has no payment of its own to read a real amount from.
         real_amount = verification.get("amount") or 0
         amount = real_amount if real_amount > 0 else price_map.get(plan_type, 29.95)
+        # The currency of that charge (verify_payment reads it off the PaymentIntent).
+        charged_currency = (verification.get("currency") or "USD").upper()
         start_date, end_date = get_subscription_dates_from_stripe(subscription_details, plan_type)
 
         # The Stripe webhook usually saves this payment first (it arrives the
@@ -2075,7 +2078,8 @@ async def confirm_subscription(
             subscription = Subscriptions(
                 user_id=user_id, subscription_plan=plan_type,
                 transaction_id=request.subscription_id, tx_ref=tx_ref,
-                amount=Decimal(str(amount)), currency="USD",
+                # The currency Stripe actually charged (USD, GBP, NGN), not always USD.
+                amount=Decimal(str(amount)), currency=charged_currency,
                 status="completed", subscription_status="active",
                 payment_provider="stripe", start_date=start_date, end_date=end_date
             )
@@ -2129,7 +2133,9 @@ async def confirm_subscription(
         background_tasks.add_task(
             email_service.send_payment_success_email,
             user.email, user.name, float(amount),
-            plan_type, end_date.strftime("%B %d, %Y")
+            plan_type, end_date.strftime("%B %d, %Y"),
+            # "$", "£" or "NGN ": the currency they really paid in.
+            email_service.currency_prefix(charged_currency),
         )
         NotificationService.create_notification(
             db=db, user_id=user_id, type="subscription_active",
@@ -2187,9 +2193,9 @@ async def cancel_subscription_endpoint(
             Subscriptions.user_id == user_id, Subscriptions.subscription_status == "active"
         ).first()
         if sub_record:
+            # Only the plan's state changes. The payment stays 'completed' so it
+            # still counts in revenue (refunds are marked separately, as 'refunded').
             sub_record.subscription_status = "canceling" if at_period_end else "cancelled"
-            if not at_period_end:
-                sub_record.status = "cancelled"
         if hasattr(user, 'subscription_status'):
             user.subscription_status = "canceling" if at_period_end else "cancelled"
         db.commit()

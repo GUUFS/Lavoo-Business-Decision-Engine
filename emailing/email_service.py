@@ -25,7 +25,7 @@ class EmailService:
     def __init__(self):
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@lavoo.io")
         self.from_email = os.getenv("FROM_EMAIL", self.support_email)
-        self.from_name = os.getenv("FROM_NAME", "Lavoo | The Business Doctor")
+        self.from_name = os.getenv("FROM_NAME", "Lavoo Business Doctor")
         self.frontend_url = os.getenv("FRONTEND_URL", "https://lavoo.io")
 
         # SMTP configuration (fallback transport when Resend isn't configured
@@ -141,7 +141,7 @@ class EmailService:
 
     def send_welcome_email(self, user_email: str, name: str):
         """Send welcome email on signup"""
-        subject = "Welcome to Lavoo Business Intelligence Engine!"
+        subject = "Welcome to Lavoo Business Doctor"
 
         html_content = f"""
         <!DOCTYPE html>
@@ -152,13 +152,13 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #f97316;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -173,27 +173,28 @@ class EmailService:
                 <div class="content">
                     <h2>Hi {name},</h2>
                     <p>We're thrilled to have you on board! Your account has been successfully created.</p>
-                    <p><strong>With Lavoo Business Intelligence Engine, you can:</strong></p>
+                    <p><strong>With Lavoo Business Doctor, you can:</strong></p>
                     <ul>
-                        <li>Run powerful AI-driven business analyses</li>
-                        <li>Detect bottlenecks and get actionable solutions</li>
-                        <li>Generate comprehensive ROI projections</li>
-                        <li>Earn commissions through referrals</li>
+                        <li>Run a check-up: tell Lavoo what is going on in your business</li>
+                        <li>See the main problem holding your business back, and the ones behind it</li>
+                        <li>Get a ranked action plan and daily Missions to fix it</li>
+                        <li>Earn a 50% Builder Bonus when people you refer pay</li>
                     </ul>
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard" class="button">Get Started</a>
+                        <a href="{self.frontend_url}/l/decision-engine" class="button">Run your first check-up</a>
                     </p>
                     <p>If you have any questions, feel free to reach out to our support team at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
         </html>
         """
 
-        text_content = f"Welcome to Lavoo Business Intelligence Engine!\n\nHi {name},\n\nWe're thrilled to have you on board!"
+        text_content = (f"Welcome to Lavoo Business Doctor\n\nHi {name},\n\nWe're thrilled to have you on board! "
+                        f"Run your first check-up: {self.frontend_url}/l/decision-engine")
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
@@ -218,7 +219,7 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
@@ -243,7 +244,7 @@ class EmailService:
                     <p style="color: #666; font-size: 13px;">This code expires in 15 minutes. If you didn't try to sign up for Lavoo, you can ignore this email.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo | The Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -269,17 +270,17 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #f97316;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
-                .warning {{ background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+                .warning {{ background: #fef3c7; border-left: 4px solid #e87a02; padding: 15px; margin: 20px 0; border-radius: 4px; }}
             </style>
         </head>
         <body>
@@ -305,7 +306,7 @@ class EmailService:
                     <p>If you need assistance, contact us at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -320,7 +321,7 @@ class EmailService:
     def send_subscription_confirmation(self, user_email: str, name: str, plan_type: str,
                                       amount: float, currency: str, next_billing_date: str):
         """Send subscription confirmation"""
-        subject = f"Subscription Confirmed - {plan_type.title()} Plan"
+        subject = f"Subscription Confirmed - {self._plan_name(plan_type)} Plan"
 
         html_content = f"""
         <!DOCTYPE html>
@@ -331,14 +332,14 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .info-box {{ background: white; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; }}
+                .info-box {{ background: white; border-left: 4px solid #e87a02; padding: 20px; margin: 20px 0; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #10b981;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -355,32 +356,56 @@ class EmailService:
 
                     <div class="info-box">
                         <h3 style="margin-top: 0;">Subscription Details</h3>
-                        <p><strong>Plan:</strong> {plan_type.title()}</p>
+                        <p><strong>Plan:</strong> {self._plan_name(plan_type)}</p>
                         <p><strong>Amount:</strong> {currency}{amount:.2f}</p>
                         <p><strong>Next Billing Date:</strong> {next_billing_date}</p>
                     </div>
 
-                    <p>You now have full access to all premium features!</p>
+                    <p>You now have full access to Lavoo Premium!</p>
 
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard" class="button">Go to Dashboard</a>
+                        <a href="{self.frontend_url}/l/home-feed" class="button">Go to Dashboard</a>
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
         </html>
         """
 
-        text_content = f"Subscription Confirmed!\n\nPlan: {plan_type.title()}\nAmount: {currency}{amount:.2f}\nNext Billing: {next_billing_date}"
+        text_content = f"Subscription Confirmed!\n\nPlan: {self._plan_name(plan_type)}\nAmount: {currency}{amount:.2f}\nNext Billing: {next_billing_date}"
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
-    def send_payment_success_email(self, user_email: str, name: str, amount: float, plan_type: str, next_billing_date: str):
-        """Wrapper for subscription confirmation used in stripe.py"""
-        return self.send_subscription_confirmation(user_email, name, plan_type, amount, "$", next_billing_date)
+    @staticmethod
+    def _plan_name(plan_type: str | None) -> str:
+        """The plan as the app names it: "monthly" -> "Premium (Monthly)"."""
+        # 1. No plan given: the app's paid plan is Premium.
+        label = (plan_type or "").replace("_", " ").strip().title()
+        if not label:
+            return "Premium"
+        # 2. Already says Premium (or Pro): keep it as it is.
+        if "Premium" in label or "Pro" in label:
+            return label
+        # 3. Just the billing period: put Premium in front of it.
+        return f"Premium ({label})"
+
+    @staticmethod
+    def currency_prefix(code: str | None) -> str:
+        """What goes in front of an amount: "USD" -> "$", "GBP" -> "£", "NGN" -> "NGN "."""
+        # 1. The two with a symbol everyone knows; no code means dollars.
+        code = (code or "USD").upper().strip()
+        symbols = {"USD": "$", "GBP": "£"}
+        # 2. Anything else: the code and a space.
+        return symbols.get(code, f"{code} ")
+
+    def send_payment_success_email(self, user_email: str, name: str, amount: float, plan_type: str,
+                                   next_billing_date: str, currency: str = "$"):
+        """Wrapper for subscription confirmation used in stripe.py and flutterwave.py.
+        currency is what goes in front of the amount ("$", or "NGN " for Naira)."""
+        return self.send_subscription_confirmation(user_email, name, plan_type, amount, currency, next_billing_date)
 
     def send_beta_card_saved_email(self, user_email: str, name: str, card_last4: str, card_brand: str, grace_period_days: int):
         """Send confirmation when card is saved in beta mode"""
@@ -395,12 +420,12 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .info-box {{ background: white; border-left: 4px solid #f97316; padding: 20px; margin: 20px 0; }}
+                .info-box {{ background: white; border-left: 4px solid #e87a02; padding: 20px; margin: 20px 0; }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
@@ -423,7 +448,7 @@ class EmailService:
                     <p>Thank you for being an early supporter!</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -449,14 +474,14 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
                 .receipt-box {{ background: white; border: 1px solid #e5e7eb; padding: 20px; margin: 20px 0; }}
                 .receipt-row {{ display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }}
-                .total {{ font-size: 18px; font-weight: bold; color: #3b82f6; }}
+                .total {{ font-size: 18px; font-weight: bold; color: #b25d00; }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
@@ -473,7 +498,7 @@ class EmailService:
                         <h3 style="margin-top: 0;">Receipt Details</h3>
                         <div class="receipt-row">
                             <span>Plan</span>
-                            <span>{plan_type.title()}</span>
+                            <span>{self._plan_name(plan_type)}</span>
                         </div>
                         <div class="receipt-row">
                             <span>Date</span>
@@ -489,11 +514,10 @@ class EmailService:
                         </div>
                     </div>
 
-                    <p>This payment will appear on your statement as "Lavoo Business Intelligence".</p>
                     <p>If you have any questions, contact us at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -518,12 +542,12 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .info-box {{ background: white; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; }}
+                .info-box {{ background: white; border-left: 4px solid #e87a02; padding: 20px; margin: 20px 0; }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
@@ -537,23 +561,23 @@ class EmailService:
                     <p>Your subscription has been successfully renewed!</p>
 
                     <div class="info-box">
-                        <p><strong>Plan:</strong> {plan_type.title()}</p>
+                        <p><strong>Plan:</strong> {self._plan_name(plan_type)}</p>
                         <p><strong>Amount Charged:</strong> {currency}{amount:.2f}</p>
                         <p><strong>Next Renewal:</strong> {renewal_date}</p>
                     </div>
 
-                    <p>You continue to have full access to all premium features.</p>
+                    <p>You still have full access to Lavoo Premium.</p>
                     <p>Thank you for being a valued member!</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
         </html>
         """
 
-        text_content = f"Subscription Renewed\n\nPlan: {plan_type.title()}\nAmount: {currency}{amount:.2f}\nNext Renewal: {renewal_date}"
+        text_content = f"Subscription Renewed\n\nPlan: {self._plan_name(plan_type)}\nAmount: {currency}{amount:.2f}\nNext Renewal: {renewal_date}"
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
@@ -571,14 +595,14 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
                 .warning-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #ef4444;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -591,24 +615,24 @@ class EmailService:
                 </div>
                 <div class="content">
                     <h2>Hi {name},</h2>
-                    <p>We were unable to process your payment for your {plan_type.title()} subscription.</p>
+                    <p>We were unable to process your payment for your {self._plan_name(plan_type)} subscription.</p>
 
                     <div class="warning-box">
                         <p><strong>Amount:</strong> {currency}{amount:.2f}</p>
                         <p><strong>Reason:</strong> {reason}</p>
-                        <p><strong>Retry Date:</strong> {retry_date}</p>
+                        {f'<p><strong>Retry Date:</strong> {retry_date}</p>' if retry_date else ''}
                     </div>
 
                     <p>Please update your payment method to continue your subscription.</p>
 
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/upgrade" class="button">Update Payment Method</a>
+                        <a href="{self.frontend_url}/l/upgrade" class="button">Update Payment Method</a>
                     </p>
 
                     <p>If you need help, contact us at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -618,6 +642,13 @@ class EmailService:
         text_content = f"Payment Failed\n\nAmount: {currency}{amount:.2f}\nReason: {reason}\nPlease update your payment method."
 
         return self._send_email(user_email, name, subject, html_content, text_content)
+
+    def send_payment_failed_email(self, user_email: str, name: str, amount: float, reason: str,
+                                  currency: str = ""):
+        """The short form flutterwave.py calls when a payment fails. It had no
+        method behind it, so a failed payment crashed instead of emailing."""
+        # Same email as send_payment_failed, with no plan or retry date to show.
+        return self.send_payment_failed(user_email, name, "", amount, currency, "", reason)
 
     def send_subscription_cancelled(self, user_email: str, name: str, plan_type: str,
                                    end_date: str, cancellation_reason: Optional[str] = None):
@@ -633,12 +664,12 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .info-box {{ background: white; border-left: 4px solid #6366f1; padding: 20px; margin: 20px 0; }}
+                .info-box {{ background: white; border-left: 4px solid #e87a02; padding: 20px; margin: 20px 0; }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
@@ -649,19 +680,19 @@ class EmailService:
                 </div>
                 <div class="content">
                     <h2>Hi {name},</h2>
-                    <p>Your {plan_type.title()} subscription has been cancelled.</p>
+                    <p>Your {self._plan_name(plan_type)} subscription has been cancelled.</p>
 
                     <div class="info-box">
                         <p><strong>Access Until:</strong> {end_date}</p>
                         {f'<p><strong>Reason:</strong> {cancellation_reason}</p>' if cancellation_reason else ''}
                     </div>
 
-                    <p>You'll continue to have access to premium features until {end_date}.</p>
-                    <p>We're sorry to see you go! If you change your mind, you can reactivate anytime.</p>
+                    <p>You'll keep Lavoo Premium until {end_date}.</p>
+                    <p>We're sorry to see you go! If you change your mind, you can subscribe again anytime from the Upgrade page.</p>
                     <p>Contact us at {self.support_email} if you have questions.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -675,8 +706,8 @@ class EmailService:
     def send_commission_notification(self, user_email: str, name: str,
                                     amount: float, currency: str, referred_user_name: str,
                                     commission_date: str):
-        """Send commission earned notification"""
-        subject = f"You've Earned {currency}{amount:.2f} Commission!"
+        """Tell a referrer they earned a Builder Bonus (the app's name for a referral commission)."""
+        subject = f"You've earned a {currency}{amount:.2f} Builder Bonus!"
 
         html_content = f"""
         <!DOCTYPE html>
@@ -687,21 +718,21 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .commission-box {{
-                    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-                    border-left: 4px solid #f59e0b;
+                .bonus-box {{
+                    background: #fffaf0;
+                    border-left: 4px solid #e87a02;
                     padding: 20px;
                     margin: 20px 0;
                     text-align: center;
                 }}
-                .amount {{ font-size: 32px; font-weight: bold; color: #d97706; }}
+                .amount {{ font-size: 32px; font-weight: bold; color: #b25d00; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #f59e0b;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -710,33 +741,33 @@ class EmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1 style="margin: 0;">🎉 Commission Earned!</h1>
+                    <h1 style="margin: 0;">🎉 Builder Bonus Earned!</h1>
                 </div>
                 <div class="content">
                     <h2>Congratulations {name}!</h2>
-                    <p>You've earned a commission from your referral!</p>
+                    <p>You've earned a Builder Bonus from your referral!</p>
 
-                    <div class="commission-box">
+                    <div class="bonus-box">
                         <div class="amount">{currency}{amount:.2f}</div>
                         <p>Earned from {referred_user_name}'s subscription</p>
                         <p><small>Date: {commission_date}</small></p>
                     </div>
 
-                    <p>Keep referring more users to earn even more!</p>
+                    <p>Keep sharing your referral link to earn more!</p>
 
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/earnings" class="button">View Earnings</a>
+                        <a href="{self.frontend_url}/l/earnings" class="button">View Earnings</a>
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
         </html>
         """
 
-        text_content = f"Commission Earned!\n\nAmount: {currency}{amount:.2f}\nFrom: {referred_user_name}\nDate: {commission_date}"
+        text_content = f"Builder Bonus Earned!\n\nAmount: {currency}{amount:.2f}\nFrom: {referred_user_name}\nDate: {commission_date}"
 
         return self._send_email(user_email, name, subject, html_content, text_content)
 
@@ -755,13 +786,13 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .payout-box {{ background: white; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; }}
-                .amount {{ font-size: 24px; font-weight: bold; color: #10b981; }}
+                .payout-box {{ background: white; border-left: 4px solid #e87a02; padding: 20px; margin: 20px 0; }}
+                .amount {{ font-size: 24px; font-weight: bold; color: #b25d00; }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
             </style>
         </head>
@@ -785,7 +816,7 @@ class EmailService:
                     <p>Thank you for being part of Lavoo!</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -810,14 +841,14 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
                 .warning-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #ef4444;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -840,13 +871,13 @@ class EmailService:
                     <p>Please verify your payout account details and try again.</p>
 
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/earnings" class="button">Update Payout Details</a>
+                        <a href="{self.frontend_url}/l/earnings" class="button">Update Payout Details</a>
                     </p>
 
                     <p>Contact us at {self.support_email} if you need assistance.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -870,14 +901,14 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .reminder-box {{ background: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; }}
+                .reminder-box {{ background: #fffbeb; border-left: 4px solid #e87a02; padding: 20px; margin: 20px 0; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #f59e0b;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -900,11 +931,11 @@ class EmailService:
                     <p>Billing will begin automatically once saved.</p>
 
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/upgrade" class="button">Save Payment Method</a>
+                        <a href="{self.frontend_url}/l/upgrade" class="button">Save Payment Method</a>
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -928,14 +959,14 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
                 .urgent-box {{ background: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #ef4444;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -958,13 +989,13 @@ class EmailService:
                     <p>Without a payment method on file, your account will be suspended in {days_remaining} days.</p>
 
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/upgrade" class="button">Save Payment Method Now</a>
+                        <a href="{self.frontend_url}/l/upgrade" class="button">Save Payment Method Now</a>
                     </p>
 
                     <p>Questions? Contact {self.support_email}</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -977,11 +1008,11 @@ class EmailService:
 
     def _simple_layout(self, title: str, body_html: str, button_text: str | None = None,
                        button_link: str | None = None) -> str:
-        """The plain Lavoo email layout: a purple header, the body, an
+        """The plain Lavoo email layout: a black header with the orange line, the body, an
         optional button and the footer. body_html must already be safe HTML."""
         # 1. The optional button.
         button = (f'<p style="text-align: center;"><a href="{button_link}" style="display: inline-block; '
-                  f'padding: 12px 30px; background: #8b5cf6; color: white; text-decoration: none; '
+                  f'padding: 12px 30px; background: #e87a02; color: white; text-decoration: none; '
                   f'border-radius: 5px; margin: 20px 0;">{button_text}</a></p>') if button_text and button_link else ""
         # 2. The page.
         return f"""
@@ -989,7 +1020,7 @@ class EmailService:
         <html><head><meta charset="UTF-8"></head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0;">
           <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white; padding: 30px;
+            <div style="background: #18181b; border-bottom: 3px solid #e87a02; color: white; padding: 30px;
                         text-align: center; border-radius: 10px 10px 0 0;">
               <h1 style="margin: 0;">{title}</h1>
             </div>
@@ -998,7 +1029,7 @@ class EmailService:
               {button}
             </div>
             <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
-              <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+              <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
             </div>
           </div>
         </body></html>
@@ -1024,7 +1055,7 @@ class EmailService:
                 f"{' until ' + premium_until if premium_until else ''}, and a 50% Builder Bonus on your referrals' payments.")
         return self._send_email(user_email, name, "You're now a Lavoo Partner",
                                 self._simple_layout("You're a Lavoo Partner", body, "Open your dashboard",
-                                                    f"{self.frontend_url}/dashboard/referrals"), text)
+                                                    f"{self.frontend_url}/l/earnings"), text)
 
     def send_admin_message(self, user_email: str, name: str, subject: str, message: str):
         """An admin's own message to a user (admin "Email a user" page). The
@@ -1052,14 +1083,14 @@ class EmailService:
                 body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }}
                 .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
                 .header {{
-                    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+                    background: #18181b; border-bottom: 3px solid #e87a02;
                     color: white; padding: 30px; text-align: center;
                     border-radius: 10px 10px 0 0;
                 }}
                 .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }}
-                .success-box {{ background: #f5f3ff; border-left: 4px solid #8b5cf6; padding: 20px; margin: 20px 0; }}
+                .success-box {{ background: #fffaf0; border-left: 4px solid #e87a02; padding: 20px; margin: 20px 0; }}
                 .button {{
-                    display: inline-block; padding: 12px 30px; background: #8b5cf6;
+                    display: inline-block; padding: 12px 30px; background: #e87a02;
                     color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;
                 }}
                 .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
@@ -1075,16 +1106,16 @@ class EmailService:
                     <p>{referred_user_name} just signed up using your referral link!</p>
 
                     <div class="success-box">
-                        <p>You'll earn 50% commission when they subscribe.</p>
+                        <p>You'll earn a 50% Builder Bonus on every payment they make.</p>
                         <p>Keep sharing your link to earn more!</p>
                     </div>
 
                     <p style="text-align: center;">
-                        <a href="{self.frontend_url}/dashboard/referrals" class="button">View Referrals</a>
+                        <a href="{self.frontend_url}/l/earnings" class="button">View Referrals</a>
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Intelligence Engine. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -1167,7 +1198,7 @@ class EmailService:
                 </div>
                 <div class="footer">
                     <p>This message was sent via the Lavoo contact form (https://lavoo.io/contact).</p>
-                    <p>&copy; {datetime.now().year} Lavoo | The Business Doctor.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor.</p>
                 </div>
             </div>
         </body>
@@ -1251,7 +1282,7 @@ Message:
                     <p style="margin: 25px 0 0; font-size: 14px; color: #4b5563;">
                         Best regards,<br />
                         <strong>{signoff_name}</strong><br />
-                        <span style="color: #e87a02; font-size: 13px;">Lavoo | The Business Doctor</span>
+                        <span style="color: #e87a02; font-size: 13px;">Lavoo Business Doctor</span>
                     </p>
 
                     {f'''
@@ -1263,7 +1294,7 @@ Message:
                 </div>
                 <div class="footer">
                     <p>Have further questions? Simply reply to this email or reach us at <a href="mailto:{contact_sender}" style="color: #e87a02;">{contact_sender}</a>.</p>
-                    <p>&copy; {datetime.now().year} Lavoo | The Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -1276,7 +1307,7 @@ Message:
 
 Best regards,
 {signoff_name}
-Lavoo | The Business Doctor
+Lavoo Business Doctor
 {contact_sender}
 
 {"--- Original Message ---" if original_message else ""}
@@ -1369,7 +1400,7 @@ Lavoo | The Business Doctor
                     </div>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo | The Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>

@@ -487,7 +487,9 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                     user.name,
                     float(recorded_amount),
                     current_plan,
-                    end_date.strftime("%B %d, %Y")
+                    end_date.strftime("%B %d, %Y"),
+                    # The currency they actually paid in (NGN, USD...), not always "$".
+                    email_service.currency_prefix(currency),
                 )
 
                 # Tell the Facebook ads a payment succeeded (Meta Conversions
