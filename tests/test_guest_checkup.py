@@ -113,8 +113,12 @@ def test_one_network_is_limited_even_with_new_browsers(db):
 
 
 def test_everyone_together_has_a_daily_cap(db, monkeypatch):
+    # Room for exactly one more, counting the same last-24-hours window the
+    # limit does (older rows left in the test database must not count).
+    since = datetime.now(UTC) - timedelta(hours=24)
     monkeypatch.setattr(guest_checkup, "GUEST_CHECKUPS_PER_DAY",
-                        db.query(GuestCheckup).filter(GuestCheckup.status.in_(guest_checkup._COUNTED)).count() + 1)
+                        db.query(GuestCheckup).filter(GuestCheckup.created_at >= since,
+                                                      GuestCheckup.status.in_(guest_checkup._COUNTED)).count() + 1)
     guest_checkup.start(db, "Grow my shop please", "browser-d", "ip-d")
     with pytest.raises(HTTPException) as refused:
         guest_checkup.start(db, "Grow my shop please", "browser-e", "ip-e")
