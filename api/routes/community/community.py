@@ -744,7 +744,7 @@ def _generate_voo_angle_reply(
     """
     system_prompt = get_voo_angle_system_prompt()
     if not system_prompt:
-        logger.error("[voo-bot] Angle system prompt is empty — cannot generate Voo Angle")
+        logger.error("[voo-bot] Angle system prompt is empty: cannot generate Voo Angle")
         return None, None
 
     prompt_path = os.path.join(os.path.dirname(__file__), "voo_angle_user_prompt.txt")
@@ -838,6 +838,91 @@ def _generate_voo_angle_reply(
     return None, None
 
 
+def _get_author_context_and_memory(
+    db: Session,
+    user: Optional[User],
+    current_discussion_id: Optional[int] = None
+) -> str:
+    """
+    Extracts author profile data and recent Build Room discussions for in-memory context.
+    Provides real founder background instead of generic business assumptions.
+    """
+    if not user:
+        return "None"
+
+    bits = []
+
+    # Identity
+    name = getattr(user, "name", None)
+    username = getattr(user, "username", None)
+    if name and name.strip():
+        bits.append(f"Name: {name.strip()}")
+    if username and username.strip():
+        bits.append(f"Handle: @{username.strip().lstrip('@')}")
+
+    # Bio
+    bio = getattr(user, "bio", None)
+    if bio and bio.strip():
+        bio_clean = " ".join(bio.strip().split()[:40])
+        bits.append(f"Bio: {bio_clean}")
+
+    # Business profile
+    company = getattr(user, "company_name", None)
+    if company and company.strip():
+        bits.append(f"Business: {company.strip()}")
+
+    industry = getattr(user, "industry", None)
+    if industry and industry.strip():
+        bits.append(f"Industry: {industry.strip()}")
+
+    stage = getattr(user, "venture_stage", None)
+    if stage and stage.strip():
+        bits.append(f"Stage: {stage.strip()}")
+
+    location = getattr(user, "location", None)
+    if location and location.strip():
+        bits.append(f"Location: {location.strip()}")
+
+    current_goal = getattr(user, "current_goal", None)
+    if current_goal and current_goal.strip():
+        goal_clean = " ".join(current_goal.strip().split()[:30])
+        bits.append(f"Current goal: {goal_clean}")
+
+    # Build Room discussions history (recent public discussions, up to 3)
+    try:
+        q = db.query(CommunityDiscussion).filter(
+            CommunityDiscussion.user_id == user.id,
+            CommunityDiscussion.visibility == "public"
+        )
+        if current_discussion_id:
+            q = q.filter(CommunityDiscussion.id != current_discussion_id)
+
+        recent_discussions = (
+            q.order_by(CommunityDiscussion.id.desc())
+            .limit(4)
+            .all()
+        )
+
+        seen_titles = set()
+        snippets = []
+        for past_d in recent_discussions:
+            t = (past_d.title or "").strip()
+            if t and t.lower() not in seen_titles:
+                seen_titles.add(t.lower())
+                c_snip = " ".join((past_d.content or "").strip().split()[:15])
+                if c_snip:
+                    snippets.append(f'"{t}" ({c_snip}...)')
+                else:
+                    snippets.append(f'"{t}"')
+
+        if snippets:
+            bits.append(f"Recent Build Room discussions: {'; '.join(snippets[:3])}")
+    except Exception as e:
+        logger.warning(f"[voo-memory] Could not fetch author past discussions: {e}")
+
+    return " | ".join(bits) if bits else "None"
+
+
 def _generate_voo_followup_reply(
     db: Session,
     post_id: int,
@@ -848,7 +933,8 @@ def _generate_voo_followup_reply(
     voo_test: str,
     conversation: str,
     latest_reply_from: str,
-    latest_reply_text: str
+    latest_reply_text: str,
+    author_context: str = "None"
 ) -> Tuple[Optional[dict], Optional[str]]:
     """
     Executes Voo's Follow-up pipeline (v1.0) with prompt caching, glossary injection,
@@ -856,7 +942,7 @@ def _generate_voo_followup_reply(
     """
     system_prompt = get_voo_followup_system_prompt()
     if not system_prompt:
-        logger.error("[voo-bot] Follow-up system prompt is empty — cannot generate follow-up")
+        logger.error("[voo-bot] Follow-up system prompt is empty: cannot generate follow-up")
         return None, None
 
     prompt_path = os.path.join(os.path.dirname(__file__), "voo_followup_user_prompt.txt")
@@ -868,6 +954,7 @@ def _generate_voo_followup_reply(
         return None, None
 
     user_prompt = user_template.format(
+        author_context=author_context or "None",
         post_type=post_type or "Question",
         question_title=question_title or "",
         question_content=question_content or "",
@@ -1098,47 +1185,7 @@ async def _process_single_voo_reply(discussion_id: int, db: Session, voo_user: O
             return False
 
         # Section 3: Member details (Prioritize author's real Build Room journey and posts)
-        bits = []
-        is_staff = bool(getattr(author_user, "is_admin", False))
-        if not is_staff:
-            company = getattr(author_user, "company_name", None)
-            if company and company.strip().lower() not in ("lavoo", "lavoo creators", "lavoo team"):
-                bits.append(f"Business: {company.strip()}")
-            if getattr(author_user, "industry", None):
-                bits.append(f"Industry: {author_user.industry}")
-            if getattr(author_user, "venture_stage", None):
-                bits.append(f"Stage: {author_user.venture_stage}")
-            if getattr(author_user, "location", None):
-                bits.append(f"Country/Location: {author_user.location}")
-
-        # Fetch author's recent public posts/reflections in the Build Room (up to 3, excluding current post)
-        recent_author_discussions = (
-            db.query(CommunityDiscussion)
-            .filter(
-                CommunityDiscussion.user_id == d.user_id,
-                CommunityDiscussion.id != d.id,
-                CommunityDiscussion.visibility == "public"
-            )
-            .order_by(CommunityDiscussion.id.desc())
-            .limit(4)
-            .all()
-        )
-        seen_recent_titles = set()
-        recent_history_snippets = []
-        for past_d in recent_author_discussions:
-            t = (past_d.title or "").strip()
-            if t and t.lower() not in seen_recent_titles:
-                seen_recent_titles.add(t.lower())
-                c_snip = " ".join((past_d.content or "").strip().split()[:15])
-                if c_snip:
-                    recent_history_snippets.append(f'"{t}" ({c_snip}...)')
-                else:
-                    recent_history_snippets.append(f'"{t}"')
-
-        if recent_history_snippets:
-            bits.append(f"Recent Build Room activity: {'; '.join(recent_history_snippets[:3])}")
-
-        member_details = " | ".join(bits) if bits else "None"
+        member_details = _get_author_context_and_memory(db=db, user=author_user, current_discussion_id=d.id)
 
         # Post type: Only staff accounts can create Platform Polls
         if d.post_type == "poll" or d.poll_data:
@@ -1556,6 +1603,16 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
         content_words = (d.content or "").strip().split()
         trimmed_content = " ".join(content_words[:1500])
 
+        replier_user = db.query(User).filter_by(id=replier_user_id).first()
+        author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id != replier_user_id else replier_user
+
+        if replier_user_id == d.user_id:
+            author_context_str = _get_author_context_and_memory(db=db, user=replier_user, current_discussion_id=discussion_id)
+        else:
+            replier_context = _get_author_context_and_memory(db=db, user=replier_user, current_discussion_id=discussion_id)
+            original_author_context = _get_author_context_and_memory(db=db, user=author_user, current_discussion_id=discussion_id)
+            author_context_str = f"Replier: {replier_context} | Original Author: {original_author_context}"
+
         followup_data, used_model = _generate_voo_followup_reply(
             db=db,
             post_id=discussion_id,
@@ -1567,6 +1624,7 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
             conversation=conversation_str,
             latest_reply_from=latest_reply_from,
             latest_reply_text=latest_reply_trimmed,
+            author_context=author_context_str,
         )
 
         if not followup_data or not followup_data.get("respond"):
