@@ -61,6 +61,45 @@ def to_naive_utc(dt: datetime) -> datetime:
     return dt
 
 
+def access_left(db: Session, user: User, now: datetime | None = None) -> dict:
+    """How long a user keeps Premium access, for the admin user details.
+
+    Looks at every way a user can have access and takes the one that ends
+    LAST: the latest paid plan (its newest payment, or the user's own
+    expiry date), Partner Premium, and the free trial. Premium forever has
+    no end. Returns {"days_remaining", "access_type", "access_ends_at"};
+    days_remaining is None for Premium forever and 0 when nothing is left.
+    """
+    now = to_naive_utc(now or datetime.now(timezone.utc))
+    # 1. Premium forever: no end date at all.
+    if getattr(user, "lifetime_premium", False):
+        return {"days_remaining": None, "access_type": "Premium forever", "access_ends_at": None}
+    # 2. The newest successful payment's end date.
+    latest_paid = (
+        db.query(Subscriptions)
+        .filter(Subscriptions.user_id == user.id,
+                Subscriptions.status.in_(("completed", "active", "paid", "successful", "succeeded")),
+                Subscriptions.end_date.isnot(None))
+        .order_by(Subscriptions.end_date.desc())
+        .first()
+    )
+    # 3. Every candidate end date, with what kind of access it is.
+    candidates = [
+        (latest_paid.end_date if latest_paid else None, "Paid plan"),
+        (user.subscription_expires_at, "Paid plan"),
+        (getattr(user, "partner_premium_until", None), "Partner"),
+        (getattr(user, "grace_period_ends_at", None), "Free trial"),
+    ]
+    dated = [(to_naive_utc(end), kind) for end, kind in candidates if end is not None]
+    if not dated:
+        return {"days_remaining": 0, "access_type": None, "access_ends_at": None}
+    # 4. The one that ends last; whole days left, never below 0.
+    end, kind = max(dated, key=lambda pair: pair[0])
+    if end <= now:
+        return {"days_remaining": 0, "access_type": None, "access_ends_at": end.isoformat() + "Z"}
+    return {"days_remaining": (end - now).days, "access_type": kind, "access_ends_at": end.isoformat() + "Z"}
+
+
 def is_user_inactive(user: User) -> bool:
     """Check if user is inactive (no login for 30 days)"""
     if not user.last_login and not user.updated_at:
@@ -255,19 +294,10 @@ async def get_user_details(
     from api.utils.sub_utils import sync_user_subscription
     user = sync_user_subscription(db, user)
 
-    days_remaining = 0
-    if user.subscription_status == "active" and user.subscriptions:
-        first_sub = (
-            db.query(Subscriptions)
-            .filter(Subscriptions.user_id == user.id)
-            .order_by(Subscriptions.created_at.asc(), Subscriptions.id.asc())
-            .first()
-        )
-        if first_sub and first_sub.end_date:
-            # ✅ Normalize both sides to naive UTC before comparing
-            end_date = to_naive_utc(first_sub.end_date)
-            delta = end_date - datetime.utcnow()
-            days_remaining = max(0, delta.days)
+    # How long this user's access lasts (it used to read the OLDEST payment,
+    # whose end date is in the past for anyone who renewed: always 0).
+    access = access_left(db, user)
+    days_remaining = access["days_remaining"]
 
     from database.pg_models import Referral
     referrals = db.query(Referral).filter(Referral.referrer_id == user.id).all()
@@ -330,6 +360,10 @@ async def get_user_details(
         "referred_users": referral_names,
         "referred_by": referred_by,
         "days_remaining": days_remaining,
+        # What the days are for ("Paid plan", "Partner", "Free trial",
+        # "Premium forever") and the day it ends (None when it never ends).
+        "access_type": access["access_type"],
+        "access_ends_at": access["access_ends_at"],
     }
 
 
