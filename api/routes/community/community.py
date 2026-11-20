@@ -65,7 +65,7 @@ def ensure_voo_bot_user(db: Session) -> User:
             username="voo",
             is_bot=True,
             role="ai_bot",
-            avatar_url="https://lavoo.io/logo.png",
+            avatar_url="/assets/img/lavoo-logo.png",
             bio="Lavoo's intelligent AI assistant in The Build Room.",
             password=bot_pw,
             confirm_password=bot_pw
@@ -84,6 +84,9 @@ def ensure_voo_bot_user(db: Session) -> User:
             changed = True
         if bot.name != "Voo's Angle":
             bot.name = "Voo's Angle"
+            changed = True
+        if bot.avatar_url in (None, "", "https://lavoo.io/logo.png"):
+            bot.avatar_url = "/assets/img/lavoo-logo.png"
             changed = True
         if changed:
             db.commit()
@@ -1308,10 +1311,10 @@ async def cron_process_pending_voo_replies(db: Session):
             db.rollback()
 
 
-async def _async_fast_voo_angle_worker(discussion_id: int, delay_seconds: int = 45):
+async def _async_fast_voo_angle_worker(discussion_id: int, delay_seconds: int = 5):
     """
     Fast-track async worker to answer questions or tagged posts within ~1 minute.
-    Waits delay_seconds (~45s), then generates and posts Voo's Angle.
+    Waits delay_seconds (~5s), then generates and posts Voo's Angle.
     """
     try:
         if delay_seconds > 0:
@@ -1326,15 +1329,17 @@ async def _async_fast_voo_angle_worker(discussion_id: int, delay_seconds: int = 
             await _process_single_voo_reply(discussion_id=discussion_id, db=db, voo_user=voo_user)
     except Exception as e:
         logger.error(f"[voo-bot] Fast-track worker failed for discussion {discussion_id}: {e}", exc_info=True)
+
+
 async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, replier_user_id: int):
     """
     Background worker for Voo Follow-up mode.
-    Debounces rapid replies from the same member, verifies caps,
-    gathers the conversation history involving Voo, and generates/posts Voo's follow-up.
+    Debounces rapid replies from the same member, verifies caps and entitlements,
+    gathers the conversation history and hierarchical comment lineage, and generates/posts Voo's follow-up.
     """
     import asyncio
-    # Wait 5 seconds for debounce
-    await asyncio.sleep(5)
+    # Wait 3 seconds for snappy debounce
+    await asyncio.sleep(3)
 
     db: Session = SessionLocal()
     try:
@@ -1346,11 +1351,10 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
         if not d:
             return
 
-        # Fetch Voo's Angle log for this discussion
+        # Fetch Voo's Angle log for this discussion if it exists
         angle_log = db.query(VooAngleLog).filter_by(post_id=discussion_id).order_by(VooAngleLog.created_at.desc()).first()
-        if not angle_log:
-            logger.info(f"[voo-followup] No Voo Angle found for discussion {discussion_id}; skipping follow-up.")
-            return
+        voo_angle_text = (angle_log.angle or angle_log.opening) if angle_log else "None (Direct inquiry to Voo in this thread)"
+        voo_test_text = angle_log.test if angle_log else "None"
 
         replier_user = db.query(User).filter_by(id=replier_user_id).first()
         if not replier_user:
@@ -1375,9 +1379,72 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
             (sub_plan and sub_plan not in ("free", "none", ""))
         )
 
+        replier_handle = (replier_user.username if replier_user and replier_user.username else (replier_user.name if replier_user and replier_user.name else "builder")).strip().lstrip("@")
+
+        # Entitlement check: Free tier gets 1 free VO response within first 7 days of signup.
+        # Beyond quota or after 7 days, VO delivers a value-focused upgrade teaser to Pro/Premium.
         if not is_paid:
-            logger.info(f"[voo-followup] Skipping follow-up for user {replier_user_id}: not an active paid or admin account (status='{sub_status}', plan='{sub_plan}')")
-            return
+            now = datetime.now(timezone.utc)
+            user_created = replier_user.created_at
+            if user_created:
+                if user_created.tzinfo is None:
+                    user_created = user_created.replace(tzinfo=timezone.utc)
+                days_since_signup = (now - user_created).total_seconds() / 86400.0
+            else:
+                days_since_signup = 999.0
+
+            # Count previous Voo responses consumed by this free user (excluding teasers/caps)
+            voo_responses_used = db.query(VooFollowupLog).filter(
+                VooFollowupLog.replier_user_id == replier_user_id,
+                VooFollowupLog.reply_type.notin_(["upgrade_teaser", "cap_reached"])
+            ).count()
+
+            voo_angles_received = (
+                db.query(func.count(DiscussionReply.id))
+                .join(CommunityDiscussion, DiscussionReply.discussion_id == CommunityDiscussion.id)
+                .filter(
+                    DiscussionReply.user_id == voo_user.id,
+                    CommunityDiscussion.user_id == replier_user_id
+                )
+                .scalar() or 0
+            )
+
+            total_free_used = voo_responses_used + voo_angles_received
+
+            if days_since_signup > 7.0 or total_free_used >= 1:
+                logger.info(f"[voo-followup] Free quota exhausted for user {replier_user_id} (days={days_since_signup:.1f}, used={total_free_used}). Posting upgrade teaser.")
+                upgrade_msg = (
+                    f"@{replier_handle} You have experienced your complimentary Voo response for your 7-day trial. "
+                    f"To unlock unlimited real-time strategic breakdowns, follow-ups, and decision tests with Voo across The Build Room, "
+                    f"upgrade to Lavoo Pro or Premium!"
+                )
+                teaser_reply = DiscussionReply(
+                    discussion_id=discussion_id,
+                    user_id=voo_user.id,
+                    content=upgrade_msg,
+                    parent_reply_id=trigger_reply_id,
+                    tagged_user_ids=[replier_user_id]
+                )
+                db.add(teaser_reply)
+                db.flush()
+
+                teaser_log = VooFollowupLog(
+                    post_id=discussion_id,
+                    parent_message_id=trigger_reply_id,
+                    replier_user_id=replier_user_id,
+                    prompt_version=FOLLOWUP_PROMPT_VERSION,
+                    reply_type="upgrade_teaser",
+                    changes_original=False,
+                    reply=upgrade_msg,
+                    reasoning="Free quota exhausted; prompted upgrade to Pro/Premium",
+                    model="static"
+                )
+                db.add(teaser_log)
+                d.reply_count = (d.reply_count or 0) + 1
+                db.commit()
+                await delete_cached(f"community:public_post:{discussion_id}")
+                await delete_cached("community:discussions:*")
+                return
 
         # Caps check: hard cap of 3 follow-up responses per user per thread; 15 total for thread
         user_thread_count = db.query(VooFollowupLog).filter(
@@ -1388,8 +1455,6 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
         total_thread_count = db.query(VooFollowupLog).filter(
             VooFollowupLog.post_id == discussion_id
         ).count()
-
-        replier_handle = (replier_user.username if replier_user and replier_user.username else (replier_user.name if replier_user and replier_user.name else "builder")).strip().lstrip("@")
 
         if user_thread_count >= 3 or total_thread_count >= 15:
             logger.info(f"[voo-followup] Cap reached for discussion {discussion_id} (user_thread_count={user_thread_count}, total_thread_count={total_thread_count})")
@@ -1450,6 +1515,18 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
         latest_reply_words = latest_reply_text.split()
         latest_reply_trimmed = " ".join(latest_reply_words[:300])
 
+        # Hierarchical context lineage: If replying to a parent comment, extract parent context
+        parent_comment_context = ""
+        if trigger_reply.parent_reply_id:
+            parent_rep = db.query(DiscussionReply).filter_by(id=trigger_reply.parent_reply_id).first()
+            if parent_rep:
+                pu = db.query(User).filter_by(id=parent_rep.user_id).first()
+                ph = (pu.username if pu and pu.username else (pu.name if pu and pu.name else "member")).strip().lstrip("@")
+                parent_comment_context = f"[PARENT COMMENT BEING REPLIED TO]\nFrom: @{ph}\n{parent_rep.content.strip()}\n\n"
+
+        if parent_comment_context:
+            latest_reply_trimmed = f"{parent_comment_context}[DIRECT QUESTION / FOLLOW-UP TO VO]\n{latest_reply_trimmed}"
+
         latest_reply_from = "Asker" if replier_user_id == d.user_id else f"@{replier_handle}"
 
         # Conversation chain involving Voo (last 12 messages before trigger, oldest first)
@@ -1485,8 +1562,8 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
             post_type=post_type_label,
             question_title=d.title,
             question_content=trimmed_content,
-            voo_angle=angle_log.angle or angle_log.opening,
-            voo_test=angle_log.test,
+            voo_angle=voo_angle_text,
+            voo_test=voo_test_text,
             conversation=conversation_str,
             latest_reply_from=latest_reply_from,
             latest_reply_text=latest_reply_trimmed,
@@ -3156,9 +3233,9 @@ async def create_discussion(
                     pass
         db.commit()
 
-    # If scheduled for Voo answer, trigger fast-track worker to respond within ~1 minute (~45s delay)
+    # If scheduled for Voo answer, trigger fast-track worker to respond within ~1 minute (~5s worker delay)
     if should_schedule_voo:
-        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=45)
+        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=5)
 
     # Automatically schedule background AI generation (summary/takeaways) for new posts if creator is eligible and NOT a question
     is_eligible_for_summary, _ = check_voo_summary_eligibility(current_user, db)
@@ -3696,7 +3773,7 @@ async def update_discussion(
     db.refresh(d)
 
     if should_trigger_voo and background_tasks:
-        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=45)
+        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=5)
     await delete_cached("community:discussions:*")
     await delete_cached(f"community:public_post:{disc_id}")
 
@@ -4068,7 +4145,7 @@ async def reply_to_discussion(
         d.voo_status = "scheduled"
         d.voo_scheduled_for = datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
         logger.info(f"[voo-bot] Scheduled Voo answer for discussion {discussion_id} in {interval_seconds}s (at {d.voo_scheduled_for})")
-        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=45)
+        background_tasks.add_task(_async_fast_voo_angle_worker, d.id, delay_seconds=5)
 
     db.commit()
     db.refresh(reply)
@@ -4827,29 +4904,44 @@ async def search_community_users(
                 func.lower(User.username).like(search_str),
                 func.lower(User.email).like(search_str)
             )
-        ).limit(10).all()
+        ).limit(15).all()
 
         results = []
         voo_included = False
         for u in users:
-            username_val = u.username or re.sub(r'[^a-zA-Z0-9]', '', u.name.lower() if u.name else "user")
-            is_voo = (u.id == voo_bot.id) or (username_val.lower() == "voo") or getattr(u, "is_bot", False)
+            name_val = (u.name or "").strip()
+            username_val = u.username or re.sub(r'[^a-zA-Z0-9]', '', name_val.lower() if name_val else "user")
+            
+            # Filter out legacy/test handles like NAV AI or test bots
+            u_name_low = name_val.lower()
+            u_user_low = username_val.lower()
+            if any(bad in u_name_low or bad in u_user_low for bad in ["nav ai", "nav engine", "nav_bot", "test_bot"]):
+                continue
+
+            is_voo = (u.id == voo_bot.id) or (u_user_low == "voo") or ("voo's angle" in u_name_low)
             if is_voo:
                 voo_included = True
                 results.append({
                     "id": u.id,
                     "name": "Voo's Angle",
                     "username": "voo",
-                    "avatar_url": u.avatar_url or "https://lavoo.io/logo.png",
-                    "company_name": "Lavoo AI"
+                    "avatar_url": "/assets/img/lavoo-logo.png",
+                    "company_name": "Lavoo AI",
+                    "is_bot": True,
+                    "is_verified": True
                 })
             else:
+                # Omit other automated/test bots from member autocomplete
+                if getattr(u, "is_bot", False):
+                    continue
                 results.append({
                     "id": u.id,
-                    "name": u.name or "Member",
+                    "name": name_val or "Member",
                     "username": username_val,
                     "avatar_url": u.avatar_url,
-                    "company_name": u.company_name or "Lavoo Creators"
+                    "company_name": u.company_name or "Lavoo Creators",
+                    "is_bot": False,
+                    "is_verified": bool(getattr(u, "is_admin", False) or getattr(u, "is_staff", False))
                 })
 
         # If user typed 'v', 'vo', 'voo', 'angle', 'ai', ensure Voo's Angle is included
@@ -4858,9 +4950,17 @@ async def search_community_users(
                 "id": voo_bot.id,
                 "name": "Voo's Angle",
                 "username": "voo",
-                "avatar_url": voo_bot.avatar_url or "https://lavoo.io/logo.png",
-                "company_name": "Lavoo AI"
+                "avatar_url": "/assets/img/lavoo-logo.png",
+                "company_name": "Lavoo AI",
+                "is_bot": True,
+                "is_verified": True
             })
+        elif voo_included:
+            # Ensure Voo is placed at the very top of suggestion list
+            voo_entry = next((r for r in results if r.get("username") == "voo"), None)
+            if voo_entry:
+                results.remove(voo_entry)
+                results.insert(0, voo_entry)
 
         return {"success": True, "users": results[:10]}
     except Exception as e:
