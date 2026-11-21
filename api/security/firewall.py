@@ -15,6 +15,16 @@ from config.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Requests whose body holds a password. Their body is never scanned by the
+# WAF rules: passwords can contain "#", "--", quotes, etc., and they are only
+# ever hashed, never put into SQL. Scanning them blocked real users from logging in.
+_NO_BODY_SCAN_PATHS = {
+    "/login", "/api/login",
+    "/signup", "/api/signup",
+    "/token", "/api/token",
+    "/change-password", "/api/change-password",
+}
+
 class FirewallRule:
     def __init__(self, id: int, name: str, type: str, status: str, priority: str, 
                  rule_config: dict, hits: int = 0):
@@ -132,7 +142,9 @@ class FirewallManager:
                     
                     return {
                         'error': 'Access denied',
-                        'message': 'Request blocked by firewall'
+                        'message': 'Request blocked by firewall',
+                        # The frontend shows "detail"; without it users only see "HTTP 403".
+                        'detail': 'Your request was blocked for security reasons. Please try again or contact support.'
                     }
             
             return None  # Allow request
@@ -200,7 +212,8 @@ class FirewallManager:
                     logger.warning(f"BEHAVIOR BLOCK: Request flood detected from IP {ip}. Path: {path}")
                     return {
                         'error': 'Access denied', 
-                        'message': 'Suspicious behavior detected (Request Flood)'
+                        'message': 'Suspicious behavior detected (Request Flood)',
+                        'detail': 'Too many requests at once. Please wait a moment and try again.'
                     }
         return None
 
@@ -274,9 +287,15 @@ class FirewallManager:
                 return True
                 
             # Check Body (New) - Skip for multipart/form-data (avoids boundary false positives)
-            if context.get('body') and 'multipart/form-data' not in context.get('content_type', '').lower():
+            # and for password requests (see _NO_BODY_SCAN_PATHS).
+            if (
+                context.get('body')
+                and 'multipart/form-data' not in context.get('content_type', '').lower()
+                and context['path'].rstrip('/') not in _NO_BODY_SCAN_PATHS
+            ):
                 if regex.search(context['body']):
-                    logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered by pattern '{pattern}' in body: '{context['body'][:100]}...'")
+                    # Don't log the body itself: it can hold personal data.
+                    logger.warning(f"WAF MATCH: Rule '{rule.name}' triggered in body of {context['method']} {context['path']}")
                     return True
 
             # Check Query Parameters
@@ -416,7 +435,10 @@ def initialize_default_firewall_rules(db: Session):
                 'priority': 'high',
                 'description': 'Detect and block SQL injection attempts in URL and Body',
                 'rule_config': {
-                    'pattern': r'(?:\bUNION\s+ALL\s+SELECT\b|\bUNION\s+SELECT\b|\bSELECT\b.*\bFROM\b|\bINSERT\b.*\bINTO\b|\bUPDATE\b.*\bSET\b|\bDELETE\b.*\bFROM\b|\bDROP\b.*\bTABLE\b|\' OR \'|\" OR \"|\' OR 1=1|\' OR \'1\'=\'1|OR 1=1|--|#|\/\*)'
+                    # A bare "#", "--" or "/*" used to match here too, which blocked
+                    # normal text (hashtags, "--" in posts). Now only a quote followed
+                    # by a SQL comment counts.
+                    'pattern': r'(?:\bUNION\s+ALL\s+SELECT\b|\bUNION\s+SELECT\b|\bSELECT\b.*\bFROM\b|\bINSERT\b.*\bINTO\b|\bUPDATE\b.*\bSET\b|\bDELETE\b.*\bFROM\b|\bDROP\b.*\bTABLE\b|\' OR \'|\" OR \"|\' OR 1=1|\' OR \'1\'=\'1|OR 1=1|\'\s*(?:--|#|\/\*))'
                 }
             },
             {
