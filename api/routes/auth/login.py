@@ -108,6 +108,11 @@ def build_auth_response_payload(
     token_type: str = "bearer",
 ) -> dict:
     """Build the shared auth payload used by login, refresh, and profile endpoints."""
+    # 1. Whether they may use the Decision Engine (paid, admin or free trial),
+    #    so the website knows from the login answer itself and doesn't show a
+    #    trial account the upgrade screen until /api/profile loads.
+    from api.routes.dependencies import decision_engine_access_ends_at, has_decision_engine_access
+    # 2. Everything the website stores about the signed-in user.
     return {
         "access_token": access_token,
         "token_type": token_type,
@@ -136,6 +141,8 @@ def build_auth_response_payload(
         "card_brand": getattr(user, "card_brand", None),
         "card_exp_month": getattr(user, "card_exp_month", None),
         "card_exp_year": getattr(user, "card_exp_year", None),
+        "decision_engine_access": has_decision_engine_access(user),
+        "decision_engine_access_ends_at": decision_engine_access_ends_at(user),
     }
 
 

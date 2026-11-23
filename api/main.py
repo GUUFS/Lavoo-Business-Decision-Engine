@@ -20,6 +20,7 @@ from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from passlib.context import CryptContext
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -109,6 +110,26 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     logger.info(f"RESPONSE STATUS: {request.method} {request.url.path} -> {response.status_code}")
     return response
+
+
+@app.middleware("http")
+async def enforce_admin_access(request: Request, call_next):
+    """Admin team roles (api/services/admin_access.py): an admin whose role
+    doesn't allow this part of the admin panel gets a 403 before the route
+    runs. Defined before record_admin_actions, so that one sits outside it
+    and still stamps the refused attempt in Admin Activity."""
+    from api.services import admin_access
+    # 1. Only admin addresses are checked (everything else goes straight through).
+    if admin_access.is_admin_path(request.url.path) and request.method.upper() != "OPTIONS":
+        # 2. Ask, off the event loop (it reads the database).
+        reason = await asyncio.to_thread(
+            admin_access.check_request, request.headers.get("authorization"),
+            request.cookies.get("access_token_cookie"), request.method, request.url.path,
+        )
+        # 3. Not allowed: say why (the admin panel shows this, it doesn't log them out).
+        if reason:
+            return JSONResponse(status_code=403, content={"detail": reason})
+    return await call_next(request)
 
 
 # Admin activity stamps: who changed what from the admin end, and when
@@ -1997,6 +2018,8 @@ app.include_router(admin_payout_tracker_routes.router, prefix="/api")  # /api/co
 from api.routes.admin import account as admin_account_routes, activity as admin_activity_routes
 app.include_router(admin_account_routes.router, prefix="/api")  # /api/control/account (admin changes own password)
 app.include_router(admin_activity_routes.router, prefix="/api")  # /api/control/activity (who did what, and when)
+from api.routes.admin import team as admin_team_routes
+app.include_router(admin_team_routes.router, prefix="/api")  # /api/control/team (admin team, roles and access)
 from api.routes import public_checkup as public_checkup_routes
 app.include_router(public_checkup_routes.router)  # /api/public/checkup (ad checkup before signup, lavoo.io/checkup)
 app.include_router(signals.router, prefix="/api")

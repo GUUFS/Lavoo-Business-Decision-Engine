@@ -73,6 +73,13 @@ _RULES = [
     ("POST", r"/business/clarify/exam/run", "Ran the micromodel exam"),
     ("POST", r"/business/clarify/llm-answers-to-check/(?P<id>\d+)", "Checked LLM answer #{id}"),
     ("POST", r"/business/tools/discover", "Ran tool discovery"),
+    ("POST", r"/control/team/members", "Added a team member"),
+    ("PATCH", r"/control/team/members/(?P<id>\d+)", "Changed the title or role of team member #{id}"),
+    ("POST", r"/control/team/members/(?P<id>\d+)/reset-password", "Reset the password of team member #{id}"),
+    ("DELETE", r"/control/team/members/(?P<id>\d+)", "Removed team member #{id} from the admin team"),
+    ("POST", r"/control/team/roles", "Created an admin role"),
+    ("PATCH", r"/control/team/roles/(?P<id>\d+)", "Changed admin role #{id}"),
+    ("DELETE", r"/control/team/roles/(?P<id>\d+)", "Deleted admin role #{id}"),
 ]
 _COMPILED = [(m, re.compile(rf"^{p}/?$"), d) for m, p, d in _RULES]
 _VERBS = {"POST": "Did", "PUT": "Updated", "PATCH": "Updated", "DELETE": "Deleted"}
@@ -133,9 +140,12 @@ def record(authorization: str | None, cookie_token: str | None, method: str, pat
             return
         if not user or not getattr(user, "is_admin", False):
             return
-        # 2. Save the stamp.
+        # 2. Their admin role at this moment ("Owner", "Finance").
+        from api.services.admin_access import access_of
+        role = access_of(db, user)["role"]
+        # 3. Save the stamp (a 403 is a change their role didn't allow; it's kept as a failed attempt).
         db.add(AdminActivity(
-            admin_id=user.id, admin_name=user.name, admin_email=user.email,
+            admin_id=user.id, admin_name=user.name, admin_email=user.email, admin_role=role,
             method=method.upper(), path=path[:500], query=(query or "")[:500] or None,
             action=describe(method, path)[:300], status_code=status_code,
             succeeded=200 <= status_code < 400, ip_address=(ip or "")[:64] or None,

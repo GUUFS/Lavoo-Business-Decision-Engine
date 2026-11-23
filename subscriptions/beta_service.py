@@ -353,25 +353,34 @@ class BetaService:
     @staticmethod
     def initialize_grace_period(user: User, db: Session):
         """
-        Initialize grace period based on user type:
+        Initialize grace period (the free trial, subscriptions/free_trial.py) based on user type:
         - Beta users: GRACE_PERIOD_DAYS (default 3) from launch date
         - New users: GRACE_PERIOD_DAYS (default 3) from signup date
+        Either way, never less than GRACE_PERIOD_DAYS from signup: in beta mode
+        with no launch date set, or a launch date already passed, the trial
+        used to be missing or already over, so a brand-new account got 403
+        from the Decision Engine from its first minute.
         """
+        # 1. The settings, and the trial every new account is promised.
         is_beta = BetaService.is_beta_mode()
         launch_date = BetaService.get_launch_date()
         grace_days = BetaService.get_grace_period_days()
-        
+        now = datetime.now(timezone.utc)
+        from_signup = now + timedelta(days=grace_days)
+
         if is_beta:
-            # Beta user: Grace period starts at launch
+            # 2. Beta user: grace period starts at launch (LAUNCH_DATE is a UTC date).
             user.is_beta_user = True
-            user.beta_joined_at = datetime.now(timezone.utc)
-            if launch_date:
-                user.grace_period_ends_at = launch_date + timedelta(days=grace_days)
+            user.beta_joined_at = now
+            from_launch = launch_date.replace(tzinfo=timezone.utc) + timedelta(days=grace_days) if launch_date else None
+            # 3. Whichever ends later, so the trial is never missing or already over.
+            user.grace_period_ends_at = max(from_launch, from_signup) if from_launch else from_signup
         else:
-            # Post-launch user: Grace period starts now
+            # 4. Post-launch user: grace period starts now.
             user.is_beta_user = False
-            user.grace_period_ends_at = datetime.now(timezone.utc) + timedelta(days=grace_days)
-            
+            user.grace_period_ends_at = from_signup
+
+        # 5. Saved with the new account.
         db.add(user)
         db.flush()
 
