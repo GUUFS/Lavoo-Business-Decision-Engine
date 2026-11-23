@@ -844,49 +844,21 @@ def _get_author_context_and_memory(
     current_discussion_id: Optional[int] = None
 ) -> str:
     """
-    Extracts author profile data and recent Build Room discussions for in-memory context.
-    Provides real founder background instead of generic business assumptions.
+    Extracts author's recent Build Room posts for in-memory context across posts.
+    Intentionally excludes profile and business metadata so Voo answers questions naturally
+    like Grok on X, without assuming everything is about business or forcing SaaS tropes.
     """
     if not user:
         return "None"
 
     bits = []
 
-    # Identity
+    # Handle for attribution
     name = getattr(user, "name", None)
     username = getattr(user, "username", None)
-    if name and name.strip():
-        bits.append(f"Name: {name.strip()}")
-    if username and username.strip():
-        bits.append(f"Handle: @{username.strip().lstrip('@')}")
-
-    # Bio
-    bio = getattr(user, "bio", None)
-    if bio and bio.strip():
-        bio_clean = " ".join(bio.strip().split()[:40])
-        bits.append(f"Bio: {bio_clean}")
-
-    # Business profile
-    company = getattr(user, "company_name", None)
-    if company and company.strip():
-        bits.append(f"Business: {company.strip()}")
-
-    industry = getattr(user, "industry", None)
-    if industry and industry.strip():
-        bits.append(f"Industry: {industry.strip()}")
-
-    stage = getattr(user, "venture_stage", None)
-    if stage and stage.strip():
-        bits.append(f"Stage: {stage.strip()}")
-
-    location = getattr(user, "location", None)
-    if location and location.strip():
-        bits.append(f"Location: {location.strip()}")
-
-    current_goal = getattr(user, "current_goal", None)
-    if current_goal and current_goal.strip():
-        goal_clean = " ".join(current_goal.strip().split()[:30])
-        bits.append(f"Current goal: {goal_clean}")
+    handle = (username if username else (name if name else "builder")).strip().lstrip("@")
+    if handle:
+        bits.append(f"Author handle: @{handle}")
 
     # Build Room discussions history (recent public discussions, up to 3)
     try:
@@ -899,7 +871,7 @@ def _get_author_context_and_memory(
 
         recent_discussions = (
             q.order_by(CommunityDiscussion.id.desc())
-            .limit(4)
+            .limit(3)
             .all()
         )
 
@@ -909,14 +881,14 @@ def _get_author_context_and_memory(
             t = (past_d.title or "").strip()
             if t and t.lower() not in seen_titles:
                 seen_titles.add(t.lower())
-                c_snip = " ".join((past_d.content or "").strip().split()[:15])
+                c_snip = " ".join((past_d.content or "").strip().split()[:20])
                 if c_snip:
-                    snippets.append(f'"{t}" ({c_snip}...)')
+                    snippets.append(f'"{t}" (Content: {c_snip}...)')
                 else:
                     snippets.append(f'"{t}"')
 
         if snippets:
-            bits.append(f"Recent Build Room discussions: {'; '.join(snippets[:3])}")
+            bits.append(f"Recent posts by this author: {'; '.join(snippets)}")
     except Exception as e:
         logger.warning(f"[voo-memory] Could not fetch author past discussions: {e}")
 
@@ -1274,7 +1246,10 @@ async def _process_single_voo_reply(discussion_id: int, db: Session, voo_user: O
         fresh_author = db.query(User).filter_by(id=d.user_id).first()
         author_handle = (fresh_author.username if fresh_author and fresh_author.username else (fresh_author.name if fresh_author and fresh_author.name else "builder")).strip().lstrip("@")
 
-        full_reply_text = f"Hey @{author_handle}.\n\n{angle_body}\n\nTHE VOO TEST\n{test_line}"
+        if test_line:
+            full_reply_text = f"Hey @{author_handle}.\n\n{angle_body}\n\nTHE VOO TEST\n{test_line}"
+        else:
+            full_reply_text = f"Hey @{author_handle}.\n\n{angle_body}"
 
         voo_reply = DiscussionReply(
             discussion_id=d.id,
