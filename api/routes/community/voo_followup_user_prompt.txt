@@ -1,9 +1,5 @@
 A member has replied to your Angle in the Build Room. Write your follow-up.
 
-<member>
-What we know about them: {author_context}
-</member>
-
 <original_post>
 Post type: {post_type}
 Title: {question_title}
