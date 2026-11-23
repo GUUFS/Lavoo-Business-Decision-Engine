@@ -22,9 +22,12 @@ middleware). On top of that, to stop anyone giving themselves more power:
   - the last Owner can't be removed or demoted.
 Every change is stamped in Admin Activity (api/services/admin_activity.py).
 """
+import html
+import logging
+import os
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -37,6 +40,10 @@ from database.pg_connections import get_db
 from database.pg_models import AdminActivity, AdminRole, User
 
 router = APIRouter(prefix="/control/team", tags=["admin-team"])
+logger = logging.getLogger(__name__)
+
+# Where team members sign in (the admin panel). Set ADMIN_PANEL_URL to change it.
+ADMIN_PANEL_URL = os.getenv("ADMIN_PANEL_URL", "https://control.lavooai.com")
 
 
 class AddMember(BaseModel):
@@ -65,6 +72,49 @@ class RoleBody(BaseModel):
 def _temporary_password() -> str:
     """A random 12-character password to share once with a new team member."""
     return secrets.token_urlsafe(9)
+
+
+def send_team_email(email: str, name: str, role_name: str, title: str | None,
+                    temporary_password: str | None, invited_by: str, reset: bool = False) -> None:
+    """Email a team member that they were added to the admin team (or that
+    their password was reset): where to sign in, their role, and their
+    temporary password if they have one. Runs after the response; never raises."""
+    try:
+        from emailing.email_service import email_service
+        # 1. The words, for an invitation or a password reset.
+        role_text = f"{role_name} ({title})" if title else role_name
+        if reset:
+            subject = "Your Lavoo admin password was reset"
+            intro = f"{invited_by} gave you a new temporary password for the Lavoo admin panel."
+        else:
+            subject = f"You've been added to the Lavoo admin team as {role_name}"
+            intro = f"{invited_by} added you to the Lavoo admin team. Your role: {role_text}."
+        if temporary_password:
+            login = (f"Sign in with this email and the temporary password {temporary_password} , "
+                     "then change it with Change password at the bottom of the admin menu.")
+        else:
+            login = "Sign in with this email and your usual Lavoo password."
+        text = f"Hi {name},\n\n{intro}\n\nSign in at {ADMIN_PANEL_URL}\n{login}\n"
+        # 2. The same in HTML (every value escaped).
+        password_html = (f'<p>Temporary password: <strong style="font-family:monospace;font-size:16px">'
+                         f'{html.escape(temporary_password)}</strong><br>After you sign in, change it with Change password at the bottom of the admin menu.</p>'
+                         if temporary_password else "<p>Sign in with this email and your usual Lavoo password.</p>")
+        body_html = (
+            '<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#333;line-height:1.6">'
+            '<div style="background:#18181b;border-bottom:3px solid #e87a02;color:#fff;padding:24px;border-radius:10px 10px 0 0">'
+            f'<h2 style="margin:0">{html.escape(subject)}</h2></div>'
+            '<div style="background:#f9f9f9;padding:24px;border-radius:0 0 10px 10px">'
+            f'<p>Hi {html.escape(name)},</p><p>{html.escape(intro)}</p>'
+            f'<p>Email: <strong>{html.escape(email)}</strong></p>{password_html}'
+            f'<p><a href="{html.escape(ADMIN_PANEL_URL)}" style="display:inline-block;padding:12px 28px;background:#e87a02;'
+            'color:#fff;text-decoration:none;border-radius:5px">Open the admin panel</a></p>'
+            '<p style="font-size:12px;color:#666">If you weren\'t expecting this, tell the person who added you.</p>'
+            '</div></div>')
+        # 3. Send it.
+        email_service._send_email(to_email=email, to_name=name, subject=subject,
+                                  html_content=body_html, text_content=text)
+    except Exception as exc:
+        logger.error(f"[team] email to new team member not sent: {exc}")
 
 
 def _owner_role(db: Session) -> AdminRole:
@@ -175,10 +225,11 @@ def list_members(admin=Depends(admin_required), db: Session = Depends(get_db)):
 
 
 @router.post("/members")
-def add_member(body: AddMember, admin=Depends(admin_required), db: Session = Depends(get_db)):
+def add_member(body: AddMember, admin=Depends(admin_required), db: Session = Depends(get_db),
+               background_tasks: BackgroundTasks = None):
     """Add someone to the team. A new person gets an account and a temporary
-    password (shown once, to share with them privately); an existing Lavoo
-    account keeps its own password."""
+    password (shown once, and emailed to them); an existing Lavoo account
+    keeps its own password. Either way they get an email saying where to sign in."""
     # 1. The role, which the caller must be allowed to hand out.
     role = _role_or_404(db, body.role_id)
     _may_hand_out(db, admin, role)
@@ -203,8 +254,12 @@ def add_member(body: AddMember, admin=Depends(admin_required), db: Session = Dep
     user.admin_title = (body.title or "").strip() or None
     db.commit()
     db.refresh(user)
+    # 5. Email them where to sign in (after the response, so the page isn't kept waiting).
+    if background_tasks is not None:
+        background_tasks.add_task(send_team_email, user.email, user.name, role.name, user.admin_title,
+                                  temporary_password, admin.name or "An admin")
     return {"success": True, "data": _member_view(db, user, None), "temporary_password": temporary_password,
-            "message": f"{user.name} joined the team as {role.name}."}
+            "message": f"{user.name} joined the team as {role.name}. We emailed them how to sign in."}
 
 
 @router.patch("/members/{user_id}")
@@ -227,9 +282,10 @@ def change_member(user_id: int, body: ChangeMember, admin=Depends(admin_required
 
 
 @router.post("/members/{user_id}/reset-password")
-def reset_member_password(user_id: int, admin=Depends(admin_required), db: Session = Depends(get_db)):
-    """Give a team member a new temporary password (shown once). For yourself,
-    use Change password instead."""
+def reset_member_password(user_id: int, admin=Depends(admin_required), db: Session = Depends(get_db),
+                          background_tasks: BackgroundTasks = None):
+    """Give a team member a new temporary password (shown once, and emailed
+    to them). For yourself, use Change password instead."""
     target = _member_or_404(db, user_id)
     _may_change(db, admin, target)
     temporary_password = _temporary_password()
@@ -237,8 +293,13 @@ def reset_member_password(user_id: int, admin=Depends(admin_required), db: Sessi
     target.password = hashed
     target.confirm_password = hashed
     db.commit()
+    # Email it to them too (after the response).
+    if background_tasks is not None:
+        role = db.get(AdminRole, target.admin_role_id) if target.admin_role_id else None
+        background_tasks.add_task(send_team_email, target.email, target.name, role.name if role else OWNER_ROLE,
+                                  target.admin_title, temporary_password, admin.name or "An admin", True)
     return {"success": True, "temporary_password": temporary_password,
-            "message": f"New temporary password for {target.name}. Share it privately; they should change it after signing in."}
+            "message": f"New temporary password for {target.name}, also emailed to them. They should change it after signing in."}
 
 
 @router.delete("/members/{user_id}")

@@ -198,3 +198,39 @@ def test_me_reports_the_role_and_its_permissions(db):
     me = team.who_am_i(money, db)["data"]
     assert me["role"] == "Finance" and me["title"] == "CFO" and not me["is_owner"]
     assert "revenue.manage" in me["permissions"] and "security.view" not in me["permissions"]
+
+
+def test_a_new_member_is_emailed_where_to_sign_in(db, monkeypatch):
+    """Adding someone (or resetting their password) emails them, after the response."""
+    from fastapi import BackgroundTasks
+
+    from emailing.email_service import email_service
+    sent = []
+    monkeypatch.setattr(email_service, "_send_email", lambda **mail: sent.append(mail))
+    boss = _user(db, "boss8@team.test", is_admin=True)
+    # 1. Added: the email goes out once the response is sent.
+    tasks = BackgroundTasks()
+    added = team.add_member(team.AddMember(name="Dev Two", email="dev2@team.test", title="Frontend",
+                                           role_id=_role(db, "Developer").id), boss, db, tasks)
+    assert sent == []
+    for task in tasks.tasks:
+        task.func(*task.args, **task.kwargs)
+    assert sent[0]["to_email"] == "dev2@team.test" and "Developer" in sent[0]["subject"]
+    assert added["temporary_password"] in sent[0]["text_content"]
+    assert team.ADMIN_PANEL_URL in sent[0]["html_content"]
+    # 2. Password reset: the new temporary password is emailed too.
+    dev = db.query(User).filter(User.email == "dev2@team.test").one()
+    tasks = BackgroundTasks()
+    reset = team.reset_member_password(dev.id, boss, db, tasks)
+    for task in tasks.tasks:
+        task.func(*task.args, **task.kwargs)
+    assert "reset" in sent[1]["subject"] and reset["temporary_password"] in sent[1]["text_content"]
+
+
+def test_an_email_that_fails_never_breaks_adding_someone(monkeypatch):
+    from emailing.email_service import email_service
+
+    def broken(**mail):
+        raise RuntimeError("Resend down")
+    monkeypatch.setattr(email_service, "_send_email", broken)
+    team.send_team_email("x@team.test", "X", "Viewer", None, None, "Boss")
