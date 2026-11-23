@@ -258,7 +258,9 @@ def test_another_account_cannot_claim_it(db):
     assert refused.value.status_code == 404
 
 
-def test_unknown_or_unfinished_checkup_cannot_be_claimed(db):
+def test_unknown_or_unfinished_checkup_cannot_be_claimed(db, monkeypatch):
+    # Claim waits for a running check-up; here it gives up at once.
+    monkeypatch.setattr(guest_checkup, "CLAIM_WAIT_SECONDS", 0)
     user = make_user(db)
     with pytest.raises(HTTPException):
         guest_checkup.claim(db, "not-a-real-token-123", user)
