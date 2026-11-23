@@ -142,9 +142,9 @@ async def run_guest_checkup(body: GuestCheckupRequest, request: Request, backgro
     shown = {"teaser": False}
 
     async def preview(data: dict):
-        """The teaser, as soon as the problems, plan titles and roadmap are
-        ready: the visitor doesn't wait for the tools to be matched or the
-        analysis to be saved (claim() waits for that instead)."""
+        """The teaser, as soon as the problems and plan titles are ready: the
+        visitor doesn't wait for the roadmap, the tool matching or the save
+        (claim() waits for those instead)."""
         await queue.put(("result", {"token": token, "teaser": guest_checkup.teaser_from_data(data)}))
         shown["teaser"] = True
 

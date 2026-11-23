@@ -218,8 +218,8 @@ class AgenticAnalyzer:
             founder_context: extra notes for the LLM (see founder_context.py).
                 Not saved with the analysis.
             preview_callback: Optional async callable(data: dict), called once
-                as soon as the problems, action plan titles and roadmap are
-                ready, before the tools are matched and the analysis is saved.
+                as soon as the problems and action plan titles are ready,
+                before the roadmap, the tool matching and the save.
                 The ad check-up uses it to show its teaser early. `data` has
                 the same keys the result page reads (primary_bottleneck,
                 secondary_constraints, action_plans, strategic_priority,
@@ -285,9 +285,27 @@ class AgenticAnalyzer:
             )
             await _emit(65, "Action plans ready")
 
-            # 4. Two lines of work at the same time:
-            #    a) the roadmap (Stage 4), which only reads the plans' titles
-            #       and steps, then the early preview;
+            # 4. The early preview, straight after the plans: everything the
+            #    ad check-up's teaser shows (the problems and the plan titles)
+            #    is ready now. Its Missions rows are blurred placeholders, so
+            #    it doesn't wait for the roadmap either (the Missions count
+            #    falls back to the number of plans).
+            if preview_callback:
+                try:
+                    await preview_callback({
+                        "primary_bottleneck": primary_result.get("primary_bottleneck") or {},
+                        "secondary_constraints": secondary_result.get("secondary_constraints") or [],
+                        "action_plans": action_plans_result.get("action_plans") or [],
+                        "strategic_priority": primary_result.get("strategic_priority"),
+                        "what_to_stop": primary_result.get("what_to_stop"),
+                        "execution_roadmap": [],
+                    })
+                except Exception as preview_error:
+                    # The preview is a nice-to-have: the full result still follows.
+                    logger.warning(f"Preview callback failed (full result still follows): {preview_error}")
+
+            # 5. Two lines of work at the same time:
+            #    a) the roadmap (Stage 4), which only reads the plans' titles and steps;
             #    b) matching tools to the plans' steps, then the automation
             #       stacks (Stage 3B). These two stay one after the other: both
             #       use the database session, which can't be shared at once.
@@ -295,24 +313,6 @@ class AgenticAnalyzer:
             #    changes a title or step, so the roadmap is the same as before.
             logger.info("Stages 3 tools + 3B + 4: matching tools, stacks and roadmap in parallel...")
             await _emit(70, "Selecting tool stacks and generating roadmap...")
-
-            async def _roadmap_then_preview():
-                """a) The roadmap, then the early preview (if asked for)."""
-                roadmap = await self._stage4_roadmap_and_motivation(stage_query, action_plans_result)
-                if preview_callback:
-                    try:
-                        await preview_callback({
-                            "primary_bottleneck": primary_result.get("primary_bottleneck") or {},
-                            "secondary_constraints": secondary_result.get("secondary_constraints") or [],
-                            "action_plans": action_plans_result.get("action_plans") or [],
-                            "strategic_priority": primary_result.get("strategic_priority"),
-                            "what_to_stop": primary_result.get("what_to_stop"),
-                            "execution_roadmap": roadmap.get("execution_roadmap") or [],
-                        })
-                    except Exception as preview_error:
-                        # The preview is a nice-to-have: the full result still follows.
-                        logger.warning(f"Preview callback failed (full result still follows): {preview_error}")
-                return roadmap
 
             async def _tools_then_stacks():
                 """b) Tools for each step, then the automation stacks."""
@@ -332,7 +332,7 @@ class AgenticAnalyzer:
                 )
 
             roadmap_result, automation_stack_result = await asyncio.gather(
-                _roadmap_then_preview(), _tools_then_stacks(),
+                self._stage4_roadmap_and_motivation(stage_query, action_plans_result), _tools_then_stacks(),
             )
             await _emit(92, "Roadmap complete")
 
