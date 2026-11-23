@@ -4,8 +4,8 @@ check-up in api/routes/public_checkup.py and decision_engine/guest_checkup.py):
 
   - the safety check and Stage 1 run at the same time, and an unsafe query
     stops Stage 1;
-  - the roadmap runs while the tools are matched, and the early preview
-    arrives before the tool matching has finished;
+  - the early preview arrives straight after the action plans, before the
+    roadmap and the tool matching (which run at the same time);
   - the ad page gets its teaser from that preview, once;
   - signing up while the check-up is still finishing waits for it.
 
@@ -68,6 +68,8 @@ def _analyzer(monkeypatch, safe=True):
         return {"recommended_tool_stacks": [], "single_tool_recommendation": None}
 
     async def roadmap(query, plans):
+        await asyncio.sleep(0.01)
+        log.append("roadmap done")
         return json.loads(json.dumps(ROADMAP))
 
     async def save(**kwargs):
@@ -87,13 +89,13 @@ def _analyzer(monkeypatch, safe=True):
     return analyzer, log, tools_may_finish
 
 
-def test_safety_and_stage1_run_together_and_the_preview_comes_before_the_tools(monkeypatch):
+def test_safety_and_stage1_run_together_and_the_preview_comes_straight_after_the_plans(monkeypatch):
     analyzer, log, tools_may_finish = _analyzer(monkeypatch)
     previews = []
 
     async def preview(data):
-        # The tools are still being matched when the preview arrives.
-        assert "tools done" not in log and "saved" not in log
+        # Neither the roadmap nor the tools are done when the preview arrives.
+        assert "roadmap done" not in log and "tools done" not in log and "saved" not in log
         previews.append(data)
         tools_may_finish.set()
 
@@ -103,8 +105,9 @@ def test_safety_and_stage1_run_together_and_the_preview_comes_before_the_tools(m
     # 2. One preview, with what the teaser needs; then the tools; then the save.
     assert len(previews) == 1
     assert previews[0]["primary_bottleneck"]["title"] == "Slow follow-up"
-    assert previews[0]["execution_roadmap"] == ROADMAP["execution_roadmap"]
-    assert log[-2:] == ["tools done", "saved"]
+    assert previews[0]["action_plans"][0]["title"] == "Reply within an hour"
+    assert "roadmap done" in log
+    assert log[-1] == "saved" and {"tools done", "roadmap done"} <= set(log)
     assert result["data"]["analysis_id"] == 42
 
 
@@ -112,7 +115,7 @@ def test_without_a_preview_the_analysis_is_unchanged(monkeypatch):
     analyzer, log, tools_may_finish = _analyzer(monkeypatch)
     tools_may_finish.set()
     asyncio.run(analyzer.analyze("My leads never reply", user_id=None))
-    assert log[-2:] == ["tools done", "saved"]
+    assert log[-1] == "saved" and {"tools done", "roadmap done"} <= set(log)
 
 
 def test_an_unsafe_query_stops_stage1(monkeypatch):
@@ -199,3 +202,10 @@ def test_signing_up_while_it_finishes_waits_for_it(db, monkeypatch):
     monkeypatch.setattr(guest_checkup.time, "sleep", finish_while_waiting)
     assert guest_checkup.claim(db, token, user) == analysis.id
     assert len(waits) == 1
+
+
+def test_the_early_teaser_without_a_roadmap_still_shows_missions():
+    """The preview has no roadmap yet: one blurred Mission row per plan."""
+    teaser = guest_checkup.teaser_from_data({**PRIMARY, **SECONDARY, **PLANS, "execution_roadmap": []})
+    assert teaser["locked"]["missions"] == 1
+    assert teaser["locked"]["main_priority"] and teaser["locked"]["stop_doing"]
