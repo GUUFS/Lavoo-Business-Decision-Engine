@@ -206,7 +206,8 @@ class AgenticAnalyzer:
     # MAIN PIPELINE
     # =========================================================================
 
-    async def analyze(self, user_query: str, user_id: int, progress_callback=None, founder_context: str = "") -> Dict[str, Any]:
+    async def analyze(self, user_query: str, user_id: int, progress_callback=None, founder_context: str = "",
+                      preview_callback=None) -> Dict[str, Any]:
         """
         Main analysis pipeline — orchestrates all agents.
 
@@ -216,6 +217,13 @@ class AgenticAnalyzer:
             progress_callback: Optional async callable(pct: int, msg: str) for SSE progress events
             founder_context: extra notes for the LLM (see founder_context.py).
                 Not saved with the analysis.
+            preview_callback: Optional async callable(data: dict), called once
+                as soon as the problems, action plan titles and roadmap are
+                ready, before the tools are matched and the analysis is saved.
+                The ad check-up uses it to show its teaser early. `data` has
+                the same keys the result page reads (primary_bottleneck,
+                secondary_constraints, action_plans, strategic_priority,
+                what_to_stop, execution_roadmap).
 
         Returns:
             Complete analysis dict matching the frontend result page format
@@ -233,22 +241,32 @@ class AgenticAnalyzer:
         try:
             await _emit(5, "Starting analysis...")
 
-            # Pre-flight: block harmful or malicious queries before touching LLM stages
-            logger.info("Pre-flight: checking query safety...")
-            await _emit(8, "Reviewing your query...")
-            safety_result = await self._check_query_safety(user_query)
-            if not safety_result["is_safe"]:
-                raise ValueError(
-                    f"UNSAFE_QUERY::{safety_result['reason']}::{safety_result['suggestions']}"
-                )
-
             # The LLM stages get the prompt plus the extra notes. The safety
             # check and the saved analysis use the user's prompt only.
             stage_query = f"{user_query}\n\n{founder_context}" if founder_context else user_query
 
-            logger.info("Stage 1: Identifying primary bottleneck...")
+            # Pre-flight + Stage 1 at the same time: the safety check and the
+            # bottleneck don't depend on each other, so the user doesn't wait
+            # for one and then the other. An unsafe query stops Stage 1 and
+            # nothing from it is used or saved.
+            logger.info("Pre-flight + Stage 1: checking query safety and identifying primary bottleneck...")
+            await _emit(8, "Reviewing your query...")
+            stage1_task = asyncio.create_task(self._stage1_primary_bottleneck(stage_query))
+            # If Stage 1 fails after being stopped, its error is read here so
+            # Python doesn't warn "Task exception was never retrieved".
+            stage1_task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            try:
+                safety_result = await self._check_query_safety(user_query)
+            except BaseException:
+                stage1_task.cancel()
+                raise
+            if not safety_result["is_safe"]:
+                stage1_task.cancel()
+                raise ValueError(
+                    f"UNSAFE_QUERY::{safety_result['reason']}::{safety_result['suggestions']}"
+                )
             await _emit(10, "Identifying your primary bottleneck...")
-            primary_result = await self._stage1_primary_bottleneck(stage_query)
+            primary_result = await stage1_task
             recommendation_mode = primary_result.get("recommendation_mode", "automation_stack")
             await _emit(25, f"Found: {primary_result.get('primary_bottleneck', {}).get('title', 'bottleneck identified')}")
 
@@ -261,25 +279,60 @@ class AgenticAnalyzer:
 
             logger.info("Stage 3: Generating ranked action plans...")
             await _emit(50, "Building ranked action plans...")
+            # 3. The plans first, without tools (one LLM call).
             action_plans_result = await self._stage3_action_plans(
-                stage_query, primary_result, secondary_result
+                stage_query, primary_result, secondary_result, assign_tools=False
             )
             await _emit(65, "Action plans ready")
 
-            # Stages 3B and 4 are independent — run in parallel to cut latency
-            logger.info("Stages 3B + 4: running automation stacks and roadmap in parallel...")
+            # 4. Two lines of work at the same time:
+            #    a) the roadmap (Stage 4), which only reads the plans' titles
+            #       and steps, then the early preview;
+            #    b) matching tools to the plans' steps, then the automation
+            #       stacks (Stage 3B). These two stay one after the other: both
+            #       use the database session, which can't be shared at once.
+            #    Matching tools only adds step_tools to each plan and never
+            #    changes a title or step, so the roadmap is the same as before.
+            logger.info("Stages 3 tools + 3B + 4: matching tools, stacks and roadmap in parallel...")
             await _emit(70, "Selecting tool stacks and generating roadmap...")
-            automation_stack_result, roadmap_result = await asyncio.gather(
+
+            async def _roadmap_then_preview():
+                """a) The roadmap, then the early preview (if asked for)."""
+                roadmap = await self._stage4_roadmap_and_motivation(stage_query, action_plans_result)
+                if preview_callback:
+                    try:
+                        await preview_callback({
+                            "primary_bottleneck": primary_result.get("primary_bottleneck") or {},
+                            "secondary_constraints": secondary_result.get("secondary_constraints") or [],
+                            "action_plans": action_plans_result.get("action_plans") or [],
+                            "strategic_priority": primary_result.get("strategic_priority"),
+                            "what_to_stop": primary_result.get("what_to_stop"),
+                            "execution_roadmap": roadmap.get("execution_roadmap") or [],
+                        })
+                    except Exception as preview_error:
+                        # The preview is a nice-to-have: the full result still follows.
+                        logger.warning(f"Preview callback failed (full result still follows): {preview_error}")
+                return roadmap
+
+            async def _tools_then_stacks():
+                """b) Tools for each step, then the automation stacks."""
+                action_plans_result["action_plans"] = await self._assign_tools_to_steps(
+                    action_plans=action_plans_result["action_plans"],
+                    user_query=stage_query,
+                )
+                logger.info(f"Generated {len(action_plans_result['action_plans'])} action plans with per-step tool assignment")
                 # Tool search uses the user's own words only, so the extra
                 # notes don't change which tools are found.
-                self._stage3_automation_stacks(
+                return await self._stage3_automation_stacks(
                     user_query=user_query,
                     action_plans_result=action_plans_result,
                     primary_result=primary_result,
                     secondary_result=secondary_result,
                     recommendation_mode=recommendation_mode,
-                ),
-                self._stage4_roadmap_and_motivation(stage_query, action_plans_result),
+                )
+
+            roadmap_result, automation_stack_result = await asyncio.gather(
+                _roadmap_then_preview(), _tools_then_stacks(),
             )
             await _emit(92, "Roadmap complete")
 
@@ -1617,9 +1670,14 @@ step_index is 1-based, counting within THIS plan's own step list. Omit any step 
         user_query: str,
         primary_result: Dict,
         secondary_result: Dict,
+        assign_tools: bool = True,
     ) -> Dict[str, Any]:
         """
         Generate ranked action plans with AI tools matched per-step via semantic search.
+
+        assign_tools=False returns the plans straight after the LLM call, with
+        no tools yet: analyze() then matches the tools itself, at the same time
+        as the roadmap, so the user isn't kept waiting for one before the other.
 
         Workflow:
         1. LLM generates action plans and flags which plans need an AI tool
@@ -1743,6 +1801,10 @@ OUTPUT FORMAT (JSON only, no markdown):
 
             result = _safe_json_loads(result_text)
             action_plans = result["action_plans"]
+
+            # The caller matches the tools itself (see assign_tools above).
+            if not assign_tools:
+                return result
 
             # Global assignment: one LLM pass sees all plans + all candidates
             # simultaneously and assigns each tool to exactly one STEP (not

@@ -139,17 +139,28 @@ async def run_guest_checkup(body: GuestCheckupRequest, request: Request, backgro
         """Pass the analyzer's progress to the page (if it is still there)."""
         await queue.put(("progress", {"pct": pct, "msg": msg}))
 
+    shown = {"teaser": False}
+
+    async def preview(data: dict):
+        """The teaser, as soon as the problems, plan titles and roadmap are
+        ready: the visitor doesn't wait for the tools to be matched or the
+        analysis to be saved (claim() waits for that instead)."""
+        await queue.put(("result", {"token": token, "teaser": guest_checkup.teaser_from_data(data)}))
+        shown["teaser"] = True
+
     async def run():
         """3. The normal analysis, saved with no owner, in its own session."""
         task_db = _task_session()
         try:
             result = await create_analyzer(task_db).analyze(user_query=goal, user_id=None,
-                                                            progress_callback=progress)
+                                                            progress_callback=progress,
+                                                            preview_callback=preview)
             analysis_id = result["data"].get("analysis_id")
             guest_checkup.finish(task_db, checkup_id, analysis_id=analysis_id)
-            # 3a. Only the teaser goes back to the page.
-            analysis = task_db.get(BusinessAnalysis, analysis_id)
-            await queue.put(("result", {"token": token, "teaser": guest_checkup.teaser(analysis)}))
+            # 3a. Only the teaser goes back to the page (unless the early one already did).
+            if not shown["teaser"]:
+                analysis = task_db.get(BusinessAnalysis, analysis_id)
+                await queue.put(("result", {"token": token, "teaser": guest_checkup.teaser(analysis)}))
             # 3b. The same follow-up work as a normal check-up (better tool
             #     stacks, tool discovery), started separately so the page isn't kept waiting.
             stacks = result["data"].get("recommended_tool_stacks") or []
@@ -163,7 +174,11 @@ async def run_guest_checkup(body: GuestCheckupRequest, request: Request, backgro
             logger.error(f"[guest-checkup] failed: {exc}", exc_info=True)
             guest_checkup.finish(task_db, checkup_id, error=str(exc))
             text = str(exc)
-            if text.startswith("UNSAFE_QUERY::"):
+            if shown["teaser"]:
+                # The page already has its teaser and has stopped listening;
+                # signing up will show "can't be found, run a new one".
+                pass
+            elif text.startswith("UNSAFE_QUERY::"):
                 parts = text.split("::", 2)
                 await queue.put(("unsafe", {"reason": parts[1] if len(parts) > 1 else "This can't be processed."}))
             else:

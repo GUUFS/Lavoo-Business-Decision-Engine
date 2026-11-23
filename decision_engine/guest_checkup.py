@@ -32,6 +32,7 @@ import hashlib
 import logging
 import os
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
@@ -45,6 +46,9 @@ GUEST_CHECKUPS_PER_VISITOR = int(os.getenv("GUEST_CHECKUPS_PER_VISITOR", "2"))
 GUEST_CHECKUPS_PER_IP = int(os.getenv("GUEST_CHECKUPS_PER_IP", "10"))
 GUEST_CHECKUPS_PER_DAY = int(os.getenv("GUEST_CHECKUPS_PER_DAY", "300"))
 KEEP_UNCLAIMED_DAYS = 7
+# How long claim() waits for a check-up that is still finishing (its teaser
+# shows before the tools are matched and it is saved).
+CLAIM_WAIT_SECONDS = 120
 MIN_GOAL_CHARS, MAX_GOAL_CHARS = 10, 2000
 # Checkups that use up a free slot (a failed one is given back).
 _COUNTED = ("started", "completed", "claimed")
@@ -230,7 +234,18 @@ def teaser(analysis: BusinessAnalysis) -> dict:
     from api.routes.decision_engine.analyzer import format_analysis_for_frontend
 
     # 1. The analysis as the result page gets it (JSON text unpacked, dashes cleaned).
-    data = format_analysis_for_frontend(analysis)
+    return teaser_from_data(format_analysis_for_frontend(analysis))
+
+
+def teaser_from_data(data: dict) -> dict:
+    """The teaser (see teaser()) from the analysis's fields, before or after
+    it is saved. The analyzer's early preview comes straight here, so the
+    visitor sees it while the tools are still being matched."""
+    from decision_engine.text_cleanup import strip_dashes_deep
+
+    # 1. Dashes cleaned, as on the result page (a no-op for saved analyses,
+    #    which format_analysis_for_frontend has already cleaned).
+    data = strip_dashes_deep(dict(data or {}))
     bottleneck = data.get("primary_bottleneck") or {}
     if isinstance(bottleneck, str):
         bottleneck = {"title": bottleneck}
@@ -271,10 +286,29 @@ def find(db: Session, token: str) -> GuestCheckup | None:
     return db.query(GuestCheckup).filter(GuestCheckup.token == token).first() if token else None
 
 
+def wait_until_finished(db: Session, token: str, timeout: float | None = None,
+                        interval: float = 1.0) -> GuestCheckup | None:
+    """The guest checkup for a token, waiting (up to `timeout` seconds,
+    CLAIM_WAIT_SECONDS by default) while it is still running. Returns the row
+    however it ended, or None."""
+    deadline = time.monotonic() + (CLAIM_WAIT_SECONDS if timeout is None else timeout)
+    while True:
+        # 1. Read it fresh (another task is saving it).
+        db.expire_all()
+        row = find(db, token)
+        # 2. Unknown, or no longer running: done waiting.
+        if not row or row.status != "started" or time.monotonic() >= deadline:
+            return row
+        # 3. Still running: check again shortly.
+        time.sleep(interval)
+
+
 def claim(db: Session, token: str, user: User) -> int:
     """Make the logged-in user the owner of their ad checkup. Returns the
     analysis id. Safe to call twice (the second time just returns the id)."""
-    row = find(db, token)
+    # 0. The visitor sees the teaser before the analysis is saved, so a quick
+    #    signup can get here while it is still finishing: wait for it.
+    row = wait_until_finished(db, token)
     # 1. Unknown, not finished, or deleted.
     if not row or not row.analysis_id or row.status not in ("completed", "claimed"):
         raise HTTPException(status_code=404, detail="This check-up can't be found any more. Run a new one.")
