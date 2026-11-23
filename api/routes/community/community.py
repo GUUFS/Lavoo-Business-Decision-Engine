@@ -756,13 +756,10 @@ def _generate_voo_angle_reply(
         return None, None
 
     user_prompt = user_template.format(
-        author_handle=author_handle or "@builder",
-        author_role=author_role or "member",
-        author_context=member_details or "None",
         post_type=post_type or "Question",
-        post_topic=post_topic or "General",
-        post_title=question_title or "",
-        post_content=question_content or "",
+        question_title=question_title or "",
+        question_content=question_content or "",
+        member_details=member_details or "None",
         thread_replies=thread_replies or "None",
         community_context=community_context or "None",
         recent_openings=recent_openings or "None",
@@ -838,59 +835,29 @@ def _generate_voo_angle_reply(
     return None, None
 
 
-def _get_author_context_and_memory(
-    db: Session,
-    user: Optional[User],
-    current_discussion_id: Optional[int] = None
-) -> str:
+def _get_member_details(user: Optional[User]) -> str:
     """
-    Extracts author's recent Build Room posts for in-memory context across posts.
-    Intentionally excludes profile and business metadata so Voo answers questions naturally
-    like Grok on X, without assuming everything is about business or forcing SaaS tropes.
+    Extracts public profile information according to Section 3 of Code Spec:
+    business type, industry, stage, location.
+    Returns 'None' if empty or if user is a Lavoo staff account.
     """
     if not user:
         return "None"
 
+    is_staff = bool(getattr(user, "is_admin", False) or getattr(user, "is_staff", False))
+    if is_staff:
+        return "None"
+
     bits = []
-
-    # Handle for attribution
-    name = getattr(user, "name", None)
-    username = getattr(user, "username", None)
-    handle = (username if username else (name if name else "builder")).strip().lstrip("@")
-    if handle:
-        bits.append(f"Author handle: @{handle}")
-
-    # Build Room discussions history (recent public discussions, up to 3)
-    try:
-        q = db.query(CommunityDiscussion).filter(
-            CommunityDiscussion.user_id == user.id,
-            CommunityDiscussion.visibility == "public"
-        )
-        if current_discussion_id:
-            q = q.filter(CommunityDiscussion.id != current_discussion_id)
-
-        recent_discussions = (
-            q.order_by(CommunityDiscussion.id.desc())
-            .limit(3)
-            .all()
-        )
-
-        seen_titles = set()
-        snippets = []
-        for past_d in recent_discussions:
-            t = (past_d.title or "").strip()
-            if t and t.lower() not in seen_titles:
-                seen_titles.add(t.lower())
-                c_snip = " ".join((past_d.content or "").strip().split()[:20])
-                if c_snip:
-                    snippets.append(f'"{t}" (Content: {c_snip}...)')
-                else:
-                    snippets.append(f'"{t}"')
-
-        if snippets:
-            bits.append(f"Recent posts by this author: {'; '.join(snippets)}")
-    except Exception as e:
-        logger.warning(f"[voo-memory] Could not fetch author past discussions: {e}")
+    company = getattr(user, "company_name", None)
+    if company and company.strip().lower() not in ("lavoo", "lavoo creators", "lavoo team"):
+        bits.append(f"Business: {company.strip()}")
+    if getattr(user, "industry", None):
+        bits.append(f"Industry: {user.industry.strip()}")
+    if getattr(user, "venture_stage", None):
+        bits.append(f"Stage: {user.venture_stage.strip()}")
+    if getattr(user, "location", None):
+        bits.append(f"Country/Location: {user.location.strip()}")
 
     return " | ".join(bits) if bits else "None"
 
@@ -905,8 +872,7 @@ def _generate_voo_followup_reply(
     voo_test: str,
     conversation: str,
     latest_reply_from: str,
-    latest_reply_text: str,
-    author_context: str = "None"
+    latest_reply_text: str
 ) -> Tuple[Optional[dict], Optional[str]]:
     """
     Executes Voo's Follow-up pipeline (v1.0) with prompt caching, glossary injection,
@@ -926,7 +892,6 @@ def _generate_voo_followup_reply(
         return None, None
 
     user_prompt = user_template.format(
-        author_context=author_context or "None",
         post_type=post_type or "Question",
         question_title=question_title or "",
         question_content=question_content or "",
@@ -1157,7 +1122,7 @@ async def _process_single_voo_reply(discussion_id: int, db: Session, voo_user: O
             return False
 
         # Section 3: Member details (Prioritize author's real Build Room journey and posts)
-        member_details = _get_author_context_and_memory(db=db, user=author_user, current_discussion_id=d.id)
+        member_details = _get_member_details(author_user)
 
         # Post type: Only staff accounts can create Platform Polls
         if d.post_type == "poll" or d.poll_data:
@@ -1578,16 +1543,6 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
         content_words = (d.content or "").strip().split()
         trimmed_content = " ".join(content_words[:1500])
 
-        replier_user = db.query(User).filter_by(id=replier_user_id).first()
-        author_user = db.query(User).filter_by(id=d.user_id).first() if d.user_id != replier_user_id else replier_user
-
-        if replier_user_id == d.user_id:
-            author_context_str = _get_author_context_and_memory(db=db, user=replier_user, current_discussion_id=discussion_id)
-        else:
-            replier_context = _get_author_context_and_memory(db=db, user=replier_user, current_discussion_id=discussion_id)
-            original_author_context = _get_author_context_and_memory(db=db, user=author_user, current_discussion_id=discussion_id)
-            author_context_str = f"Replier: {replier_context} | Original Author: {original_author_context}"
-
         followup_data, used_model = _generate_voo_followup_reply(
             db=db,
             post_id=discussion_id,
@@ -1599,7 +1554,6 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
             conversation=conversation_str,
             latest_reply_from=latest_reply_from,
             latest_reply_text=latest_reply_trimmed,
-            author_context=author_context_str,
         )
 
         if not followup_data or not followup_data.get("respond"):
