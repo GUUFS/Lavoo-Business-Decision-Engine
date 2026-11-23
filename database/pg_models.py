@@ -82,6 +82,13 @@ class User(Base):
     # its own flag rather than a third value of that single-select column.
     is_staff = Column(Boolean, default=False)
 
+    # Admin team (api/services/admin_access.py): which admin role this
+    # admin has (what they may see and do in the admin panel), and their job
+    # title ("Backend Developer", "CFO"). An admin with no role is an Owner
+    # (full access), so the original admin keeps working as before.
+    admin_role_id = Column(Integer, ForeignKey("admin_roles.id", ondelete="RESTRICT"), nullable=True, index=True)
+    admin_title = Column(String(120), nullable=True)
+
     # Community role — distinct from is_admin (platform access vs. community standing).
     # Valid values: UserRole.NORMAL ("normal_user"), UserRole.MODERATOR ("moderator").
     role = Column(String(20), nullable=False, server_default=UserRole.NORMAL.value, default=UserRole.NORMAL.value)
@@ -644,6 +651,10 @@ class AuthResponse(BaseModel):
     card_brand: str | None = None
     card_exp_month: int | None = None
     card_exp_year: int | None = None
+    # May they use the Decision Engine right now (api/routes/dependencies.py
+    # has_decision_engine_access), and when that ends if it's only the free trial.
+    decision_engine_access: bool | None = None
+    decision_engine_access_ends_at: str | None = None
 
 
 # Paypal payment gateway
@@ -1169,6 +1180,24 @@ class CommissionPayoutAttempt(Base):
     last_tried_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class AdminRole(Base):
+    """A job role in the admin team (api/services/admin_access.py): which
+    admin areas its members may VIEW and which they may MANAGE (change).
+
+    `permissions` is a list like ["revenue.view", "users.manage"]; manage
+    includes view. The Owner role is a system role: it always has full
+    access and can't be edited or deleted."""
+    __tablename__ = "admin_roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(80), nullable=False, unique=True)
+    description = Column(String(300), nullable=True)
+    permissions = Column(JSON, nullable=False, default=list)
+    is_system = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AdminActivity(Base):
     """A stamp for every change an admin made from the admin end: who, what,
     when, and whether it worked (api/services/admin_activity.py). Request
@@ -1180,6 +1209,8 @@ class AdminActivity(Base):
     # Name and email at the time, kept even if the admin account changes later.
     admin_name = Column(String(255), nullable=True)
     admin_email = Column(String(255), nullable=True)
+    # Their admin role at the time ("Owner", "Finance"), so the log shows who acted in what capacity.
+    admin_role = Column(String(80), nullable=True)
     method = Column(String(10), nullable=False)
     path = Column(String(500), nullable=False)
     query = Column(String(500), nullable=True)
