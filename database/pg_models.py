@@ -131,6 +131,13 @@ class User(Base):
     # Flutterwave card token — captured from data.card.token in the verify
     # response so the card can be charged off-session for renewals.
     flutterwave_card_token = Column(String(500), nullable=True)
+    # The customer ticked "Save my card and renew automatically" on their
+    # latest payment (subscriptions/card_consent.py). Off = no card is kept
+    # and nothing is ever charged without them.
+    auto_renew = Column(Boolean, nullable=False, default=False, server_default="false")
+    # When their Stripe subscriptions were last set not to renew by themselves
+    # (card_consent.sweep_unconsented); empty = still to check.
+    renewals_stopped_at = Column(DateTime(timezone=True), nullable=True)
     # Founding members: everyone who paid a founding price (any payment
     # before SystemSettings.founding_monthly_ends_at). founding_number is
     # their place in line (1 = first). See subscriptions/founding.py.
@@ -502,7 +509,8 @@ class SaveCardRequest(BaseModel):
     currency: str           # required — USD | GBP | NGN
     plan_type: str          # required — monthly | quarterly | yearly
     plan_tier: str = "pro"  # pro | premium
-    save_card: bool = True  # False = charge this period only, never auto-renew
+    # Off unless the customer ticked the box: charge this period only, never auto-renew.
+    save_card: bool = False
 
 
 class UserResponse(BaseModel):
@@ -757,7 +765,8 @@ class CreateSubscriptionRequest(BaseModel):
     plan_tier: str = "pro"  # pro | premium
     currency: Optional[str] = "USD"
     billing_details: Optional[Dict] = None
-    save_card: bool = True  # False = charge this period only, never auto-renew
+    # Off unless the customer ticked the box: charge this period only, never auto-renew.
+    save_card: bool = False
 
 
 class ConfirmSubscriptionRequest(BaseModel):

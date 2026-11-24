@@ -49,6 +49,11 @@ SPLIT_META_KEY = "lavoo_split_subaccount_id"
 # customer's card/account was actually debited for.
 BASE_AMOUNT_META_KEY = "lavoo_base_amount"
 
+# Meta key carrying the customer's "Save my card and renew automatically"
+# choice ("true" only when ticked). Verification keeps the card token only
+# when it is "true" (subscriptions/card_consent.py).
+SAVE_CARD_META_KEY = "lavoo_save_card"
+
 
 # Nigerian VAT on Flutterwave's processing fee (FIRS-mandated, applied by
 # Flutterwave to its own fee, not to the transaction amount). Confirmed

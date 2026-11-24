@@ -395,6 +395,10 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
             if not user or not getattr(user, "flutterwave_card_token", None):
                 logger.info("[flw-renewal] no token for user %s — skipped", user_id)
                 return False
+            # Never without their say-so (subscriptions/card_consent.py).
+            if not getattr(user, "auto_renew", False):
+                logger.info("[flw-renewal] user %s didn't agree to automatic renewal — not charged", user_id)
+                return False
 
             secret_key = os.getenv("NEXT_PUBLIC_FLUTTERWAVE_SECRET_KEY", "")
             if not secret_key:
@@ -408,11 +412,14 @@ def _attempt_flutterwave_renewal(user_id: int, plan: str, amount: float, currenc
             if plan_price is not None:
                 amount = float(plan_price)
             else:
+                # Never charge an old amount (that is how a card got charged a
+                # price that no longer exists). No current price = no charge;
+                # the plan ends and the customer renews by hand.
                 logger.error(
-                    "[flw-renewal] no %s price set for %s/%s/%s; charging last amount %s (user %s)",
-                    price_type, plan_tier, plan, currency, amount, user_id,
+                    "[flw-renewal] no %s price set for %s/%s/%s; NOT charging user %s (last amount was %s)",
+                    price_type, plan_tier, plan, currency, user_id, amount,
                 )
-                price_type = None
+                return False
 
             tx_ref = f"LAVOO-RENEW-{plan.upper()}-{int(datetime.now(timezone.utc).timestamp())}-{secrets.token_hex(3).upper()}"
             parts = (user.name or "Customer Name").split()
@@ -548,6 +555,10 @@ def _attempt_stripe_renewal(user_id: int, plan_type: str, plan_tier: str = "pro"
             user = db.query(User).filter(User.id == user_id).first()
             if not user or not user.stripe_customer_id or not user.stripe_payment_method_id:
                 return False
+            # Never without their say-so (subscriptions/card_consent.py).
+            if not getattr(user, "auto_renew", False):
+                logger.info("[renewal] user %s didn't agree to automatic renewal — not charged", user_id)
+                return False
 
             from subscriptions.stripe import get_stripe_price_id, get_amount_from_stripe_price, _create_active_subscription_record
             # Renew on the same plan (Pro or Premium) AND currency they were on.
@@ -616,6 +627,18 @@ async def run_subscription_expiry_job():
             from database.pg_models import User, Subscriptions
             from datetime import timezone as _tz
             from api.services.notification_service import NotificationService
+            # First: anyone who didn't agree to automatic renewal has their
+            # saved card forgotten and their Stripe subscriptions set not to
+            # renew by themselves (subscriptions/card_consent.py).
+            consent_db = SessionLocal()
+            try:
+                from subscriptions.card_consent import sweep_unconsented
+                sweep_unconsented(consent_db)
+            except Exception as exc:
+                logger.error("[subscription-expiry-job] card consent sweep error: %s", exc, exc_info=True)
+                consent_db.rollback()
+            finally:
+                consent_db.close()
             db = SessionLocal()
             try:
                 now = datetime.now(_tz.utc)
@@ -686,12 +709,17 @@ async def run_subscription_expiry_job():
                     has_stripe = bool(user and user.stripe_customer_id and user.stripe_payment_method_id)
                     has_flw_token = bool(user and getattr(user, "flutterwave_card_token", None))
                     is_bank_transfer = (provider == "flutterwave" and not has_flw_token)
+                    # Only customers who ticked "Save my card and renew
+                    # automatically" are ever charged without them
+                    # (subscriptions/card_consent.py). Everyone else's plan
+                    # simply ends, and they are told how to renew.
+                    agreed_to_renewal = bool(user and getattr(user, "auto_renew", False))
 
-                    # ── Bank transfer: no token stored, cannot auto-renew ─────────────
-                    if is_bank_transfer:
+                    # ── No consent, or bank transfer: never charged, plan ends ────────
+                    if is_bank_transfer or not agreed_to_renewal:
                         logger.info(
-                            "[expiry-job] user %s paid via bank transfer — "
-                            "no auto-renewal possible; notifying", user_id
+                            "[expiry-job] user %s: no automatic renewal (%s); plan ends, notifying",
+                            user_id, "bank transfer" if is_bank_transfer else "card not saved",
                         )
                         if user:
                             NotificationService.create_notification(

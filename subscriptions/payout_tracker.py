@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 OUTCOME_LABELS = {
     "sent": "Sent",
     "waiting_for_money": "Waiting for money",
+    "waiting_for_payment_funds": "Waiting for the payment's money to be available",
     "no_payout_account": "Referrer has nowhere to receive it",
     "account_not_ready": "Referrer's account not ready",
     "rate_unavailable": "Exchange rate unavailable",
@@ -63,7 +64,7 @@ OUTCOME_LABELS = {
 }
 
 # Outcomes that fix themselves: the 10-minute jobs keep retrying them.
-SELF_FIXING = {"waiting_for_money", "rate_unavailable", "could_not_check", "failed"}
+SELF_FIXING = {"waiting_for_money", "waiting_for_payment_funds", "rate_unavailable", "could_not_check", "failed"}
 
 _SYMBOLS = {"GBP": "£", "USD": "$", "NGN": "₦", "EUR": "€"}
 

@@ -63,6 +63,10 @@ def charge_beta_user(user_id: int) -> bool:
             if not user.stripe_customer_id or not user.stripe_payment_method_id:
                 logger.warning("[beta-charge] user %s has no saved Stripe card; skipped", user_id)
                 return False
+            # Never without their say-so (subscriptions/card_consent.py).
+            if not getattr(user, "auto_renew", False):
+                logger.info("[beta-charge] user %s didn't agree to automatic charging; not charged", user_id)
+                return False
 
             plan_type = user.subscription_plan or "monthly"
             plan_tier = getattr(user, "preferred_plan_tier", None) or "pro"
