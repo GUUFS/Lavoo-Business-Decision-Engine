@@ -15,7 +15,16 @@ Checks every part a checkup depends on and reports each one as
   8. File and image reading    - the document/image parsers load
   9. Cache                     - a value can be saved and read back
  10. Recent checkups           - completed vs failed in the last 24 hours and
-                                 7 days, and any stuck for over 30 minutes
+                                 7 days (account checkups and ad check-ups),
+                                 and any stuck for over 30 minutes
+ 11. Server errors             - errors logged and requests that failed (500+)
+                                 in the last hour (api/services/monitoring.py)
+ 12. Background jobs           - every scheduled job is still running
+ 13. Payments                  - Stripe and Flutterwave keys are set; payment
+                                 errors in the last 24 hours
+ 14. Email                     - an email service is set up; email errors
+ 15. Meta tracking             - the Pixel and Conversions API are set up;
+                                 errors sending events
 
 The overall status is the worst of all checks. Nothing here changes data.
 """
@@ -193,6 +202,16 @@ def _recent_checkups(db: Session):
     )
     if last_error and failed:
         summary += f" Latest error: {last_error[0][:200]}"
+    # Ad check-ups (visitors from the ads, before signing up).
+    from database.pg_models import GuestCheckup
+    guest = dict(db.query(GuestCheckup.status, func.count()).filter(
+        GuestCheckup.created_at > now - timedelta(days=1)).group_by(GuestCheckup.status).all())
+    guest_done = guest.get("completed", 0) + guest.get("claimed", 0)
+    guest_failed = guest.get("failed", 0)
+    summary += f" Ad check-ups, last 24 h: {guest_done} completed, {guest_failed} failed."
+    stuck += db.query(GuestCheckup).filter(
+        GuestCheckup.status == "started", GuestCheckup.created_at < now - timedelta(minutes=30)).count()
+    done, failed = done + guest_done, failed + guest_failed
     if stuck:
         return WARN, f"{stuck} checkup(s) have been running for over 30 minutes. " + summary
     if done + failed >= 3 and failed / (done + failed) > 0.25:
@@ -200,6 +219,87 @@ def _recent_checkups(db: Session):
     if failed:
         return WARN, summary
     return OK, summary
+
+
+def _errors_line(errors: list[dict], limit: int = 2) -> str:
+    """The latest few error messages, for a check's detail."""
+    return " Latest: " + " | ".join(e["message"][:160] for e in errors[:limit]) if errors else ""
+
+
+def _server_errors():
+    """Errors logged and 500+ responses in the last hour."""
+    from api.services import monitoring
+    errors = monitoring.recent_errors(3600)
+    failed = monitoring.recent_failed_requests(3600)
+    # 1. Nothing went wrong.
+    if not errors and not failed:
+        return OK, f"No errors in the last hour (server up {monitoring.uptime_seconds() // 60} min)."
+    # 2. How many, from which parts, and the latest.
+    areas: dict[str, int] = {}
+    for e in errors:
+        areas[e["area"]] = areas.get(e["area"], 0) + 1
+    by_area = ", ".join(f"{a} {n}" for a, n in sorted(areas.items(), key=lambda x: -x[1]))
+    detail = f"{len(errors)} error(s) logged in the last hour ({by_area or 'none'}); {len(failed)} failed request(s)."
+    if failed:
+        detail += f" Latest failed request: {failed[0]['method']} {failed[0]['path']} ({failed[0]['status']})."
+    detail += _errors_line(errors)
+    # 3. Many failed requests means users are hitting errors.
+    return (FAIL if len(failed) >= 10 else WARN), detail
+
+
+def _background_jobs():
+    """Every watched background job is still running."""
+    from api.services import monitoring
+    jobs = monitoring.jobs()
+    if not jobs:
+        return OK, "No background jobs in this process (they run in the web server)."
+    stopped = {name: info for name, info in jobs.items() if info["stopped"]}
+    if stopped:
+        names = "; ".join(f"{name} ({info['error']})" for name, info in stopped.items())
+        return FAIL, f"{len(stopped)} of {len(jobs)} job(s) stopped: {names}. A restart starts them again."
+    return OK, f"All {len(jobs)} background jobs are running."
+
+
+def _missing(names: list[str]) -> list[str]:
+    """The settings (environment variables) that aren't set."""
+    return [n for n in names if not os.getenv(n)]
+
+
+def _payments():
+    """Payment keys set; payment errors in the last 24 hours."""
+    from api.services import monitoring
+    missing = _missing(["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "FLUTTERWAVE_SECRET_KEY",
+                        "FLUTTERWAVE_WEBHOOK_SECRET"])
+    if missing:
+        return FAIL, f"Not set: {', '.join(missing)}. Payments or their webhooks can't work."
+    errors = monitoring.recent_errors(24 * 3600, area="payments")
+    if errors:
+        return WARN, f"{len(errors)} payment error(s) in the last 24 hours." + _errors_line(errors)
+    return OK, "Stripe and Flutterwave are set up. No payment errors in the last 24 hours."
+
+
+def _email():
+    """An email service is set up; email errors in the last 24 hours."""
+    from api.services import monitoring
+    if not os.getenv("RESEND_API_KEY") and not os.getenv("SMTP_HOST"):
+        return FAIL, "No email service set up (RESEND_API_KEY or SMTP_HOST). No emails are sent."
+    errors = monitoring.recent_errors(24 * 3600, area="email")
+    if errors:
+        return WARN, f"{len(errors)} email error(s) in the last 24 hours." + _errors_line(errors)
+    service = "Resend" if os.getenv("RESEND_API_KEY") else "SMTP"
+    return OK, f"Sending with {service}. No email errors in the last 24 hours."
+
+
+def _meta():
+    """Meta Pixel and Conversions API set up; errors sending events."""
+    from api.services import monitoring
+    missing = _missing(["META_PIXEL_ID", "META_CAPI_TOKEN"])
+    if missing:
+        return WARN, f"Not set: {', '.join(missing)}. Ad events aren't sent from the server."
+    errors = monitoring.recent_errors(24 * 3600, area="meta")
+    if errors:
+        return WARN, f"{len(errors)} error(s) sending events to Meta in the last 24 hours." + _errors_line(errors)
+    return OK, "Pixel and Conversions API are set up. No errors in the last 24 hours."
 
 
 async def run_health_checks(db: Session, live: bool = False) -> dict:
@@ -216,6 +316,11 @@ async def run_health_checks(db: Session, live: bool = False) -> dict:
         await _check("files", "File and image reading", _file_readers),
         await _check("cache", "Cache", _cache),
         await _check("checkups", "Recent checkups", lambda: _recent_checkups(db), db),
+        await _check("errors", "Server errors", _server_errors),
+        await _check("jobs", "Background jobs", _background_jobs),
+        await _check("payments", "Payments", _payments),
+        await _check("email", "Email", _email),
+        await _check("meta", "Meta tracking", _meta),
     ]
     db.rollback()  # end the read-only transaction
     overall = max((c["status"] for c in checks), key=_RANK.__getitem__)

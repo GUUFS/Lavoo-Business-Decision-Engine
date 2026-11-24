@@ -334,6 +334,21 @@ def claim(db: Session, token: str, user: User) -> int:
     return analysis.id
 
 
+def close_stuck(db: Session, now: datetime | None = None) -> int:
+    """Mark ad check-ups still 'started' after 30 minutes as failed (the
+    server restarted mid-run), which gives the visitor's free slot back.
+    Returns how many. Run by a job every 15 minutes."""
+    now = now or datetime.now(UTC)
+    # 1. The stuck ones.
+    rows = db.query(GuestCheckup).filter(GuestCheckup.status == "started",
+                                         GuestCheckup.created_at < now - timedelta(minutes=30)).all()
+    # 2. Failed, with the reason.
+    for row in rows:
+        row.status, row.error = "failed", "Never finished (the server restarted mid-run)."
+    db.commit()
+    return len(rows)
+
+
 def delete_unclaimed(db: Session, now: datetime | None = None) -> int:
     """Delete guest checkups (and their ownerless analyses) nobody claimed
     within KEEP_UNCLAIMED_DAYS. Returns how many were deleted."""

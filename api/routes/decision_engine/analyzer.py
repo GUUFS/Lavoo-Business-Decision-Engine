@@ -395,6 +395,17 @@ async def remove_micromodel_exam_question(
     return {"success": True}
 
 
+@router.post("/clarify/exam/starter")
+async def add_micromodel_starter_exam(
+    admin=Depends(admin_required),
+    db: Session = Depends(get_db),
+):
+    """Admin: add the 30 starter exam questions that aren't in the exam yet
+    (decision_engine/micromodel_exam_starter.py)."""
+    from decision_engine.micromodel_exam_starter import add_starter_questions
+    return {"success": True, "data": add_starter_questions(db, created_by=get_user_id(admin))}
+
+
 @router.post("/clarify/exam/run")
 async def run_micromodel_exam_now(
     admin=Depends(admin_required),
