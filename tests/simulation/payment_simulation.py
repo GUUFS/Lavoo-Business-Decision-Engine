@@ -430,6 +430,12 @@ class Providers:
                   side_effect=lambda row, status_map, now: {"counted": True, "month_of": now,
                                                             "amount": Decimal(str(row.amount)),
                                                             "currency": row.currency, "matched": False}),
+            # Cross-border payouts wait until the payment's money is available
+            # (CommissionService._payment_money_ready). Here, as for revenue
+            # above, every payment's money is available at once; the hold
+            # itself is tested in tests/test_card_consent.py and
+            # tests/test_cross_rail_payments.py.
+            patch.object(CommissionService, "_payment_money_ready", side_effect=lambda c, db, rail: None),
             patch.object(EmailService, "_send_email", side_effect=lambda *a, **k: self.emails.append(str(k.get("subject") or a[2:3])) or True),
             patch.object(CommissionService, "_alert_admin", side_effect=lambda subject, body: self.alerts.append(subject)),
             patch.object(NotificationService, "create_notification", side_effect=count_notification),
@@ -752,7 +758,7 @@ class Simulation:
             get_flutterwave_split_info,
             verify_flutterwave_payment,
         )
-        from subscriptions.flutterwave_split import SPLIT_META_KEY
+        from subscriptions.flutterwave_split import SAVE_CARD_META_KEY, SPLIT_META_KEY
 
         price_type = Oracle.flw_price_type(f, period)
         amount = catalog_price(price_type, f.tier, "NGN", period)
@@ -766,6 +772,9 @@ class Simulation:
         paid = amount - 100 if underpay else amount
         tx_ref = f"TX-SIM-{f.key}-{step}{'-under' if underpay else ''}"
         meta = {SPLIT_META_KEY: split["subaccount_id"]} if split else {}
+        # The customer ticked "Save my card and renew my plan automatically",
+        # so the renewal job may charge the card next period.
+        meta[SAVE_CARD_META_KEY] = "true"
         lavoo_share = paid * Decimal(str(split["main_account_charge_percentage"])) if split else paid
         self.providers.flw_balance += lavoo_share
         self.providers.flw_tx[tx_ref] = {

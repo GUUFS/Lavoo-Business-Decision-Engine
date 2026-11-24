@@ -40,6 +40,9 @@ def fake_flutterwave(monkeypatch):
         wallet["sent"].append(payout.amount)
         return {"success": True}
     monkeypatch.setattr(PayoutService, "process_flutterwave_payout", staticmethod(hand_to_flutterwave))
+    # The £ Stripe payments' money is already available in Stripe, so the
+    # cross-border hold lets them through (the hold itself: test_card_consent.py).
+    monkeypatch.setattr(CommissionService, "_payment_money_ready", staticmethod(lambda c, db, rail: None))
     return wallet
 
 

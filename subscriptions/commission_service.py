@@ -630,6 +630,52 @@ class CommissionService:
         logger.info(f"[CHARGEBACK] commission={commission.id} status={commission.status} for subscription={subscription.id} {reason} — no action needed (already {commission.status})")
 
     @staticmethod
+    def _payment_money_ready(commission: "Commission", db: Session, payout_rail: str) -> "str | None":
+        """A CROSS-BORDER payout (the payment came in on one provider, the
+        payout goes out on the other, e.g. a $ Stripe payment paid to a
+        referrer in Naira through Flutterwave) is sent only once that
+        payment's own money is AVAILABLE on the provider it came in on, so
+        Lavoo never pays out money it hasn't received yet.
+
+          - Stripe payment: Stripe marks its balance transaction available
+            (stripe_revenue.when_counted; if Stripe can't be reached, the
+            payment must be UNMATCHED_AFTER_DAYS old).
+          - Flutterwave payment: FLUTTERWAVE_SETTLEMENT_DAYS (default 2)
+            after it was paid, Flutterwave's settlement time.
+
+        Returns None when it may be paid, or the reason it must wait (plain
+        words). Same-provider payouts and commissions with no payment row
+        aren't held here (each payout already checks its own available balance)."""
+        from database.pg_models import Subscriptions
+        # 1. The payment the commission was earned on.
+        payment = db.get(Subscriptions, commission.subscription_id) if commission.subscription_id else None
+        if payment is None:
+            return None
+        source = (payment.payment_provider or "").lower()
+        # 2. Same provider in and out: nothing extra to wait for.
+        if source not in ("stripe", "flutterwave") or source == payout_rail:
+            return None
+        now = datetime.now(timezone.utc)
+        amount = f"{payment.amount} {payment.currency}"
+        # 3. A Stripe payment: is its money available in Stripe yet?
+        if source == "stripe":
+            from subscriptions.stripe_revenue import stripe_payment_status, when_counted
+            counted = when_counted(payment, stripe_payment_status(), now)
+            if counted["counted"]:
+                return None
+            ready_on = counted["month_of"]
+            return (f"Cross-border payout held: the {amount} Stripe payment it was earned on is still incoming in "
+                    f"Stripe" + (f" (available about {ready_on:%d %b %Y})" if ready_on else "")
+                    + ". It is sent automatically once that money is available.")
+        # 4. A Flutterwave payment: settled after Flutterwave's settlement time.
+        days = int(os.getenv("FLUTTERWAVE_SETTLEMENT_DAYS", "2"))
+        paid_at = _as_utc(payment.created_at) or now
+        if paid_at + timedelta(days=days) <= now:
+            return None
+        return (f"Cross-border payout held: the {amount} Flutterwave payment it was earned on settles about "
+                f"{paid_at + timedelta(days=days):%d %b %Y} ({days} days after payment). It is sent automatically then.")
+
+    @staticmethod
     def _attempt_immediate_payout(
         commission: "Commission", db: Session, notify_admin: bool = True,
         balance_override: "Decimal | None" = None,
@@ -696,6 +742,14 @@ class CommissionService:
                 f"payout_account={payout_account.id} bank={payout_account.bank_name} "
                 f"account=***{payout_account.account_number[-4:]}"
             )
+
+            # Cross-border (e.g. a $ Stripe payment paid out in Naira): only
+            # once that payment's money is available (_payment_money_ready).
+            held = CommissionService._payment_money_ready(commission, db, "flutterwave")
+            if held:
+                logger.info(f"[BUILDER BONUS] commission {commission.id} held | {held}")
+                payout_tracker.note(commission, "waiting_for_payment_funds", held, route="flutterwave", to_currency="NGN")
+                return None
 
             commission_currency = (commission.currency or "USD").upper()
             commission_amount = Decimal(str(commission.amount))
@@ -943,6 +997,13 @@ class CommissionService:
                 )
                 .first()
             )
+            # Cross-border (e.g. a Naira Flutterwave payment paid out through
+            # Stripe): only once that payment's money is available.
+            held = CommissionService._payment_money_ready(commission, db, "stripe") if stripe_account else None
+            if held:
+                logger.info(f"[BUILDER BONUS] commission {commission.id} held | {held}")
+                payout_tracker.note(commission, "waiting_for_payment_funds", held, route="stripe")
+                return None
             if not stripe_account:
                 logger.info(
                     f"[BUILDER BONUS] immediate payout skipped | commission={commission.id} "

@@ -318,16 +318,16 @@ async def verify_flutterwave_payment(verify_data: PaymentVerifyRequest, backgrou
                 # Capture Flutterwave card token from data.card.token.
                 # This token can be used to charge the card off-session for
                 # automatic renewals — no user action required at renewal time.
+                # Kept ONLY if they ticked "Save my card" at checkout: the page
+                # sends that choice in the charge's meta (SAVE_CARD_META_KEY),
+                # and Flutterwave echoes it back here. Unticked (or an older
+                # page that doesn't send it) = no card kept, no auto-renewal.
+                # subscriptions/card_consent.py.
+                from subscriptions.card_consent import remember_card_choice
+                from subscriptions.flutterwave_split import SAVE_CARD_META_KEY
                 card_info = transaction_data.get("card", {}) or {}
-                flw_token = card_info.get("token")
-                if flw_token and hasattr(user, "flutterwave_card_token"):
-                    user.flutterwave_card_token = flw_token
-                    # Also update card display metadata so the UI shows the card
-                    if card_info.get("last_4digits"):
-                        user.card_last4 = card_info["last_4digits"]
-                    if card_info.get("type"):
-                        user.card_brand = card_info["type"].title()
-                    logger.info("[FLW verify] card token saved for user %s", user.id)
+                wants_saved = str((transaction_data.get("meta") or {}).get(SAVE_CARD_META_KEY, "")).lower() == "true"
+                remember_card_choice(user, wants_saved and bool(card_info.get("token")), flutterwave_card=card_info)
 
                 # Update user subscription
                 user.subscription_status = "active"

@@ -807,17 +807,14 @@ async def save_card_for_beta(
         # inline (the path that banks accept). For off_session cron billing the
         # PM is already attached from a previous successful confirmation.
 
-        # ── Save card metadata ────────────────────────────────────────────────
+        # ── Save the card only if they ticked "Save my card" (card_consent.py) ──
         _stripe_key = os.getenv("STRIPE_SECRET_KEY")
         payment_method = stripe.PaymentMethod.retrieve(
             request.payment_method_id, api_key=_stripe_key
         )
-        user.stripe_payment_method_id = request.payment_method_id
-        user.card_last4 = payment_method.card.last4
-        user.card_brand = payment_method.card.brand
-        user.card_exp_month = payment_method.card.exp_month
-        user.card_exp_year = payment_method.card.exp_year
-        user.card_saved_at = datetime.now(timezone.utc)
+        from subscriptions.card_consent import remember_card_choice
+        remember_card_choice(user, request.save_card, stripe_payment_method=payment_method,
+                             stripe_payment_method_id=request.payment_method_id)
 
         # ── Strict plan / currency / amount validation ────────────────────────
         _valid_plans = {"monthly", "quarterly", "yearly"}
@@ -1873,12 +1870,10 @@ async def create_subscription_with_saved_card(
             try:
                 _sk = os.getenv("STRIPE_SECRET_KEY")
                 pm = stripe.PaymentMethod.retrieve(request.payment_method_id, api_key=_sk)
-                user.stripe_payment_method_id = request.payment_method_id
-                user.card_last4 = pm.card.last4
-                user.card_brand = pm.card.brand
-                user.card_exp_month = pm.card.exp_month
-                user.card_exp_year = pm.card.exp_year
-                user.card_saved_at = datetime.now(timezone.utc)
+                # Kept only if they ticked "Save my card" (subscriptions/card_consent.py).
+                from subscriptions.card_consent import remember_card_choice
+                remember_card_choice(user, request.save_card, stripe_payment_method=pm,
+                                     stripe_payment_method_id=request.payment_method_id)
             except Exception as card_err:
                 logger.warning(f"⚠️ Could not save card details: {str(card_err)}")
             db.commit()
@@ -1931,12 +1926,10 @@ async def create_subscription_with_saved_card(
             try:
                 _sk = os.getenv("STRIPE_SECRET_KEY")
                 pm = stripe.PaymentMethod.retrieve(request.payment_method_id, api_key=_sk)
-                user.stripe_payment_method_id = request.payment_method_id
-                user.card_last4 = pm.card.last4
-                user.card_brand = pm.card.brand
-                user.card_exp_month = pm.card.exp_month
-                user.card_exp_year = pm.card.exp_year
-                user.card_saved_at = datetime.now(timezone.utc)
+                # Kept only if they ticked "Save my card" (subscriptions/card_consent.py).
+                from subscriptions.card_consent import remember_card_choice
+                remember_card_choice(user, request.save_card, stripe_payment_method=pm,
+                                     stripe_payment_method_id=request.payment_method_id)
             except Exception as card_err:
                 logger.warning(f"⚠️ Could not save card details: {str(card_err)}")
             db.commit()
@@ -2102,12 +2095,12 @@ async def confirm_subscription(
             pm_id = verification.get("payment_method")
             if pm_id:
                 pm = stripe.PaymentMethod.retrieve(pm_id, api_key=os.getenv("STRIPE_SECRET_KEY"))
-                user.stripe_payment_method_id = pm_id
-                user.card_last4 = pm.card.last4
-                user.card_brand = pm.card.brand
-                user.card_exp_month = pm.card.exp_month
-                user.card_exp_year = pm.card.exp_year
-                user.card_saved_at = datetime.now(timezone.utc)
+                # Their choice was made at checkout: a subscription set to
+                # renew means they ticked "Save my card" (it is created with
+                # cancel_at_period_end = not save_card). card_consent.py.
+                from subscriptions.card_consent import remember_card_choice
+                saved = not subscription_details.get("cancel_at_period_end", True)
+                remember_card_choice(user, saved, stripe_payment_method=pm, stripe_payment_method_id=pm_id)
         except Exception as card_err:
             logger.warning(f"⚠️ Could not save card details: {str(card_err)}")
 

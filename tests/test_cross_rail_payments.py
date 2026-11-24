@@ -153,6 +153,62 @@ def test_flutterwave_split_charge_is_recorded_as_already_settled(db):
 
 # ── Stripe payment -> Flutterwave payout ────────────────────────────────────
 
+def stripe_says(sub, status):
+    """What Stripe reports for this payment: its money is 'available' or still 'pending' (incoming)."""
+    now = datetime.now(UTC)
+    return {sub.transaction_id: {"status": status, "currency": sub.currency.upper(), "fee": Decimal("0"),
+                                 "net": sub.amount,
+                                 "available_on": now - timedelta(hours=1) if status == "available" else now + timedelta(days=3)}}
+
+
+def test_naira_payout_waits_until_the_stripe_money_is_available(db):
+    """The $ payment is still incoming in Stripe: no Naira goes out yet.
+    Once Stripe makes it available, the retry job pays it."""
+    referrer = make_referrer(db)
+    give_flutterwave_bank(db, referrer, subaccount=False)
+    referred = link_referral(db, referrer)
+    sub = add_payment(db, referred.id, datetime.now(UTC), currency="USD", amount="100.00")
+
+    # 1. Incoming in Stripe: held, nothing sent.
+    with patch("subscriptions.flutterwave_split.get_flutterwave_fx_rate", return_value=Decimal("1500")), \
+         patch("subscriptions.payout_service.PayoutService.get_platform_flutterwave_available",
+               return_value={"available": Decimal("10000000")}), \
+         patch("subscriptions.stripe_revenue.stripe_payment_status", return_value=stripe_says(sub, "pending")), \
+         patch("subscriptions.payout_service.requests.post", return_value=flutterwave_transfer_ok()) as post:
+        commission = CommissionService.calculate_commission(sub, db)
+    post.assert_not_called()
+    assert commission.status == "pending" and commission.payout_id is None
+
+    # 2. Available now: the retry job sends it.
+    with patch("subscriptions.flutterwave_split.get_flutterwave_fx_rate", return_value=Decimal("1500")), \
+         patch("subscriptions.payout_service.PayoutService.get_platform_flutterwave_available",
+               return_value={"available": Decimal("10000000")}), \
+         patch("subscriptions.stripe_revenue.stripe_payment_status", return_value=stripe_says(sub, "available")), \
+         patch("subscriptions.payout_service.requests.post", return_value=flutterwave_transfer_ok()) as post:
+        CommissionService.settle_pending_flutterwave_commissions(db)
+    post.assert_called_once()
+    assert commission.status == "auto_settled"
+
+
+def test_stripe_payout_waits_until_the_flutterwave_money_settles(db):
+    """A Naira payment made an hour ago hasn't settled: no £ goes out yet."""
+    referrer = make_referrer(db, tier="premium")
+    give_stripe_connect(db, referrer)
+    referred = link_referral(db, referrer)
+    sub = add_payment(db, referred.id, datetime.now(UTC) - timedelta(hours=1), currency="NGN",
+                      provider="flutterwave", amount="20000.00")
+
+    account = {"capabilities": {"transfers": "active"}, "default_currency": "gbp"}
+    with patch("stripe.Account.retrieve", return_value=account), \
+         patch("stripe.Transfer.list", return_value=MagicMock(data=[])), \
+         patch("stripe.Transfer.create", return_value={"id": "tr_TEST"}) as transfer, \
+         patch("subscriptions.flutterwave_split.get_flutterwave_fx_rate", return_value=Decimal("0.0005")), \
+         patch("subscriptions.payout_service.PayoutService.get_platform_stripe_available", return_value=10_000_00):
+        commission = CommissionService.calculate_commission(sub, db)
+    transfer.assert_not_called()
+    assert commission.status == "pending"
+
+
 def test_stripe_usd_payment_pays_nigerian_referrer_in_ngn(db):
     referrer = make_referrer(db)
     give_flutterwave_bank(db, referrer, subaccount=False)
@@ -162,6 +218,7 @@ def test_stripe_usd_payment_pays_nigerian_referrer_in_ngn(db):
     with patch("subscriptions.flutterwave_split.get_flutterwave_fx_rate", return_value=Decimal("1500")), \
          patch("subscriptions.payout_service.PayoutService.get_platform_flutterwave_available",
                return_value={"available": Decimal("10000000")}), \
+         patch("subscriptions.stripe_revenue.stripe_payment_status", return_value=stripe_says(sub, "available")), \
          patch("subscriptions.payout_service.requests.post", return_value=flutterwave_transfer_ok()) as post:
         commission = CommissionService.calculate_commission(sub, db)
 
@@ -179,8 +236,9 @@ def test_flutterwave_ngn_payment_pays_uk_referrer_in_gbp(db):
     referrer = make_referrer(db, tier="premium")
     give_stripe_connect(db, referrer)
     referred = link_referral(db, referrer)
-    sub = add_payment(db, referred.id, datetime.now(UTC), currency="NGN", provider="flutterwave",
-                      amount="20000.00")
+    # Paid 3 days ago: Flutterwave has settled the money (2 days).
+    sub = add_payment(db, referred.id, datetime.now(UTC) - timedelta(days=3), currency="NGN",
+                      provider="flutterwave", amount="20000.00")
 
     account = {"capabilities": {"transfers": "active"}, "default_currency": "gbp"}
     with patch("stripe.Account.retrieve", return_value=account), \
