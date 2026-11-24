@@ -246,3 +246,24 @@ def test_times_read_the_same_as_the_admin_app():
     assert ago(49 * 60) == "49 min ago"
     assert ago(15 * 3600) == "15 h ago"
     assert ago(3 * 86400) == "3 d ago"
+
+
+def test_the_starter_exam_adds_30_balanced_questions_once(db):
+    """'Add starter questions' adds 15 'ask' and 15 'don't ask' questions,
+    and never adds one twice (nor one an admin removed)."""
+    from database.pg_models import MicromodelExamQuestion
+    from decision_engine.micromodel_exam import remove_exam_question
+    from decision_engine.micromodel_exam_starter import STARTER_QUESTIONS, add_starter_questions
+
+    db.query(MicromodelExamQuestion).delete()
+    # 1. The set itself: 30, balanced, every "ask" one has questions.
+    assert len(STARTER_QUESTIONS) == 30
+    assert sum(1 for q in STARTER_QUESTIONS if q[1]) == 15
+    assert all(q[2] for q in STARTER_QUESTIONS if q[1]) and not any(q[2] for q in STARTER_QUESTIONS if not q[1])
+    # 2. Added once.
+    assert add_starter_questions(db) == {"added": 30, "skipped": 0}
+    assert add_starter_questions(db) == {"added": 0, "skipped": 30}
+    # 3. A removed one stays removed.
+    first = db.query(MicromodelExamQuestion).first()
+    remove_exam_question(db, first.id)
+    assert add_starter_questions(db)["added"] == 0

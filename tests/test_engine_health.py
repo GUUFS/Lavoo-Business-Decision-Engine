@@ -26,6 +26,8 @@ def seed_healthy_engine(db):
     recent clean teacher run and a completed checkup."""
     vector = "[" + ",".join(["0.01"] * 384) + "]"
     db.execute(text("DELETE FROM ai_tools"))
+    # No ad check-ups from other runs (only this test's data counts).
+    db.execute(text("DELETE FROM guest_checkups"))
     db.execute(text("INSERT INTO ai_tools (name, description, embedding) VALUES "
                     "('Zapier', 'Automation', CAST(:v AS vector)), ('Notion', 'Docs', CAST(:v AS vector))"),
                {"v": vector})
@@ -48,11 +50,19 @@ def seed_healthy_engine(db):
 def test_healthy_engine_reports_ok_everywhere(db, monkeypatch):
     seed_healthy_engine(db)
     monkeypatch.setenv("XAI_API_KEY", "test-key")
+    # Every service set up, and no errors logged by earlier tests.
+    for name in ("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "FLUTTERWAVE_SECRET_KEY",
+                 "FLUTTERWAVE_WEBHOOK_SECRET", "RESEND_API_KEY", "META_PIXEL_ID", "META_CAPI_TOKEN"):
+        monkeypatch.setenv(name, "set")
+    from api.services import monitoring
+    monitoring._errors.clear()
+    monitoring._failed_requests.clear()
     result = asyncio.run(run_health_checks(db))
     checks = by_key(result)
 
     assert set(checks) == {"database", "tools", "embeddings", "micromodel", "examples",
-                           "teacher", "llm", "files", "cache", "checkups"}
+                           "teacher", "llm", "files", "cache", "checkups",
+                           "errors", "jobs", "payments", "email", "meta"}
     not_ok = {k: c["detail"] for k, c in checks.items() if c["status"] != "ok"}
     assert not_ok == {}
     assert result["status"] == "ok"

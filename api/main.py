@@ -94,6 +94,11 @@ logger.info("✓ Using Neon PostgreSQL database")
 
 app = FastAPI(debug=os.getenv("DEBUG", "false").lower() == "true")
 
+# Keep every error logged anywhere in the app, for the admin Engine Health
+# page and its alert emails (api/services/monitoring.py).
+from api.services import monitoring as _monitoring  # noqa: E402
+_monitoring.install()
+
 # Password context for admin creation
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
@@ -106,9 +111,17 @@ async def log_requests(request: Request, call_next):
     corresponding response status code. Useful for debugging traffic and
     verifying that the app is receiving requests in cloud environments.
     """
+    from api.services import monitoring
     logger.info(f"INCOMING REQUEST: {request.method} {request.url.path}")
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        # An unhandled error: counted on the Engine Health page, then raised as before.
+        monitoring.record_request(request.method, request.url.path, 500)
+        raise
     logger.info(f"RESPONSE STATUS: {request.method} {request.url.path} -> {response.status_code}")
+    # A 500+ response is counted on the Engine Health page (api/services/monitoring.py).
+    monitoring.record_request(request.method, request.url.path, response.status_code)
     return response
 
 
@@ -950,6 +963,31 @@ async def run_guest_checkup_cleanup_job():
             logger.error("[guest-checkup-cleanup] error: %s", exc)
         # 3. Again tomorrow.
         await asyncio.sleep(24 * 3600)
+
+
+async def run_stuck_checkups_job():
+    """
+    Every 15 minutes: finish checkups left at 'started' for over 30 minutes
+    (a server restart mid-run, or an outcome that couldn't be saved), so the
+    user gets the checkup back and Engine Health counts it correctly.
+    """
+    from database.pg_connections import SessionLocal
+    from decision_engine.checkup_limits import close_stuck_checkups
+    from decision_engine.guest_checkup import close_stuck
+    # 1. Let the server start first.
+    await asyncio.sleep(60)
+    while True:
+        # 2. Account checkups, then ad check-ups.
+        try:
+            with SessionLocal() as db:
+                counts = close_stuck_checkups(db)
+                guests = close_stuck(db)
+                if counts["completed"] or counts["failed"] or guests:
+                    logger.info("[stuck-checkups] closed %s, ad check-ups failed %s", counts, guests)
+        except Exception as exc:
+            logger.error("[stuck-checkups] error: %s", exc)
+        # 3. Again in 15 minutes.
+        await asyncio.sleep(15 * 60)
 
 
 async def run_tool_discovery_job():
@@ -1844,22 +1882,28 @@ async def startup_event():
     Because the migrations use idempotent "IF NOT EXISTS" statements they are
     safe to execute while the app is already accepting requests.
     """
-    asyncio.create_task(run_scheduled_scans())
-    asyncio.create_task(run_subscription_expiry_job())
-    asyncio.create_task(run_new_alert_notifications_job())
-    asyncio.create_task(run_scheduled_reflections_job())
-    asyncio.create_task(run_scheduled_voo_bot_job())
-    asyncio.create_task(run_clarity_teacher_job())
-    asyncio.create_task(run_tool_discovery_job())
-    asyncio.create_task(run_micromodel_exam_job())
-    asyncio.create_task(run_guest_checkup_cleanup_job())
-    asyncio.create_task(run_flutterwave_payout_reconcile_job())
-    asyncio.create_task(run_flutterwave_balance_monitor_job())
-    asyncio.create_task(run_stripe_balance_monitor_job())
-    asyncio.create_task(run_payout_integrity_check_job())
-    asyncio.create_task(run_stripe_commission_settlement_job())
-    asyncio.create_task(run_flutterwave_commission_settlement_job())
-    asyncio.create_task(run_stripe_payout_reconcile_job())
+    # Every background job, started through monitoring.watch_job so the
+    # Engine Health page shows (and the alert job emails) if one stops.
+    from api.services.monitoring import run_health_alert_job, watch_job
+    _monitoring.install()
+    watch_job("Security scans", run_scheduled_scans())
+    watch_job("Subscription expiry", run_subscription_expiry_job())
+    watch_job("New alert notifications", run_new_alert_notifications_job())
+    watch_job("Scheduled reflections", run_scheduled_reflections_job())
+    watch_job("Voo bot posts", run_scheduled_voo_bot_job())
+    watch_job("Micromodel teacher", run_clarity_teacher_job())
+    watch_job("Tool discovery", run_tool_discovery_job())
+    watch_job("Micromodel exam", run_micromodel_exam_job())
+    watch_job("Ad check-up cleanup", run_guest_checkup_cleanup_job())
+    watch_job("Stuck checkups", run_stuck_checkups_job())
+    watch_job("Flutterwave payout reconcile", run_flutterwave_payout_reconcile_job())
+    watch_job("Flutterwave balance monitor", run_flutterwave_balance_monitor_job())
+    watch_job("Stripe balance monitor", run_stripe_balance_monitor_job())
+    watch_job("Payout integrity check", run_payout_integrity_check_job())
+    watch_job("Stripe commission settlement", run_stripe_commission_settlement_job())
+    watch_job("Flutterwave commission settlement", run_flutterwave_commission_settlement_job())
+    watch_job("Stripe payout reconcile", run_stripe_payout_reconcile_job())
+    watch_job("Health alerts", run_health_alert_job())
 
     try:
         # --- MINIMAL WORK REQUIRED FOR "Application startup complete" ---

@@ -20,18 +20,25 @@ Every checkup that starts is recorded in checkup_usage (CheckupUsage):
                            linked to the analysis.
   3. release_checkup()   - if the analysis fails or the user leaves: status
                            'failed' or 'cancelled', which don't count.
+  4. close_stuck_checkups() - every 15 minutes: anything still 'started'
+                           after 30 minutes is completed (if its analysis
+                           was saved) or failed.
 Deleting an analysis later does NOT give the checkup back, because the
 usage record is separate from the analysis. Admin checkups are recorded
 too (never limited), so the admin Engine Health page sees every checkup.
 """
+import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import inspect, true
 from sqlalchemy.orm import Session
 
 from database.pg_models import CheckupUsage, Subscriptions, User
 
 # Each plan: (how many checkups, per "week" or "month").
+logger = logging.getLogger(__name__)
+
 CHECKUP_LIMITS = {"pro": (1, "week"), "premium": (10, "month")}
 # Payment statuses that mean "this subscription payment went through"
 # (Stripe and Flutterwave each use their own words).
@@ -234,15 +241,72 @@ def release_checkup(db: Session, usage: CheckupUsage | None, error: str | None =
             error=(error or "")[:2000] or None)
 
 
+def _usage_id(usage: CheckupUsage) -> int | None:
+    """The row's id, without touching the database.
+
+    A streamed checkup ends after its request's session has been closed, so
+    reading `usage.id` there tries to reload the expired row through a closed
+    session and fails (that left every streamed checkup stuck at 'started').
+    The id is kept in the object's identity, which can always be read."""
+    identity = inspect(usage).identity
+    return identity[0] if identity else None
+
+
 def _finish(db: Session, usage: CheckupUsage | None, **fields) -> None:
     """Save a checkup's final status. Never raises: recording the outcome
-    must not break the response the user is waiting for."""
+    must not break the response the user is waiting for (a failure is logged)."""
     if usage is None:
         return
     try:
-        db.query(CheckupUsage).filter(CheckupUsage.id == usage.id).update(
+        # 1. The row's id (safe even after the request's session closed).
+        usage_id = _usage_id(usage)
+        # 2. Save the outcome on the database row itself.
+        db.query(CheckupUsage).filter(CheckupUsage.id == usage_id).update(
             {**fields, "finished_at": datetime.now(UTC)}
         )
         db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        logger.error(f"[checkup-limits] could not record checkup outcome {fields.get('status')}: {exc}")
+
+
+# A checkup still 'started' after this long has stopped (a server restart,
+# or an outcome that couldn't be saved).
+STUCK_AFTER = timedelta(minutes=30)
+
+
+def close_stuck_checkups(db: Session, now: datetime | None = None) -> dict:
+    """Finish checkups left at 'started' for over STUCK_AFTER:
+      - if the user got an analysis in that time, it is 'completed' and linked;
+      - otherwise 'failed' (which gives the checkup back to the user).
+    Returns {"completed": n, "failed": n}. Run by a job every 15 minutes."""
+    from database.pg_models import BusinessAnalysis
+
+    now = now or datetime.now(UTC)
+    counts = {"completed": 0, "failed": 0}
+    # 1. The stuck ones, oldest first.
+    stuck = (db.query(CheckupUsage)
+             .filter(CheckupUsage.status == "started", CheckupUsage.created_at < now - STUCK_AFTER)
+             .order_by(CheckupUsage.created_at).all())
+    # Analyses already linked to a checkup can't be linked twice.
+    linked = {a for (a,) in db.query(CheckupUsage.analysis_id).filter(CheckupUsage.analysis_id.isnot(None)).all()}
+    for usage in stuck:
+        # 2. Their analysis: the first one saved for them within STUCK_AFTER of starting.
+        analysis = (db.query(BusinessAnalysis.id)
+                    .filter(BusinessAnalysis.user_id == usage.user_id,
+                            BusinessAnalysis.created_at >= usage.created_at,
+                            BusinessAnalysis.created_at <= usage.created_at + STUCK_AFTER,
+                            BusinessAnalysis.id.notin_(linked) if linked else true())
+                    .order_by(BusinessAnalysis.created_at).first())
+        # 3. Completed (with its analysis), or failed.
+        if analysis:
+            usage.status, usage.analysis_id = "completed", analysis[0]
+            linked.add(analysis[0])
+            counts["completed"] += 1
+        else:
+            usage.status = "failed"
+            usage.error = "Never finished (the server restarted or the outcome couldn't be saved)."
+            counts["failed"] += 1
+        usage.finished_at = now
+    db.commit()
+    return counts
