@@ -826,43 +826,37 @@ async def complete_mission_step(
 
         chops_this_call = 0
 
-        # Award 20 chops only for the very first mission step ever completed by this user.
-        # All subsequent step completions earn 0; reflections/comments are the only other
-        # source of chops after that first step.
-        is_first_ever_step = False
-        if step_id not in user_progress['completed_actions'] and len(user_progress['completed_actions']) == 0:
-            other_analyses = db.query(BusinessAnalysis).filter(
-                BusinessAnalysis.user_id == current_user.id,
-                BusinessAnalysis.id != analysis_id
-            ).all()
-            has_prior_completion = any(
-                _ensure_dict(a.user_progress, "user_progress").get('completed_actions')
-                for a in other_analyses
-            )
-            if not has_prior_completion:
-                is_first_ever_step = True
-
-        # Mark as completed (idempotent — safe to call again for reflection updates)
+        # 1. Mark as completed (idempotent: safe to call again with a reflection).
+        #    Completing a step earns nothing by itself; a reflection earns 20.
         if step_id not in user_progress['completed_actions']:
             user_progress['completed_actions'].append(step_id)
 
             if 'completion_dates' not in user_progress:
                 user_progress['completion_dates'] = {}
             user_progress['completion_dates'][step_id] = datetime.now(timezone.utc).isoformat()
-            # Gated on a reflection being attached to THIS completion — a step
-            # finished with no reflection earns no chops, same as every
-            # subsequent step. Completing it later with a reflection still
-            # earns the standalone reflection bonus below, just not this one.
-            if is_first_ever_step and body.reflection and body.reflection.strip():
-                current_user.total_chops = (current_user.total_chops or 0) + 20
-                chops_this_call += 20
 
-        # Save reflection if provided; award 20 chops for the FIRST reflection on this step
+        # 2. A reflection: saved, shown under the step's task in All Tasks (as
+        #    its comment, so the app needs only this one call), and worth
+        #    exactly 20 chops, once per step. Before, the app also posted it
+        #    as a roadmap comment (another 20), so one reflection earned 40.
         if body.reflection and body.reflection.strip():
+            text = body.reflection.strip()
             if 'reflections' not in user_progress:
                 user_progress['reflections'] = {}
             is_new_reflection = not user_progress['reflections'].get(step_id)
-            user_progress['reflections'][step_id] = body.reflection
+            user_progress['reflections'][step_id] = text
+            # 2a. Shown under the step's task.
+            task_id = roadmap_tasks[step_number - 1]['frontend_id']
+            comments = _ensure_dict(user_progress.get('roadmap_comments', {}), "roadmap_comments")
+            comments.setdefault(task_id, []).append({
+                'id': f"comment-{datetime.now(timezone.utc).timestamp()}",
+                'text': text,
+                'author': {'name': current_user.name or 'You', 'initials': (current_user.name or 'YO')[:2].upper()},
+                'createdAt': datetime.now(timezone.utc).isoformat(),
+                'parent_id': None,
+            })
+            user_progress['roadmap_comments'] = comments
+            # 2b. 20 chops for the step's first reflection.
             if is_new_reflection:
                 current_user.total_chops = (current_user.total_chops or 0) + 20
                 chops_this_call += 20
