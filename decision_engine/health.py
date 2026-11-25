@@ -20,11 +20,13 @@ Checks every part a checkup depends on and reports each one as
  11. Server errors             - errors logged and requests that failed (500+)
                                  in the last hour (api/services/monitoring.py)
  12. Background jobs           - every scheduled job is still running
- 13. Payments                  - Stripe and Flutterwave keys are set; payment
-                                 errors in the last 24 hours
- 14. Email                     - an email service is set up; email errors
- 15. Meta tracking             - the Pixel and Conversions API are set up;
+ 13. Email                     - an email service is set up; email errors
+ 14. Meta tracking             - the Pixel and Conversions API are set up;
                                  errors sending events
+
+Payments are NOT checked here: this page is about the decision engine.
+Payments and payouts have their own health check on the admin Revenue page
+(PayoutService.check_payout_system_integrity).
 
 The overall status is the worst of all checks. Nothing here changes data.
 """
@@ -265,19 +267,6 @@ def _missing(names: list[str]) -> list[str]:
     return [n for n in names if not os.getenv(n)]
 
 
-def _payments():
-    """Payment keys set; payment errors in the last 24 hours."""
-    from api.services import monitoring
-    missing = _missing(["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "FLUTTERWAVE_SECRET_KEY",
-                        "FLUTTERWAVE_WEBHOOK_SECRET"])
-    if missing:
-        return FAIL, f"Not set: {', '.join(missing)}. Payments or their webhooks can't work."
-    errors = monitoring.recent_errors(24 * 3600, area="payments")
-    if errors:
-        return WARN, f"{len(errors)} payment error(s) in the last 24 hours." + _errors_line(errors)
-    return OK, "Stripe and Flutterwave are set up. No payment errors in the last 24 hours."
-
-
 def _email():
     """An email service is set up; email errors in the last 24 hours."""
     from api.services import monitoring
@@ -318,7 +307,6 @@ async def run_health_checks(db: Session, live: bool = False) -> dict:
         await _check("checkups", "Recent checkups", lambda: _recent_checkups(db), db),
         await _check("errors", "Server errors", _server_errors),
         await _check("jobs", "Background jobs", _background_jobs),
-        await _check("payments", "Payments", _payments),
         await _check("email", "Email", _email),
         await _check("meta", "Meta tracking", _meta),
     ]

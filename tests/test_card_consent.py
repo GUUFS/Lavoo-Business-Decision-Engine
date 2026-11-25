@@ -165,3 +165,43 @@ def test_a_flutterwave_payment_settles_before_a_stripe_payout(db, monkeypatch):
     settled = _commission(db, "Flutterwave", datetime.now(UTC) - timedelta(days=3))
     assert "settles about" in CommissionService._payment_money_ready(fresh, db, "stripe")
     assert CommissionService._payment_money_ready(settled, db, "stripe") is None
+
+
+# ── Stripe renews at the price ON the subscription ──────────────────────────
+
+class _Subs:
+    """Stands in for stripe.Subscription.list's result."""
+    def __init__(self, data):
+        self.data = data
+
+    def auto_paging_iter(self):
+        return iter(self.data)
+
+
+def _stripe_sub(sub_id, price_id):
+    """A live Stripe subscription on one price."""
+    return {"id": sub_id, "status": "active", "cancel_at_period_end": False,
+            "items": {"data": [{"id": f"si_{sub_id}", "price": {"id": price_id}, "current_period_end": 1}]}}
+
+
+def test_a_subscription_on_an_old_price_is_not_renewed(db, monkeypatch):
+    """Cyprian's case: Stripe kept renewing at an old $1 price no longer sold.
+    It is set to end at the end of its paid period and the admin is told;
+    one on today's price is left alone."""
+    import stripe
+
+    from subscriptions import founding
+    from subscriptions.commission_service import CommissionService
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test")
+    monkeypatch.setattr(founding, "identify_price_id",
+                        lambda pid: {"tier": "pro", "period": "monthly", "currency": "USD", "price_type": "standard"}
+                        if pid == "price_today" else None)
+    user = _user(db, "oldprice-stripe@card.test", stripe_customer_id="cus_old", auto_renew=True)
+    lists = {"active": [_stripe_sub("sub_old", "price_1usd"), _stripe_sub("sub_now", "price_today")]}
+    alerts = []
+    monkeypatch.setattr(CommissionService, "_alert_admin", staticmethod(lambda subject, body: alerts.append(body)))
+    with patch.object(stripe.Subscription, "list", side_effect=lambda **k: _Subs(lists.get(k["status"], []))), \
+         patch.object(stripe.Subscription, "modify") as modify:
+        assert card_consent.stop_old_price_renewals(db) == 1
+    modify.assert_called_once_with("sub_old", cancel_at_period_end=True, api_key="sk_test")
+    assert alerts and "price_1usd" in alerts[0] and f"user {user.id}" in alerts[0]

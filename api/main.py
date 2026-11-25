@@ -632,8 +632,10 @@ async def run_subscription_expiry_job():
             # renew by themselves (subscriptions/card_consent.py).
             consent_db = SessionLocal()
             try:
-                from subscriptions.card_consent import sweep_unconsented
+                from subscriptions.card_consent import stop_old_price_renewals, sweep_unconsented
                 sweep_unconsented(consent_db)
+                # Stripe renews at the price ON the subscription: stop any on a price no longer sold (e.g. old $1).
+                stop_old_price_renewals(consent_db)
             except Exception as exc:
                 logger.error("[subscription-expiry-job] card consent sweep error: %s", exc, exc_info=True)
                 consent_db.rollback()
