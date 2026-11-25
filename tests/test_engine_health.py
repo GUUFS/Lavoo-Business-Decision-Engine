@@ -62,7 +62,7 @@ def test_healthy_engine_reports_ok_everywhere(db, monkeypatch):
 
     assert set(checks) == {"database", "tools", "embeddings", "micromodel", "examples",
                            "teacher", "llm", "files", "cache", "checkups",
-                           "errors", "jobs", "payments", "email", "meta"}
+                           "errors", "jobs", "email", "meta"}
     not_ok = {k: c["detail"] for k, c in checks.items() if c["status"] != "ok"}
     assert not_ok == {}
     assert result["status"] == "ok"

@@ -87,16 +87,9 @@ def test_logged_errors_show_by_area():
     assert len(monitoring.recent_failed_requests()) == 1
 
 
-def test_payment_errors_and_missing_keys_show_on_payments(monkeypatch):
-    for name in ("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "FLUTTERWAVE_SECRET_KEY", "FLUTTERWAVE_WEBHOOK_SECRET"):
-        monkeypatch.setenv(name, "set")
-    monitoring._errors.clear()
-    assert health._payments()[0] == "ok"
-    logging.getLogger("subscriptions.flutterwave").error("Verify call timed out")
-    status, detail = health._payments()
-    assert status == "warn" and "Verify call timed out" in detail
-    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET")
-    assert health._payments() == ("fail", health._payments()[1]) and "STRIPE_WEBHOOK_SECRET" in health._payments()[1]
+def test_engine_health_has_no_payments_check():
+    """Engine Health is about the decision engine; payments have their own check on the Revenue page."""
+    assert not hasattr(health, "_payments")
 
 
 def test_a_stopped_job_is_reported():

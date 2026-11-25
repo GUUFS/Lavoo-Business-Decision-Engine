@@ -18,6 +18,11 @@ WHERE IT IS USED
     forgotten, the card removed from Stripe, and every Stripe subscription
     set to end at the end of the period already paid for, so Stripe can't
     renew it by itself either.
+  - stop_old_price_renewals() runs with it too: a Stripe subscription
+    renews BY ITSELF at the price it was created on. One created on a price
+    Lavoo no longer sells (e.g. an old $1 price) would keep charging that
+    price forever, so it is set to end at the end of its paid period and
+    the admin is told. The customer subscribes again at today's price.
 
 Nothing here charges anyone.
 """
@@ -139,3 +144,47 @@ def sweep_unconsented(db: Session) -> dict:
         logger.info("[card-consent] forgot %s unconsented card(s); %s Stripe subscription(s) set to end",
                     len(users), changed)
     return {"users": len(users), "stripe_subscriptions": changed}
+
+
+def stop_old_price_renewals(db: Session) -> int:
+    """Stripe charges a renewal at the price ON the subscription, not at
+    Lavoo's current price. For every customer with auto-renewal on, any live
+    Stripe subscription on a price that isn't in today's price list
+    (founding.identify_price_id knows them all) is set to end at the end of
+    the period already paid for, and the admin is emailed. Returns how many
+    were stopped. Never raises. Run daily."""
+    key = os.getenv("STRIPE_SECRET_KEY")
+    if not key:
+        return 0
+    import stripe
+
+    from subscriptions.founding import describe_stripe_subscription
+    stopped: list[str] = []
+    # 1. Only customers who agreed to renewal (everyone else's renewals are
+    #    already stopped by sweep_unconsented).
+    users = db.query(User).filter(User.auto_renew.is_(True), User.stripe_customer_id.isnot(None)).all()
+    for user in users:
+        try:
+            for status in ("active", "trialing", "past_due"):
+                subs = stripe.Subscription.list(customer=user.stripe_customer_id, status=status, limit=100, api_key=key)
+                for sub in subs.auto_paging_iter():
+                    # 2. On a price Lavoo still sells, or already ending: leave it.
+                    desc = describe_stripe_subscription(sub)
+                    if desc["info"] is not None or sub.get("cancel_at_period_end"):
+                        continue
+                    # 3. An old price: let it end, don't renew it.
+                    stripe.Subscription.modify(sub["id"], cancel_at_period_end=True, api_key=key)
+                    stopped.append(f"user {user.id}: subscription {sub['id']} on unknown price {desc['price_id']}")
+        except Exception as exc:
+            logger.error("[card-consent] could not check old prices for user %s: %s", user.id, exc)
+    # 4. Tell the admin which ones.
+    if stopped:
+        logger.warning("[card-consent] stopped %s renewal(s) on old prices: %s", len(stopped), stopped)
+        from subscriptions.commission_service import CommissionService
+        CommissionService._alert_admin(
+            "Stripe renewals on old prices stopped",
+            "These Stripe subscriptions were on a price Lavoo no longer sells, so they would have renewed at "
+            "that old price. Each now ends at the end of the period already paid for; the customer can "
+            "subscribe again at today's price:\n\n" + "\n".join(stopped),
+        )
+    return len(stopped)
