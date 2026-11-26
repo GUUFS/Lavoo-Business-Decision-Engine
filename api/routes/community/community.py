@@ -166,9 +166,9 @@ VOO_FOLLOWUP_SYSTEM_PROMPT_HASH: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT_HASH: Optional[str] = None
 
-ANGLE_PROMPT_VERSION = "angle_v2.3"
+ANGLE_PROMPT_VERSION = "angle_v2.5"
 SUMMARY_PROMPT_VERSION = "summary_v2.0"
-FOLLOWUP_PROMPT_VERSION = "followup_v1.1"
+FOLLOWUP_PROMPT_VERSION = "followup_v1.3"
 
 
 def _load_voo_glossary() -> str:
@@ -327,13 +327,28 @@ LAVOO_PROTECTED_TERMS = (
 )
 
 
+LAVOO_TERM_PATTERNS = {
+    "check-up": r"\bcheck-?ups?\b",
+    "checkup": r"\bcheck-?ups?\b",
+    "mission": r"\bmissions?\b",
+    "missions": r"\bmissions?\b",
+    "reflection": r"\breflections?\b",
+}
+
+
+def _lavoo_term_in_text(term: str, text: str) -> bool:
+    """Match a protected Lavoo term in text while normalizing common singular/plural forms."""
+    pattern = LAVOO_TERM_PATTERNS.get(term, rf"\b{re.escape(term)}\b")
+    return bool(re.search(pattern, (text or "").lower()))
+
+
 def _mentions_lavoo(text: str) -> bool:
     """True when the text names Lavoo or one of its features (the same terms
     the Lavoo guard checks). Used to keep Lavoo talk out of the context Voo
     gets for an ordinary question, so it doesn't answer as if the member's
     question were about Lavoo."""
     lower = (text or "").lower()
-    return any(re.search(rf"\b{re.escape(term)}\b", lower) for term in LAVOO_PROTECTED_TERMS)
+    return any(_lavoo_term_in_text(term, lower) for term in LAVOO_PROTECTED_TERMS)
 
 
 _CONTEXT_STOPWORDS = {
@@ -454,8 +469,10 @@ def _validate_angle_data(
     angle_words = angle.split()
     test_words = test.split()
 
-    if len(angle_words) < 40 or len(angle_words) > 140:
-        return False, f"Angle word count out of bounds: {len(angle_words)} words (expected 40-140)", None
+    min_angle_words = 15 if q_type == "direct" else 35
+    max_angle_words = 175 if q_type == "direct" else 160
+    if len(angle_words) < min_angle_words or len(angle_words) > max_angle_words:
+        return False, f"Angle word count out of bounds: {len(angle_words)} words (expected {min_angle_words}-{max_angle_words})", None
     if len(test_words) >= 30:
         return False, f"Test word count too long: {len(test_words)} words (expected <30)", None
 
@@ -486,10 +503,10 @@ def _validate_angle_data(
     is_platform_poll = (post_type or "").strip().lower() in ("platform poll", "poll")
     if not is_platform_poll:
         post_text = f"{post_title} {post_content}".lower()
-        post_has_lavoo = any(re.search(rf"\b{re.escape(term)}\b", post_text) for term in LAVOO_PROTECTED_TERMS)
+        post_has_lavoo = any(_lavoo_term_in_text(term, post_text) for term in LAVOO_PROTECTED_TERMS)
         if not post_has_lavoo:
             for term in LAVOO_PROTECTED_TERMS:
-                if re.search(rf"\b{re.escape(term)}\b", angle_lower) or re.search(rf"\b{re.escape(term)}\b", test_lower):
+                if _lavoo_term_in_text(term, angle_lower) or _lavoo_term_in_text(term, test_lower):
                     return False, f"Lavoo guard triggered: ordinary question without '{term}' had '{term}' in reply", None
 
     output_handles = re.findall(r"@([a-zA-Z0-9_]+)", f"{angle} {test}")
@@ -500,7 +517,7 @@ def _validate_angle_data(
                 return False, f"Handle guard triggered: '@{h}' was not mentioned in thread replies", None
 
     for text_to_check in (angle, test):
-        stray = re.search(r"(?:^|\s)([B-HJ-Z])(?:[.,!?:;]|\s|$)", text_to_check)
+        stray = re.search(r"(?:^|\s)(L)(?:[.,!?:;]|\s|$)", text_to_check)
         if stray:
             return False, f"Stray letter guard triggered: found standalone letter '{stray.group(1)}'", None
 
@@ -517,20 +534,22 @@ def _validate_followup_data(
     conversation_str: str,
     post_type: str,
     post_title: str,
-    post_content: str
+    post_content: str,
+    latest_reply_text: str = "",
+    is_explicit_voo_question: bool = False
 ) -> Tuple[bool, Optional[str], Optional[dict]]:
     """
     Validates LLM follow-up output according to Section 5 of Code Spec:
     1. Parse JSON with required 5 fields: respond, reply_type, reasoning, changes_original, reply
-    2. If respond is false, valid
+    2. If respond is false, valid (unless an explicit @voo question was mistakenly rejected as off_topic)
     3. reply_type must be in allowed list
-    4. Length: reply (15-150 words)
+    4. Length: reply (10-180 words)
     5. Banned phrases, leverage, contrast patterns
-    6. Lavoo guard: allowed if in post or in conversation so far
-    7. Handle guard: any @handle in reply must appear in conversation
+    6. Lavoo guard: allowed if in post, conversation, or latest_reply_text
+    7. Handle guard: any @handle in reply must appear in conversation or latest_reply_text
     8. Sensitive data guard: no phone numbers, emails, or 8+ digit strings
     9. Repetition: first 6 words must not match original Angle
-    10. Stray letter guard
+    10. Stray letter guard ('L' artifact check without blocking 'X', 'B', 'C', 'Y', 'Z')
     11. Placeholder guard
     12. Clean dashes and strip extras
     """
@@ -539,14 +558,17 @@ def _validate_followup_data(
         if field not in data:
             return False, f"Missing required field: '{field}'", None
 
-    if not data.get("respond"):
-        return True, None, data
-
     allowed_types = (
         "clarifying", "new_details", "pushback", "how_to",
-        "other_member", "cannot_access", "privacy", "thanks", "off_topic"
+        "other_member", "new_question", "cannot_access", "privacy", "thanks", "off_topic"
     )
     reply_type = str(data.get("reply_type", "")).strip().lower()
+
+    if not data.get("respond"):
+        if is_explicit_voo_question and reply_type == "off_topic":
+            return False, "Explicit @voo question in comment should be handled as new_question, not off_topic", None
+        return True, None, data
+
     if reply_type not in allowed_types:
         return False, f"Invalid reply_type: '{reply_type}'", None
 
@@ -559,8 +581,8 @@ def _validate_followup_data(
     reply = _clean_text_extras(raw_reply)
     reply_words = reply.split()
 
-    if len(reply_words) < 15 or len(reply_words) > 150:
-        return False, f"Follow-up word count out of bounds: {len(reply_words)} words (expected 15-150)", None
+    if len(reply_words) < 10 or len(reply_words) > 180:
+        return False, f"Follow-up word count out of bounds: {len(reply_words)} words (expected 10-180)", None
 
     reply_lower = reply.lower()
 
@@ -581,15 +603,21 @@ def _validate_followup_data(
 
     is_platform_poll = (post_type or "").strip().lower() in ("platform poll", "poll")
     if not is_platform_poll:
-        prior_context = f"{post_title} {post_content} {conversation_str}".lower()
+        cleaned_latest_for_guard = re.sub(
+            r"\[(?:EXPLICIT @voo MENTION IN COMMENT|DIRECT QUESTION / FOLLOW-UP TO VOO?|PARENT COMMENT BEING REPLIED TO)\]|@voo\b",
+            " ",
+            latest_reply_text or "",
+            flags=re.IGNORECASE,
+        )
+        prior_context = f"{post_title} {post_content} {conversation_str} {cleaned_latest_for_guard}".lower()
         for term in LAVOO_PROTECTED_TERMS:
-            if not re.search(rf"\b{re.escape(term)}\b", prior_context):
-                if re.search(rf"\b{re.escape(term)}\b", reply_lower):
+            if not _lavoo_term_in_text(term, prior_context):
+                if _lavoo_term_in_text(term, reply_lower):
                     return False, f"Lavoo guard triggered: term '{term}' not in conversation context but appeared in follow-up", None
 
     output_handles = re.findall(r"@([a-zA-Z0-9_]+)", reply)
     if output_handles:
-        allowed_handles = [h.lower() for h in re.findall(r"@([a-zA-Z0-9_]+)", f"{post_title} {post_content} {conversation_str}")]
+        allowed_handles = [h.lower() for h in re.findall(r"@([a-zA-Z0-9_]+)", f"{post_title} {post_content} {conversation_str} {latest_reply_text}")]
         for h in output_handles:
             if h.lower() not in allowed_handles:
                 return False, f"Handle guard triggered: '@{h}' was not in conversation history", None
@@ -601,13 +629,32 @@ def _validate_followup_data(
     if re.search(r"\b0[789][01]\d{8}\b|\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}", reply):
         return False, "Sensitive data guard triggered: phone number pattern detected in reply", None
 
-    if original_angle_text:
+    if original_angle_text and not original_angle_text.startswith("None"):
         angle_first_6 = " ".join([re.sub(r"\W+", "", w).lower() for w in original_angle_text.split()[:6] if re.sub(r"\W+", "", w)])
         reply_first_6 = " ".join([re.sub(r"\W+", "", w).lower() for w in reply_words[:6] if re.sub(r"\W+", "", w)])
         if angle_first_6 and angle_first_6 == reply_first_6:
             return False, f"Follow-up repeats original angle opening: '{reply_first_6}'", None
 
-    stray = re.search(r"(?:^|\s)([B-HJ-Z])(?:[.,!?:;]|\s|$)", reply)
+    # Prevent Follow-up #2+ from echoing or paraphrasing an immediately preceding Voo reply
+    prior_voo_texts = [
+        line.split(":", 1)[1].strip()
+        for line in (conversation_str or "").splitlines()
+        if line.startswith("Voo:")
+    ]
+    if prior_voo_texts and len(reply_words) >= 15:
+        extract_content = lambda txt: {
+            w[:5] if len(w) > 5 else w.rstrip("s")
+            for w in re.findall(r"[a-z]{3,}", (txt or "").lower())
+            if w not in _CONTEXT_STOPWORDS
+        }
+        reply_content_words = extract_content(reply)
+        last_voo_content_words = extract_content(prior_voo_texts[-1])
+        if len(reply_content_words) >= 8 and len(last_voo_content_words) >= 8:
+            overlap_ratio = len(reply_content_words & last_voo_content_words) / len(reply_content_words)
+            if overlap_ratio >= 0.58:
+                return False, f"Follow-up paraphrases prior Voo reply (overlap={overlap_ratio:.2f})", None
+
+    stray = re.search(r"(?:^|\s)(L)(?:[.,!?:;]|\s|$)", reply)
     if stray:
         return False, f"Stray letter guard triggered: found standalone letter '{stray.group(1)}'", None
 
@@ -941,13 +988,25 @@ def _generate_voo_followup_reply(
             )
             continue
 
+        raw_latest_body = latest_reply_text or ""
+        for marker in ("[DIRECT QUESTION / FOLLOW-UP TO VOO]\n", "[EXPLICIT @voo MENTION IN COMMENT]\n"):
+            if marker in raw_latest_body:
+                raw_latest_body = raw_latest_body.split(marker, 1)[1]
+        non_tag_words = [w for w in re.sub(r"@voo\b", "", raw_latest_body, flags=re.IGNORECASE).split() if w.strip()]
+        is_explicit_voo_question = bool(
+            re.search(r"@voo\b", raw_latest_body, re.IGNORECASE)
+            and ("?" in raw_latest_body or len(non_tag_words) >= 4)
+        )
+
         is_valid, error_reason, cleaned_data = _validate_followup_data(
             data=parsed,
             original_angle_text=voo_angle,
             conversation_str=conversation,
             post_type=post_type,
             post_title=question_title,
-            post_content=question_content
+            post_content=question_content,
+            latest_reply_text=latest_reply_text,
+            is_explicit_voo_question=is_explicit_voo_question,
         )
 
         _log_voo_call(
@@ -1340,8 +1399,8 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
 
         # Fetch Voo's Angle log for this discussion if it exists
         angle_log = db.query(VooAngleLog).filter_by(post_id=discussion_id).order_by(VooAngleLog.created_at.desc()).first()
-        voo_angle_text = (angle_log.angle or angle_log.opening) if angle_log else "None (Direct inquiry to Voo in this thread)"
-        voo_test_text = angle_log.test if angle_log else "None"
+        voo_angle_text = (angle_log.angle or angle_log.opening) if angle_log else "None (Voo has not posted an Angle in this thread yet. Answer directly without mentioning any earlier Angle or Voo Test.)"
+        voo_test_text = (angle_log.test or "None") if angle_log else "None"
 
         replier_user = db.query(User).filter_by(id=replier_user_id).first()
         if not replier_user:
@@ -1479,17 +1538,22 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
         if not trigger_reply:
             return
 
-        # Debounce join for rapid replies: find replies by this user created after the last Voo reply
+        # Debounce join for rapid consecutive replies in the same branch within 2 minutes
         last_voo_reply = db.query(DiscussionReply).filter(
             DiscussionReply.discussion_id == discussion_id,
             DiscussionReply.user_id == voo_user.id
         ).order_by(DiscussionReply.created_at.desc()).first()
 
-        debounce_cutoff = last_voo_reply.created_at if last_voo_reply else (trigger_reply.created_at - timedelta(seconds=60))
+        short_window_start = trigger_reply.created_at - timedelta(seconds=120)
+        if last_voo_reply and last_voo_reply.created_at and last_voo_reply.created_at > short_window_start:
+            debounce_cutoff = last_voo_reply.created_at
+        else:
+            debounce_cutoff = short_window_start
 
         recent_user_replies = db.query(DiscussionReply).filter(
             DiscussionReply.discussion_id == discussion_id,
             DiscussionReply.user_id == replier_user_id,
+            DiscussionReply.parent_reply_id == trigger_reply.parent_reply_id,
             DiscussionReply.created_at >= debounce_cutoff,
             DiscussionReply.created_at <= trigger_reply.created_at
         ).order_by(DiscussionReply.created_at.asc()).all()
@@ -1512,7 +1576,9 @@ async def _process_voo_followup_task(discussion_id: int, trigger_reply_id: int, 
                 parent_comment_context = f"[PARENT COMMENT BEING REPLIED TO]\nFrom: @{ph}\n{parent_rep.content.strip()}\n\n"
 
         if parent_comment_context:
-            latest_reply_trimmed = f"{parent_comment_context}[DIRECT QUESTION / FOLLOW-UP TO VO]\n{latest_reply_trimmed}"
+            latest_reply_trimmed = f"{parent_comment_context}[DIRECT QUESTION / FOLLOW-UP TO VOO]\n{latest_reply_trimmed}"
+        elif re.search(r"@voo\b", latest_reply_trimmed, re.IGNORECASE):
+            latest_reply_trimmed = f"[EXPLICIT @voo MENTION IN COMMENT]\n{latest_reply_trimmed}"
 
         latest_reply_from = "Asker" if replier_user_id == d.user_id else f"@{replier_handle}"
 
