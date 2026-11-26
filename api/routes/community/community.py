@@ -166,9 +166,9 @@ VOO_FOLLOWUP_SYSTEM_PROMPT_HASH: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT: Optional[str] = None
 VOO_SUMMARY_SYSTEM_PROMPT_HASH: Optional[str] = None
 
-ANGLE_PROMPT_VERSION = "angle_v2.4"
+ANGLE_PROMPT_VERSION = "angle_v2.5"
 SUMMARY_PROMPT_VERSION = "summary_v2.0"
-FOLLOWUP_PROMPT_VERSION = "followup_v1.2"
+FOLLOWUP_PROMPT_VERSION = "followup_v1.3"
 
 
 def _load_voo_glossary() -> str:
@@ -470,8 +470,9 @@ def _validate_angle_data(
     test_words = test.split()
 
     min_angle_words = 15 if q_type == "direct" else 35
-    if len(angle_words) < min_angle_words or len(angle_words) > 160:
-        return False, f"Angle word count out of bounds: {len(angle_words)} words (expected {min_angle_words}-160)", None
+    max_angle_words = 175 if q_type == "direct" else 160
+    if len(angle_words) < min_angle_words or len(angle_words) > max_angle_words:
+        return False, f"Angle word count out of bounds: {len(angle_words)} words (expected {min_angle_words}-{max_angle_words})", None
     if len(test_words) >= 30:
         return False, f"Test word count too long: {len(test_words)} words (expected <30)", None
 
@@ -633,6 +634,25 @@ def _validate_followup_data(
         reply_first_6 = " ".join([re.sub(r"\W+", "", w).lower() for w in reply_words[:6] if re.sub(r"\W+", "", w)])
         if angle_first_6 and angle_first_6 == reply_first_6:
             return False, f"Follow-up repeats original angle opening: '{reply_first_6}'", None
+
+    # Prevent Follow-up #2+ from echoing or paraphrasing an immediately preceding Voo reply
+    prior_voo_texts = [
+        line.split(":", 1)[1].strip()
+        for line in (conversation_str or "").splitlines()
+        if line.startswith("Voo:")
+    ]
+    if prior_voo_texts and len(reply_words) >= 15:
+        extract_content = lambda txt: {
+            w[:5] if len(w) > 5 else w.rstrip("s")
+            for w in re.findall(r"[a-z]{3,}", (txt or "").lower())
+            if w not in _CONTEXT_STOPWORDS
+        }
+        reply_content_words = extract_content(reply)
+        last_voo_content_words = extract_content(prior_voo_texts[-1])
+        if len(reply_content_words) >= 8 and len(last_voo_content_words) >= 8:
+            overlap_ratio = len(reply_content_words & last_voo_content_words) / len(reply_content_words)
+            if overlap_ratio >= 0.58:
+                return False, f"Follow-up paraphrases prior Voo reply (overlap={overlap_ratio:.2f})", None
 
     stray = re.search(r"(?:^|\s)(L)(?:[.,!?:;]|\s|$)", reply)
     if stray:
