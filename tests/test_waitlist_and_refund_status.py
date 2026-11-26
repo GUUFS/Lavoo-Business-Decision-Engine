@@ -62,7 +62,26 @@ def test_waitlist_file_has_every_row(db):
 def test_no_waitlist_table_is_said_plainly(db):
     db.execute(text("DROP TABLE IF EXISTS waitlist"))
     data = waitlist.list_waitlist(admin=None, db=db)["data"]
-    assert data["available"] is False and "no waitlist table" in data["message"]
+    assert data["available"] is False and "No waitlist table was found" in data["message"]
+
+
+def test_a_waitlist_in_another_schema_is_found(db):
+    """The waitlist app may keep its table in its own schema."""
+    db.execute(text("DROP TABLE IF EXISTS waitlist"))
+    db.execute(text("CREATE SCHEMA IF NOT EXISTS waitlist_app"))
+    db.execute(text("CREATE TABLE waitlist_app.waitlist (id SERIAL PRIMARY KEY, email VARCHAR(255), created_at TIMESTAMP DEFAULT now())"))
+    db.execute(text("INSERT INTO waitlist_app.waitlist (email) VALUES ('c@wait.test')"))
+    data = waitlist.list_waitlist(admin=None, db=db)["data"]
+    assert data["available"] and data["table"] == "waitlist_app.waitlist" and data["rows"][0]["email"] == "c@wait.test"
+
+
+def test_the_scan_lists_every_table_with_rows_and_the_server(db):
+    _waitlist_table(db)
+    data = waitlist.scan_database(admin=None, db=db)["data"]
+    assert data["database"] and data["waitlist_table"] == "public.waitlist"
+    first = data["tables"][0]
+    assert first["table"] == "waitlist" and first["rows"] == 2 and first["has_email"] and first["looks_like_waitlist"]
+    assert any(t["table"] == "users" for t in data["tables"])
 
 
 def test_waitlist_is_its_own_admin_area():
