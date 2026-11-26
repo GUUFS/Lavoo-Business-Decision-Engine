@@ -1,9 +1,12 @@
 
 import os
+
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from alembic import context
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -21,8 +24,7 @@ if DATABASE_URL:
 
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -30,7 +32,19 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 from database.pg_models import Base  # Import your models here
+
 target_metadata = Base.metadata
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    """What `alembic revision --autogenerate` may touch.
+
+    A table that is in the database but not in our models (reflected, with
+    nothing to compare to) belongs to someone else, e.g. the waitlist app's
+    `waitlist` table, which shares this database. Autogenerate must never
+    write a DROP for it: migration cf2b1944f856 did exactly that. Our own
+    tables are unaffected."""
+    return not (type_ == "table" and reflected and compare_to is None)
 
 
 # other values from the config, defined by the needs of env.py,
@@ -55,6 +69,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -78,7 +93,7 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection, target_metadata=target_metadata, include_object=include_object
         )
 
         with context.begin_transaction():

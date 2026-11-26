@@ -2086,6 +2086,8 @@ app.include_router(staff_referrals.router, prefix="/api")
 app.include_router(admin_contact.router, prefix="/api")
 from api.routes.admin import refunds as admin_refunds_routes, user_emails as admin_user_emails_routes
 app.include_router(admin_refunds_routes.router, prefix="/api")  # /api/control/refunds (admin Refunds page)
+from api.routes.admin import waitlist as admin_waitlist_routes
+app.include_router(admin_waitlist_routes.router, prefix="/api")  # /api/control/waitlist (admin Waitlist page)
 app.include_router(admin_user_emails_routes.router, prefix="/api")  # /api/control/user-emails (admin "Email a user")
 from api.routes.admin import payout_tracker as admin_payout_tracker_routes
 app.include_router(admin_payout_tracker_routes.router, prefix="/api")  # /api/control/payout-tracker (admin Payout Tracker)

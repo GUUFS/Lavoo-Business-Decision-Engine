@@ -258,9 +258,50 @@ def _refund_view(r: AdminRefund, db: Session | None = None) -> dict:
             "stamp": stamp(db, r.refunded_by, r.created_at) if db is not None else None}
 
 
+# What each Stripe refund status means for the customer, in plain words.
+REFUND_STATUS_WORDS = {
+    "pending": "On its way: Stripe is sending it to the card's bank.",
+    "requires_action": "Waiting: Stripe needs something before it can send it (see the refund in Stripe).",
+    "succeeded": "Sent: Stripe has sent the money to the card's bank. It shows on the customer's statement "
+                 "in about 5 to 10 business days.",
+    "failed": "Failed: the card's bank refused it (e.g. the card is closed). Stripe puts the money back in "
+              "your balance; refund the customer another way.",
+    "canceled": "Cancelled: this refund was cancelled, so no money was sent.",
+}
+
+
+def refund_status(stripe_refund_id: str | None) -> dict | None:
+    """Where a refund is now, straight from Stripe: its status in plain words
+    and, once the bank has it, the bank reference (ARN). The customer can give
+    their bank this reference to find the money. None if it can't be looked up."""
+    if not stripe_refund_id or not _key():
+        return None
+    try:
+        refund = _plain(stripe.Refund.retrieve(stripe_refund_id, api_key=_key()))
+    except Exception as e:
+        logger.warning(f"[refunds] could not look up refund {stripe_refund_id}: {e}")
+        return None
+    # 1. The status.
+    status = refund.get("status") or "unknown"
+    # 2. The bank reference (Stripe adds it a few days after a card refund is sent).
+    card = ((refund.get("destination_details") or {}).get("card") or {})
+    return {"status": status, "meaning": REFUND_STATUS_WORDS.get(status, status),
+            "bank_reference": card.get("reference"), "bank_reference_status": card.get("reference_status"),
+            "failure_reason": refund.get("failure_reason")}
+
+
 def refund_history(db: Session, limit: int = 50) -> list[dict]:
-    """Refunds admins made, newest first."""
-    return [_refund_view(r, db) for r in db.query(AdminRefund).order_by(AdminRefund.created_at.desc()).limit(limit).all()]
+    """Refunds admins made, newest first, each with where it is now in Stripe
+    (looked up together, so the page doesn't wait for one after another)."""
+    from concurrent.futures import ThreadPoolExecutor
+    rows = db.query(AdminRefund).order_by(AdminRefund.created_at.desc()).limit(limit).all()
+    views = [_refund_view(r, db) for r in rows]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        statuses = list(pool.map(refund_status, [r.stripe_refund_id for r in rows]))
+    for view, status, row in zip(views, statuses, rows):
+        view["stripe_refund_id"] = row.stripe_refund_id
+        view["stripe_status"] = status
+    return views
 
 
 # =========================================================================
