@@ -377,11 +377,22 @@ def _clean_dashes(text: str) -> str:
     return text.strip()
 
 
+def _strip_web_citations(text: str) -> str:
+    """Removes inline markdown web citations like [[1]](https://...) emitted by web search."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"[ \t]*\[\[\d+\]\]\(https?://[^)]+\)", "", text)
+    cleaned = re.sub(r"[ \t]*\[\[\d+\]\]", "", cleaned)
+    cleaned = re.sub(r"[ ]{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
 def _clean_text_extras(text: str, replier_handle: Optional[str] = None) -> str:
     """
-    Cleans text, removes em/en dashes, trims quotes and backticks,
+    Cleans text, removes web citations and em/en dashes, trims quotes and backticks,
     and strips any leading greeting if the model generated one.
     """
+    text = _strip_web_citations(text)
     text = _clean_dashes(text)
     text = text.strip('`"\' \n\r\t')
     if replier_handle:
@@ -663,6 +674,26 @@ def _validate_followup_data(
     return True, None, cleaned_data
 
 
+def _extract_responses_text(response: Any) -> str:
+    """Extracts trimmed assistant text from an xAI/OpenAI Responses API result."""
+    if not response:
+        return ""
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+    parts: List[str] = []
+    for item in getattr(response, "output", None) or []:
+        item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+        if item_type != "message":
+            continue
+        contents = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+        for block in contents or []:
+            text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
 def _call_voo_llm(
     system_prompt: str,
     user_prompt: str,
@@ -671,7 +702,8 @@ def _call_voo_llm(
     max_tokens: int = 1000
 ) -> Tuple[Optional[str], Optional[str]]:
     """
-    Calls NVIDIA NIM or xAI Grok with configured parameters and timeout.
+    Calls xAI Grok (Responses API with live web_search) or NVIDIA NIM with
+    configured parameters, fallback ordering, and timeout.
     """
     nvidia_key = os.getenv("NVIDIA_API_KEY")
     xai_key = os.getenv("XAI_API_KEY")
@@ -679,33 +711,45 @@ def _call_voo_llm(
 
     from openai import OpenAI
 
-    def _call_grok():
+    def _call_grok() -> Tuple[Optional[str], Optional[str]]:
         if not xai_key:
-            return None
-        model_name = os.getenv("VOO_GROK_MODEL", "grok-4-1-fast-reasoning")
+            return None, None
+        model_name = os.getenv("VOO_GROK_MODEL", "grok-4.3").strip() or "grok-4.3"
+        use_web_search = os.getenv("VOO_GROK_WEB_SEARCH", "true").strip().lower() not in (
+            "0", "false", "no", "off"
+        )
         client = OpenAI(
             api_key=xai_key,
             base_url="https://api.x.ai/v1",
             timeout=45.0,
             max_retries=2,
         )
-        completion = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        if completion and completion.choices:
-            return completion.choices[0].message.content.strip(), model_name
+        request_kwargs: Dict[str, Any] = {
+            "model": model_name,
+            "instructions": system_prompt,
+            "input": user_prompt,
+            "temperature": temperature,
+            # Reasoning models spend part of the budget before emitting JSON.
+            "max_output_tokens": max(max_tokens * 3, 2500),
+            "store": False,
+        }
+        if use_web_search:
+            request_kwargs["tools"] = [{"type": "web_search"}]
+
+        response = client.responses.create(**request_kwargs)
+        content = _extract_responses_text(response)
+        if content:
+            resolved_model = getattr(response, "model", None) or model_name
+            return content, resolved_model
         return None, None
 
-    def _call_nvidia():
+    def _call_nvidia() -> Tuple[Optional[str], Optional[str]]:
         if not nvidia_key:
-            return None
-        model_name = os.getenv("VOO_NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
+            return None, None
+        model_name = (
+            os.getenv("VOO_NVIDIA_MODEL", "nvidia/nemotron-3-ultra-550b-a55b").strip()
+            or "nvidia/nemotron-3-ultra-550b-a55b"
+        )
         client = OpenAI(
             api_key=nvidia_key,
             base_url="https://integrate.api.nvidia.com/v1",
@@ -719,10 +763,12 @@ def _call_voo_llm(
                 {"role": "user", "content": user_prompt}
             ],
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=max(max_tokens * 2, 1500),
         )
         if completion and completion.choices:
-            return completion.choices[0].message.content.strip(), model_name
+            content = (completion.choices[0].message.content or "").strip()
+            if content:
+                return content, model_name
         return None, None
 
     order = [_call_nvidia, _call_grok] if preferred_provider == "nvidia" else [_call_grok, _call_nvidia]
@@ -1749,7 +1795,7 @@ def _generate_grok_takeaways(title: str, content: str, author_name: str = "A bui
 
     cleaned = []
     for t in takeaways[:3]:
-        s = str(t).strip()
+        s = _strip_web_citations(str(t).strip())
         s = _clean_dashes(s)
         s = re.sub(r"^Point\s*\d+[:\-.]\s*", "", s, flags=re.IGNORECASE)
         s = re.sub(r"^[›\-*\d.\s]+", "", s).strip()
