@@ -702,12 +702,15 @@ def _call_voo_llm(
     max_tokens: int = 1000
 ) -> Tuple[Optional[str], Optional[str]]:
     """
-    Calls xAI Grok (Responses API with live web_search) or NVIDIA NIM with
-    configured parameters, fallback ordering, and timeout.
+    Calls xAI Grok (Responses API with live web_search and JSON mode) as primary
+    or NVIDIA NIM fallback. Uses VOO_PRIMARY_PROVIDER (default 'grok') rather
+    than legacy VOO_LLM_PROVIDER so customer support's provider setting cannot
+    silently divert Build Room Voo calls away from Grok.
     """
     nvidia_key = os.getenv("NVIDIA_API_KEY")
     xai_key = os.getenv("XAI_API_KEY")
-    preferred_provider = os.getenv("VOO_LLM_PROVIDER", "").strip().lower()
+    # Decoupled from legacy VOO_LLM_PROVIDER (still read by ai_support.py).
+    primary_provider = os.getenv("VOO_PRIMARY_PROVIDER", "grok").strip().lower()
 
     from openai import OpenAI
 
@@ -731,6 +734,8 @@ def _call_voo_llm(
             "temperature": temperature,
             # Reasoning models spend part of the budget before emitting JSON.
             "max_output_tokens": max(max_tokens * 3, 2500),
+            # Enforces valid JSON even when web_search injects retrieved passages.
+            "text": {"format": {"type": "json_object"}},
             "store": False,
         }
         if use_web_search:
@@ -771,7 +776,7 @@ def _call_voo_llm(
                 return content, model_name
         return None, None
 
-    order = [_call_nvidia, _call_grok] if preferred_provider == "nvidia" else [_call_grok, _call_nvidia]
+    order = [_call_nvidia, _call_grok] if primary_provider == "nvidia" else [_call_grok, _call_nvidia]
 
     for call_fn in order:
         try:

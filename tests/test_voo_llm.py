@@ -30,10 +30,11 @@ def test_clean_text_extras_strips_web_citations_preserving_paragraphs():
     assert cleaned == "OpenAI released GPT-5 last month.\n\nYour Check-up score stays separate."
 
 
-def test_call_voo_llm_uses_grok_responses_with_web_search_by_default(monkeypatch):
+def test_call_voo_llm_uses_grok_responses_with_web_search_and_json_mode_even_when_legacy_provider_is_nvidia(monkeypatch):
     monkeypatch.setenv("XAI_API_KEY", "xai-test")
     monkeypatch.setenv("NVIDIA_API_KEY", "nv-test")
-    monkeypatch.delenv("VOO_LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("VOO_LLM_PROVIDER", "nvidia")
+    monkeypatch.delenv("VOO_PRIMARY_PROVIDER", raising=False)
     monkeypatch.delenv("VOO_GROK_MODEL", raising=False)
     monkeypatch.delenv("VOO_GROK_WEB_SEARCH", raising=False)
 
@@ -56,14 +57,15 @@ def test_call_voo_llm_uses_grok_responses_with_web_search_by_default(monkeypatch
     assert kwargs["instructions"] == "sys prompt"
     assert kwargs["input"] == "usr prompt"
     assert kwargs["tools"] == [{"type": "web_search"}]
+    assert kwargs["text"] == {"format": {"type": "json_object"}}
     assert kwargs["max_output_tokens"] == 2500
     assert kwargs["store"] is False
 
 
-def test_call_voo_llm_falls_back_to_nemotron_and_respects_provider_override(monkeypatch):
+def test_call_voo_llm_falls_back_to_nemotron_and_respects_primary_provider_override(monkeypatch):
     monkeypatch.setenv("XAI_API_KEY", "xai-test")
     monkeypatch.setenv("NVIDIA_API_KEY", "nv-test")
-    monkeypatch.setenv("VOO_LLM_PROVIDER", "nvidia")
+    monkeypatch.setenv("VOO_PRIMARY_PROVIDER", "nvidia")
     monkeypatch.delenv("VOO_NVIDIA_MODEL", raising=False)
 
     nv_client = MagicMock()
@@ -84,7 +86,7 @@ def test_call_voo_llm_falls_back_to_nemotron_and_respects_provider_override(monk
 def test_call_voo_llm_falls_back_when_primary_errors_or_returns_none(monkeypatch):
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     monkeypatch.setenv("NVIDIA_API_KEY", "nv-test")
-    monkeypatch.delenv("VOO_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("VOO_PRIMARY_PROVIDER", raising=False)
 
     nv_client = MagicMock()
     nv_client.chat.completions.create.return_value = SimpleNamespace(
