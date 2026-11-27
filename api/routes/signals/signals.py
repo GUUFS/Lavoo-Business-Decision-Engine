@@ -20,6 +20,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import desc, func, or_, cast, String
 
 from database.pg_connections import get_db
@@ -322,6 +323,14 @@ def _format_comment(comment: SignalComment, include_replies: bool = True) -> dic
     }
 
 
+def _keep_edit_date(signal) -> None:
+    """Keep a post's updated_at as it is when only a counter changes (a view,
+    like or comment). updated_at is "last edited": the sitemap tells Google
+    a post changed when it moves, so reading or liking a post mustn't move it.
+    Marking it as set (to its current value) stops onupdate=now() replacing it."""
+    flag_modified(signal, "updated_at")
+
+
 # ---------------------------------------------------------------------------
 # Read endpoints  (publicly accessible)
 # ---------------------------------------------------------------------------
@@ -466,6 +475,7 @@ async def get_signal(
 
     # Increment view count without a full model refresh
     signal.view_count = (signal.view_count or 0) + 1
+    _keep_edit_date(signal)  # a counter changed, not the post
     db.commit()
     db.refresh(signal)
 
@@ -697,6 +707,7 @@ async def toggle_like(
         db.delete(existing_like)
 
         signal.like_count              = max(0, (signal.like_count or 0) - 1)
+        _keep_edit_date(signal)  # a counter changed, not the post
         current_user.total_chops       = max(0, (current_user.total_chops or 0) - chops_to_deduct)
         current_user.signal_like_chops = max(0, (current_user.signal_like_chops or 0) - chops_to_deduct)
 
@@ -724,6 +735,7 @@ async def toggle_like(
         db.add(new_like)
 
         signal.like_count              = (signal.like_count or 0) + 1
+        _keep_edit_date(signal)  # a counter changed, not the post
         current_user.total_chops       = (current_user.total_chops or 0) + LIKE_CHOPS
         current_user.signal_like_chops = (current_user.signal_like_chops or 0) + LIKE_CHOPS
 
@@ -847,6 +859,7 @@ async def create_comment(
 
     # Award chops and update counters
     signal.comment_count               = (signal.comment_count or 0) + 1
+    _keep_edit_date(signal)  # a counter changed, not the post
     current_user.total_chops           = (current_user.total_chops or 0) + COMMENT_CHOPS
     current_user.signal_comment_chops  = (current_user.signal_comment_chops or 0) + COMMENT_CHOPS
 
@@ -963,6 +976,7 @@ async def delete_comment(
     signal = db.query(Signal).filter(Signal.id == signal_id).first()
     if signal:
         signal.comment_count = max(0, (signal.comment_count or 0) - 1)
+        _keep_edit_date(signal)  # a counter changed, not the post
 
     db.commit()
 
