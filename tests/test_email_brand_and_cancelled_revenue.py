@@ -1,8 +1,8 @@
 """
 Emails and revenue fixes from 2026-11-19.
 
-- Every email says "Lavoo Business Doctor" (never the old "Lavoo Business
-  Intelligence Engine"), uses the app's black-and-orange look instead of the
+- Every email says "Lavoo. The Business Doctor" (never the old "Lavoo Business
+  Intelligence Engine"), as sender name too, uses the app's black-and-orange look instead of the
   old purple, and the app's words: Premium, check-up, Builder Bonus.
 - flutterwave.py's failed-payment email has a method behind it (it used to
   crash with AttributeError).
@@ -37,12 +37,33 @@ def test_no_email_uses_the_old_name_or_purple():
         assert purple not in source
 
 
+def test_sender_name_is_quoted_in_the_from_line(monkeypatch):
+    # The name has a full stop, so the From line must put it in quotes, or
+    # some mail servers reject the email. Resend is caught, not called.
+    sent = {}
+
+    class Answer:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"id": "x"}
+
+    monkeypatch.delenv("FROM_NAME", raising=False)
+    monkeypatch.setattr(email_service, "from_name", "Lavoo. The Business Doctor")
+    monkeypatch.setattr(email_service, "resend_api_key", "test-key")
+    monkeypatch.setattr("emailing.email_service.requests.post",
+                        lambda url, headers=None, json=None, timeout=None: sent.update(json) or Answer())
+    email_service._send_email("u@test.local", "Ada", "Hi", "<p>Hi</p>")
+    assert sent["from"] == f'"Lavoo. The Business Doctor" <{email_service.from_email}>'
+
+
 def test_welcome_email_speaks_like_the_app(monkeypatch):
     sent = _capture(monkeypatch)
     email_service.send_welcome_email("new@test.local", "Ada")
-    assert sent["subject"] == "Welcome to Lavoo Business Doctor"
+    assert sent["subject"] == "Welcome to Lavoo. The Business Doctor"
     assert "check-up" in sent["html"] and "Builder Bonus" in sent["html"] and "Missions" in sent["html"]
-    assert "/l/decision-engine" in sent["html"] and "Lavoo Business Doctor" in sent["html"]
+    assert "/l/decision-engine" in sent["html"] and "Lavoo. The Business Doctor" in sent["html"]
 
 
 def test_admin_message_has_the_brand_header(monkeypatch):
@@ -50,7 +71,7 @@ def test_admin_message_has_the_brand_header(monkeypatch):
     sent = _capture(monkeypatch)
     email_service.send_admin_message("u@test.local", "Ada", "Welcome", "Hello")
     assert "#18181b" in sent["html"] and "#e87a02" in sent["html"]
-    assert "Lavoo Business Doctor" in sent["html"]
+    assert "Lavoo. The Business Doctor" in sent["html"]
 
 
 def test_plan_names_match_the_app(monkeypatch):

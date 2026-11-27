@@ -25,7 +25,7 @@ class EmailService:
     def __init__(self):
         self.support_email = os.getenv("SUPPORT_EMAIL", "support@lavoo.io")
         self.from_email = os.getenv("FROM_EMAIL", self.support_email)
-        self.from_name = os.getenv("FROM_NAME", "Lavoo Business Doctor")
+        self.from_name = os.getenv("FROM_NAME", "Lavoo. The Business Doctor")
         self.frontend_url = os.getenv("FRONTEND_URL", "https://lavoo.io")
 
         # SMTP configuration (fallback transport when Resend isn't configured
@@ -68,7 +68,7 @@ class EmailService:
                     "Content-Type": "application/json",
                 }
                 payload = {
-                    "from": f"{self.from_name} <{self.from_email}>",
+                    "from": formataddr((self.from_name, self.from_email)),  # quotes the name (it has a full stop)
                     "to": [to_email],
                     "subject": subject,
                     "html": html_content,
@@ -141,7 +141,7 @@ class EmailService:
 
     def send_welcome_email(self, user_email: str, name: str):
         """Send welcome email on signup"""
-        subject = "Welcome to Lavoo Business Doctor"
+        subject = "Welcome to Lavoo. The Business Doctor"
 
         html_content = f"""
         <!DOCTYPE html>
@@ -173,7 +173,7 @@ class EmailService:
                 <div class="content">
                     <h2>Hi {name},</h2>
                     <p>We're thrilled to have you on board! Your account has been successfully created.</p>
-                    <p><strong>With Lavoo Business Doctor, you can:</strong></p>
+                    <p><strong>With Lavoo. The Business Doctor, you can:</strong></p>
                     <ul>
                         <li>Run a check-up: tell Lavoo what is going on in your business</li>
                         <li>See the main problem holding your business back, and the ones behind it</li>
@@ -186,14 +186,14 @@ class EmailService:
                     <p>If you have any questions, feel free to reach out to our support team at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
         </html>
         """
 
-        text_content = (f"Welcome to Lavoo Business Doctor\n\nHi {name},\n\nWe're thrilled to have you on board! "
+        text_content = (f"Welcome to Lavoo. The Business Doctor\n\nHi {name},\n\nWe're thrilled to have you on board! "
                         f"Run your first check-up: {self.frontend_url}/l/decision-engine")
 
         return self._send_email(user_email, name, subject, html_content, text_content)
@@ -244,7 +244,7 @@ class EmailService:
                     <p style="color: #666; font-size: 13px;">This code expires in 15 minutes. If you didn't try to sign up for Lavoo, you can ignore this email.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -306,7 +306,7 @@ class EmailService:
                     <p>If you need assistance, contact us at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -368,7 +368,7 @@ class EmailService:
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -448,7 +448,7 @@ class EmailService:
                     <p>Thank you for being an early supporter!</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -517,7 +517,7 @@ class EmailService:
                     <p>If you have any questions, contact us at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -570,7 +570,7 @@ class EmailService:
                     <p>Thank you for being a valued member!</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -632,7 +632,7 @@ class EmailService:
                     <p>If you need help, contact us at {self.support_email}.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -692,7 +692,7 @@ class EmailService:
                     <p>Contact us at {self.support_email} if you have questions.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -760,7 +760,7 @@ class EmailService:
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -816,7 +816,7 @@ class EmailService:
                     <p>Thank you for being part of Lavoo!</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -877,7 +877,7 @@ class EmailService:
                     <p>Contact us at {self.support_email} if you need assistance.</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -935,7 +935,7 @@ class EmailService:
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -995,7 +995,7 @@ class EmailService:
                     <p>Questions? Contact {self.support_email}</p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -1029,7 +1029,7 @@ class EmailService:
               {button}
             </div>
             <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
-              <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+              <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
             </div>
           </div>
         </body></html>
@@ -1115,7 +1115,7 @@ class EmailService:
                     </p>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -1198,7 +1198,7 @@ class EmailService:
                 </div>
                 <div class="footer">
                     <p>This message was sent via the Lavoo contact form (https://lavoo.io/contact).</p>
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor.</p>
                 </div>
             </div>
         </body>
@@ -1235,11 +1235,11 @@ Message:
     ) -> Dict:
         """
         Send an admin reply directly to the user's email inbox using Resend API.
-        Sender: Lavoo <hello@lavoo.io>
+        Sender: "Lavoo. The Business Doctor" <hello@lavoo.io>
         Reply-To: hello@lavoo.io
         """
         contact_sender = os.getenv("CONTACT_FROM_EMAIL", "hello@lavoo.io")
-        from_display = f"{self.from_name} <{contact_sender}>"
+        from_display = formataddr((self.from_name, contact_sender))  # quotes the name (it has a full stop)
         clean_reason = (reason or "general").replace("_", " ").title()
         email_subject = subject or f"Re: Your Lavoo {clean_reason} Inquiry"
         if not email_subject.startswith("Re:"):
@@ -1282,7 +1282,7 @@ Message:
                     <p style="margin: 25px 0 0; font-size: 14px; color: #4b5563;">
                         Best regards,<br />
                         <strong>{signoff_name}</strong><br />
-                        <span style="color: #e87a02; font-size: 13px;">Lavoo Business Doctor</span>
+                        <span style="color: #e87a02; font-size: 13px;">Lavoo. The Business Doctor</span>
                     </p>
 
                     {f'''
@@ -1294,7 +1294,7 @@ Message:
                 </div>
                 <div class="footer">
                     <p>Have further questions? Simply reply to this email or reach us at <a href="mailto:{contact_sender}" style="color: #e87a02;">{contact_sender}</a>.</p>
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
@@ -1307,7 +1307,7 @@ Message:
 
 Best regards,
 {signoff_name}
-Lavoo Business Doctor
+Lavoo. The Business Doctor
 {contact_sender}
 
 {"--- Original Message ---" if original_message else ""}
@@ -1356,7 +1356,7 @@ Lavoo Business Doctor
     def send_contact_confirmation_to_user(self, user_email: str, name: str):
         """Send immediate confirmation receipt to the user who submitted the contact form"""
         contact_sender = os.getenv("CONTACT_FROM_EMAIL", "hello@lavoo.io")
-        from_display = f"{self.from_name} <{contact_sender}>"
+        from_display = formataddr((self.from_name, contact_sender))  # quotes the name (it has a full stop)
         subject = "We've received your message — Lavoo"
 
         html_content = f"""
@@ -1400,7 +1400,7 @@ Lavoo Business Doctor
                     </div>
                 </div>
                 <div class="footer">
-                    <p>&copy; {datetime.now().year} Lavoo Business Doctor. All rights reserved.</p>
+                    <p>&copy; {datetime.now().year} Lavoo. The Business Doctor. All rights reserved.</p>
                 </div>
             </div>
         </body>
